@@ -83,8 +83,10 @@ const messages = {
     'claude-failed': '{command} failed: {output}',
     'claude-timeout': '{command} did not answer within {seconds} s',
     'bad-prompt': 'the {what} cannot start with "-": claude would read it as an option; reword it',
-    // Added after another error's message when the session it left behind could not be stopped.
+    // Added after another error's message: whether the session it left behind could be stopped.
     orphan: '; could not stop {shortId}: run `claude stop {shortId}`',
+    'session-stopped': '; it was stopped',
+    'copy-stopped': '; the copy was stopped',
   },
   fr: {
     help: [
@@ -170,6 +172,8 @@ const messages = {
     'claude-timeout': '{command} n\'a pas répondu en {seconds} s',
     'bad-prompt': 'la consigne ne peut pas commencer par « - » : claude la prendrait pour une option ; reformulez-la',
     orphan: ' ; impossible d\'arrêter {shortId} : lancez `claude stop {shortId}`',
+    'session-stopped': ' ; elle a été arrêtée',
+    'copy-stopped': ' ; la copie a été arrêtée',
   },
 };
 

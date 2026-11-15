@@ -12,7 +12,6 @@ const { parseLaunchOutput, mapState } = require('./sessions');
 
 const PACKAGE_DIR = path.join(__dirname, '..', '..');
 const POLL_MS = 250;
-const ENDED_STATES = ['stopped', 'done', 'failed'];
 // The version found, per command: `claude --version` runs once per process.
 const versions = {};
 
@@ -54,12 +53,11 @@ function claudeCommand() {
 
 // Runs `claude <args>` and resolves with its exit code, stdout and stderr. After `timeoutMs`, Node
 // kills it and the call fails with `claude-timeout` naming `label`.
-function runClaude(args, { cwd, env, label = `claude ${args.join(' ')}`, timeoutMs = commandTimeoutMs() } = {}) {
+function runClaude(args, { cwd, label = `claude ${args.join(' ')}`, timeoutMs = commandTimeoutMs() } = {}) {
   const { file, prefix } = claudeCommand();
   return new Promise((resolve, reject) => {
     const child = spawn(file, [...prefix, ...args], {
       cwd,
-      env: { ...process.env, ...env },
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
       timeout: timeoutMs,
@@ -136,15 +134,18 @@ async function waitUntilStarted(shortId) {
   }
 }
 
-// Stops the session a failed launch or wake left behind. If that stop fails too, the error says
-// so: the session still runs and the user has to stop it.
-async function stopAfterFailure(err, shortId) {
+// Stops the session a failed launch or wake left behind, and says on the error whether it worked:
+// `stoppedKey` names the message added when it did. If not, err.orphan is the session still running.
+// The CLI prints err.suffix again in the user's language.
+async function stopAfterFailure(err, shortId, stoppedKey) {
   try {
     await stop({ shortId });
+    err.suffix = { key: stoppedKey, vars: { shortId } };
   } catch {
     err.orphan = shortId;
-    err.message += t('orphan', { shortId });
+    err.suffix = { key: 'orphan', vars: { shortId } };
   }
+  err.message += t(err.suffix.key, err.suffix.vars);
   return err;
 }
 
@@ -179,11 +180,11 @@ async function launch(spec) {
   try {
     row = await waitUntilStarted(result.shortId);
   } catch (err) {
-    throw await stopAfterFailure(err, result.shortId);
+    throw await stopAfterFailure(err, result.shortId, 'session-stopped');
   }
   if (!row) {
     const err = codedError('not-started', { shortId: result.shortId, seconds: startTimeoutMs() / 1000 });
-    throw await stopAfterFailure(err, result.shortId);
+    throw await stopAfterFailure(err, result.shortId, 'session-stopped');
   }
   return { ...mapState(row), name: spec.name, role: spec.role };
 }
@@ -197,12 +198,13 @@ async function list(mission) {
 }
 
 // `claude stop` exits 0 even for a session already stopped. Any other exit is fine when the session
-// no longer runs: unknown to claude ("No job matching"), ended, or without a live process.
+// no longer runs: unknown to claude ("No job matching") or without a live process. Its state is not
+// enough: a done session keeps a live process.
 async function stop(session) {
   const result = await runClaude(['stop', session.shortId]);
   if (result.code === 0) return;
   const row = await findRow(session.shortId);
-  if (!row || ENDED_STATES.includes(row.state) || !isAlive(row.pid)) return;
+  if (!row || !isAlive(row.pid)) return;
   throw failed(`claude stop ${session.shortId}`, result);
 }
 
@@ -221,7 +223,8 @@ async function attach(session) {
 async function wake(session, message) {
   checkPrompt(message, 'message');
   const row = await findRow(session.shortId);
-  const pid = (row && row.pid) || session.pid;
+  // A row without a pid has no process: the registry pid may by now belong to another process.
+  const pid = row ? row.pid : session.pid;
   await stop(session);
   const deadline = Date.now() + wakeTimeoutMs();
   while (isAlive(pid)) {
@@ -236,7 +239,7 @@ async function wake(session, message) {
   if (!result.shortId) throw codedError('claude-unexpected-output', { command: 'claude --bg --resume', output: output.trim() });
   if (result.shortId !== session.shortId) {
     const err = codedError('wake-copy', { shortId: session.shortId, copy: result.shortId });
-    throw await stopAfterFailure(err, result.shortId);
+    throw await stopAfterFailure(err, result.shortId, 'copy-stopped');
   }
   return wokenSession(session);
 }

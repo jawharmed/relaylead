@@ -152,6 +152,13 @@ test('a stop that fails on a running session is an error', async (t) => {
   });
 });
 
+test('a stop that fails on a done session with a live process is an error', async (t) => {
+  const { dir } = setup(t, 'done-at-launch,unstoppable');
+  const session = await claude.launch(spec(dir));
+  assert.strictEqual(session.state, 'done');
+  await assert.rejects(claude.stop(session), { code: 'claude-failed' });
+});
+
 test('refuses a .cmd or .bat claude', async (t) => {
   const { dir } = setup(t);
   process.env.RELAYLEAD_CLAUDE = path.join(dir, 'claude.cmd');
@@ -208,6 +215,7 @@ test('reports a session that never started', async (t) => {
   process.env.RELAYLEAD_CLAUDE_START_MS = '1000';
   await assert.rejects(claude.launch(spec(dir)), (err) => {
     assert.strictEqual(err.code, 'not-started');
+    assert.match(err.message, /; it was stopped$/);
     return true;
   });
   // No orphan: the session that did not start was stopped.
@@ -255,11 +263,22 @@ test('wake detects a copy and stops it', async (t) => {
   process.env.FAKE_CLAUDE_SCENARIO = 'wake-copy';
   await assert.rejects(claude.wake(session, 'hello'), (err) => {
     assert.strictEqual(err.code, 'wake-copy');
+    assert.match(err.message, /; the copy was stopped$/);
     return true;
   });
   const copy = fakeSessions(state).find((row) => row.id !== session.shortId);
   assert.strictEqual(copy.state, 'stopped');
   assert.deepStrictEqual(calls(state).at(-1), ['stop', copy.id]);
+});
+
+test('wake ignores the registry pid of a session claude lists without a process', async (t) => {
+  const { dir } = setup(t);
+  const session = await claude.launch(spec(dir));
+  await claude.stop(session);
+  // A stopped row has no pid; the old registry pid may now belong to another live process.
+  process.env.RELAYLEAD_CLAUDE_WAKE_MS = '500';
+  const woken = await claude.wake({ ...session, pid: process.pid }, 'hello');
+  assert.strictEqual(woken.shortId, session.shortId);
 });
 
 test('wake detects the other recorded copy output', async (t) => {
