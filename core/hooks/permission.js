@@ -6,7 +6,7 @@ const { isAllowed, denyMessage, loadMissionGuard, readHookInput, writeJournal } 
 function profileTools() {
   try {
     const tools = JSON.parse(process.env.RELAYLEAD_ALLOW || '[]');
-    return Array.isArray(tools) ? tools : [];
+    return Array.isArray(tools) && tools.every((tool) => typeof tool === 'string') ? tools : [];
   } catch {
     return [];
   }
@@ -15,8 +15,13 @@ function profileTools() {
 // Reason to refuse the request, or null to allow it.
 function refusal(input, patterns) {
   if (!input) return 'unreadable hook input';
-  if (isAllowed(input, patterns)) return null;
-  return `${input.tool_name === 'Bash' ? 'Bash command' : input.tool_name} not in the allowed tools`;
+  try {
+    if (isAllowed(input, patterns)) return null;
+  } catch {
+    return 'guard error'; // never leave the prompt waiting
+  }
+  const tool = input.tool_name || 'unknown';
+  return `${tool === 'Bash' ? 'Bash command' : tool} not in the allowed tools`;
 }
 
 const { mission, guard } = loadMissionGuard();
@@ -24,4 +29,4 @@ const input = readHookInput();
 const reason = refusal(input, [...guard.allow, ...profileTools()]);
 const decision = reason ? { behavior: 'deny', message: denyMessage(reason) } : { behavior: 'allow' };
 process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision } }) + '\n');
-if (reason) writeJournal(mission, input ? input.tool_name : '?', reason);
+if (reason) writeJournal(mission, input && input.tool_name, reason);

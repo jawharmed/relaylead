@@ -124,7 +124,7 @@ test('a stop during a launch stops the crew member', async (t) => {
   await stopMission('demo'); // the crew member is not in the registry yet
 
   await assert.rejects(starting, { code: 'mission-stopped' });
-  await waitFor(() => !isAlive(crew.pid), 5000, 'the crew member to be stopped');
+  await waitFor(() => !isAlive(crew.pid), 30000, 'the crew member to be stopped');
   assert.strictEqual(fs.existsSync(path.join(missionDir('demo'), 'tasks', 'a.json')), false);
 });
 

@@ -2,12 +2,18 @@
 // the action go on. Run by Claude Code as `node pretool.js` with the tool call as JSON on stdin.
 const { checkToolUse, denyMessage, loadMissionGuard, readHookInput, writeJournal } = require('../guard');
 
-const { mission, guard } = loadMissionGuard();
+const { mission, guard, stateDir } = loadMissionGuard();
 const input = readHookInput();
 if (!input) {
-  writeJournal(mission, '?', 'unreadable hook input');
+  writeJournal(mission, 'unknown', 'unreadable hook input');
 } else {
-  const result = checkToolUse(input, guard);
+  let result;
+  try {
+    result = checkToolUse(input, guard, stateDir);
+  } catch {
+    // A crashing hook would let the action through: refuse what the guard cannot judge.
+    result = { decision: 'deny', reason: 'guard error' };
+  }
   if (result.decision === 'deny') {
     const output = {
       hookSpecificOutput: {

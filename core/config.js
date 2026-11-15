@@ -12,7 +12,12 @@ const DEFAULTS = {
   questions: { onTimeout: 'wait' },
   source: { type: 'tasks-dir', dir: 'tasks' },
   delivery: { type: 'local-merge', branch: 'relaylead/integration' },
-  guard: { protectedBranches: ['main', 'master'], secrets: ['.env', '.env.*'], allow: [] },
+  guard: {
+    protectedBranches: ['main', 'master'],
+    secrets: ['.env', '.env.*'],
+    secretExceptions: ['.env.example', '.env.sample', '.env.template'],
+    allow: [],
+  },
   attribution: null,
 };
 

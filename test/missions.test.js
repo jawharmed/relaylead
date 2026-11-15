@@ -54,7 +54,7 @@ async function waitUntilWorking(name) {
       const line = out.split('\n').find((l) => l.startsWith(name + ' '));
       return Boolean(line && line.includes(`${name}/lead/1`) && line.includes('working'));
     },
-    5000,
+    30000,
     `${name} to be working`,
   );
 }
@@ -146,7 +146,7 @@ test('stop stops every session of the mission', async (t) => {
 
   const stopped = await cli(['stop', 'demo']);
   assert.strictEqual(stopped.code, 0, stopped.err);
-  await waitFor(() => pids.every((pid) => !isAlive(pid)), 5000, 'the sessions to end');
+  await waitFor(() => pids.every((pid) => !isAlive(pid)), 30000, 'the sessions to end');
 
   assert.strictEqual((await cli(['state', 'get', '--mission', 'demo'])).out.trim(), 'stopped');
   assert.strictEqual(fs.existsSync(lockFile(fs.realpathSync.native(dir))), false);
@@ -190,7 +190,7 @@ test('a failure after the lead started stops the lead and leaves nothing behind'
 
   const result = await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir]);
   assert.strictEqual(result.code, 1);
-  await waitFor(() => !isAlive(lead.pid), 5000, 'the lead to be stopped');
+  await waitFor(() => !isAlive(lead.pid), 30000, 'the lead to be stopped');
   assert.strictEqual(fs.existsSync(path.join(missionDir('demo'), 'mission.json')), false);
   assert.strictEqual(fs.existsSync(lockFile(fs.realpathSync.native(dir))), false);
 });

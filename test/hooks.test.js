@@ -83,9 +83,31 @@ test('pretool hook uses the default guard without a mission', () => {
 
 test('pretool hook ignores unreadable input and notes it in the journal', () => {
   const home = missionHome({});
-  const out = runHook(PRETOOL, 'not json', { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'demo' });
-  assert.strictEqual(out, '');
-  assert.match(journal(home), /^\S+ \? unreadable hook input\n$/);
+  const env = { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'demo' };
+  assert.strictEqual(runHook(PRETOOL, 'not json', env), '');
+  assert.strictEqual(runHook(PRETOOL, '[1]', env), '');
+  assert.match(journal(home), /^\S+ unknown unreadable hook input\n\S+ unknown unreadable hook input\n$/);
+});
+
+test('pretool hook refuses when the guard fails', () => {
+  // Wrong shapes fall back to the defaults: protected pushes and secrets are still refused.
+  const home = missionHome({ protectedBranches: 'main', secrets: [1], allow: null });
+  const env = { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'demo' };
+  const decide = (input) => JSON.parse(runHook(PRETOOL, input, env)).hookSpecificOutput.permissionDecisionReason;
+  const cwd = tmpDir();
+  assert.match(decide({ tool_name: 'Bash', tool_input: { command: 'git push origin main' }, cwd }), /push to protected branch main/);
+  assert.match(decide({ tool_name: 'Bash', tool_input: { command: 'cat .env' }, cwd }), /access to secret file \.env/);
+  // An input the guard cannot judge is refused, not let through.
+  assert.match(decide({ tool_name: 'Bash', tool_input: { command: 'cat a.txt' }, cwd: 42 }), /^Blocked by Relaylead: guard error\./);
+  assert.match(journal(home), /\S+ Bash guard error\n$/);
+});
+
+test('pretool hook refuses the mission state folder', () => {
+  const home = missionHome({});
+  const env = { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'demo' };
+  const file = path.join(home, 'missions', 'demo', 'mission.json');
+  const out = runHook(PRETOOL, { tool_name: 'Write', tool_input: { file_path: file, content: '{}' }, cwd: tmpDir() }, env);
+  assert.match(JSON.parse(out).hookSpecificOutput.permissionDecisionReason, /access to the mission state folder/);
 });
 
 test('permission hook allows a listed command and denies the rest', () => {
@@ -118,4 +140,15 @@ test('permission hook allows a listed command and denies the rest', () => {
   );
   // No question is created: the permission question belongs to lot 3.
   assert.strictEqual(fs.existsSync(path.join(home, 'missions', 'demo', 'questions')), false);
+});
+
+test('permission hook answers even with a wrong-shaped guard', () => {
+  const home = missionHome({ allow: [null] });
+  const env = { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'demo', RELAYLEAD_ALLOW: '[1]' };
+  const decide = (input) => JSON.parse(runHook(PERMISSION, input, env)).hookSpecificOutput.decision.behavior;
+  assert.strictEqual(decide({ tool_name: 'Bash', tool_input: { command: 'git status' }, cwd: tmpDir() }), 'deny');
+  assert.strictEqual(decide({ tool_input: {} }), 'deny');
+  assert.strictEqual(decide([1]), 'deny');
+  const tools = journal(home).trim().split('\n').map((line) => line.split(' ')[1]);
+  assert.deepStrictEqual(tools, ['Bash', 'unknown', 'unknown']);
 });
