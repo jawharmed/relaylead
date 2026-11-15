@@ -48,6 +48,21 @@ function readMission() {
   return readJson(path.join(missionDir(process.env.RELAYLEAD_MISSION), 'mission.json'));
 }
 
+// The answers by question id, read like a real lead would: through the CLI.
+function questionsById() {
+  const questions = JSON.parse(relaylead('question', 'list', '--all'));
+  return Object.fromEntries(questions.map((question) => [question.id, question]));
+}
+
+// A task with `ask` waits for an answer before it starts: asks once (the key is the task id),
+// then reports whether the answer is there.
+function answeredIfAsked(task) {
+  if (!task.ask) return true;
+  relaylead('question', 'ask', '--key', task.id, '--text', task.ask, '--option', 'yes', '--option', 'no', '--recommended', '1');
+  const question = Object.values(questionsById()).find((candidate) => candidate.key === task.id);
+  return question.state === 'answered';
+}
+
 function listTasks() {
   return JSON.parse(relaylead('task', 'list'));
 }
@@ -83,6 +98,7 @@ function lead() {
     let running = tasks.filter((task) => task.state === 'running').length;
     for (const task of tasks.filter((candidate) => candidate.ready)) {
       if (running >= mission.config.parallel) break;
+      if (!answeredIfAsked(task)) continue;
       relaylead('task', 'start', task.id);
       running++;
     }

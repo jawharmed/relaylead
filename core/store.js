@@ -37,6 +37,23 @@ function writeJson(file, data) {
   }
 }
 
+// Like writeJson, but only if the file does not exist yet: returns false when someone else wrote it first.
+// The data goes to a temporary file, then a hard link makes it appear complete, or fails if the file exists.
+function writeJsonExclusive(file, data) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n');
+    withWindowsRetry(() => fs.linkSync(tmp, file));
+    return true;
+  } catch (err) {
+    if (err.code === 'EEXIST') return false;
+    throw err;
+  } finally {
+    fs.rmSync(tmp, { force: true });
+  }
+}
+
 function readJson(file, fallback) {
   let text;
   try {
@@ -52,4 +69,4 @@ function readJson(file, fallback) {
   }
 }
 
-module.exports = { writeJson, readJson };
+module.exports = { writeJson, writeJsonExclusive, readJson };
