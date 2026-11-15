@@ -38,11 +38,13 @@ function sessionSettings(o) {
 
 function main() {
   const o = parse(process.argv.slice(2));
-  const args = ['--bg', '--name', o.name, '--model', o.model, '--settings', sessionSettings(o)];
-  if (o.mode !== 'user') args.push('--setting-sources', 'project,local', '--strict-mcp-config');
+  // --allowedTools prend plusieurs valeurs : placé en dernier, il avale la consigne. On le met en tête.
+  const args = [];
   if (o.mode === 'bypass') args.push('--dangerously-skip-permissions');
   else if (o.mode === 'manual') args.push('--permission-mode', 'manual');
-  else args.push('--permission-mode', 'acceptEdits', '--allowedTools', 'Bash(node *)', 'Read', 'Write', 'Edit');
+  else args.push('--allowedTools', 'Bash(node *)', 'Read', 'Write', 'Edit', '--permission-mode', 'acceptEdits');
+  args.push('--bg', '--name', o.name, '--model', o.model, '--settings', sessionSettings(o));
+  if (o.mode !== 'user') args.push('--setting-sources', 'project,local', '--strict-mcp-config');
   const wanted = o.sessionId === 'auto' ? crypto.randomUUID() : null;
   if (wanted) args.push('--session-id', wanted);
   if (o.agents) args.push('--agents', o.agents);
