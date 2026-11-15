@@ -71,17 +71,22 @@ function cutSubstitutions(command) {
   return [...inner, text];
 }
 
-// Index of the newline that ends the body of each heredoc started on the line ending at `i`: the
-// body goes up to the line holding its delimiter (tabs before it allowed), or to the end.
+// Index of the newline that ends the bodies of the heredocs started on the line ending at `i`.
+// Each body goes up to the line holding its delimiter (tabs before it allowed). Without a
+// delimiter or without that line it is not a heredoc we can trust: `i` is returned, so nothing
+// is skipped.
 function skipHeredocBodies(text, i, delimiters) {
+  let end = i;
   for (const delimiter of delimiters) {
-    while (i < text.length) {
-      const start = i + 1;
-      i = text.indexOf('\n', start) === -1 ? text.length : text.indexOf('\n', start);
-      if (text.slice(start, i).replace(/^\t+/, '') === delimiter) break;
+    let closed = false;
+    while (!closed && end < text.length) {
+      const start = end + 1;
+      end = text.indexOf('\n', start) === -1 ? text.length : text.indexOf('\n', start);
+      closed = text.slice(start, end).replace(/^\t+/, '') === delimiter;
     }
+    if (!delimiter || !closed) return i;
   }
-  return i;
+  return end;
 }
 
 // Splits a command into pieces: {words, redirects, end}. Quotes are removed and a backslash
@@ -89,8 +94,9 @@ function skipHeredocBodies(text, i, delimiters) {
 // ends at ; & && | || ( ) or a newline outside quotes; `end` keeps which one. A redirection keeps its
 // operator (`>/dev/null`, `<.env`) and goes to `redirects`; the descriptor number of `2>&1` is
 // dropped. Comments (`#` starting a word) and heredoc bodies are data: they are skipped here, and
-// checkBash judges every line on its own anyway. Splitting more than the shell does is harmless:
-// it only makes more pieces to judge.
+// checkBash judges every line on its own anyway. Inside parentheses or `[[ … ]]`, `<<` may be a
+// shift or a comparison (`$((1<<2))`), so no body is skipped there. Splitting more than the shell
+// does is harmless: it only makes more pieces to judge.
 function splitPieces(text) {
   const pieces = [];
   let words = [];
@@ -98,12 +104,16 @@ function splitPieces(text) {
   let word = null;
   let quote = null;
   let redirecting = false;
+  let delimiterAt = null; // where the delimiter starts in the word of a `<<` or `<<-` redirection
   let heredocs = []; // delimiters of the heredocs started on the current line
+  let parentheses = 0; // how many are open
+  let inTest = false; // between `[[` and `]]`
   const endWord = () => {
-    if (word !== null && redirecting && /^<<[^<]/.test(word)) heredocs.push(word.replace(/^<<-?/, ''));
+    if (word !== null && delimiterAt !== null) heredocs.push(word.slice(delimiterAt));
     if (word !== null) (redirecting ? redirects : words).push(word);
     word = null;
     redirecting = false;
+    delimiterAt = null;
   };
   const endPiece = (end) => {
     endWord();
@@ -141,6 +151,8 @@ function splitPieces(text) {
       endWord();
       word = char;
       while (text[i + 1] !== undefined && '<>&'.includes(text[i + 1])) word += text[++i];
+      if (word === '<<' && text[i + 1] === '-') word += text[++i];
+      if (/^<<-?$/.test(word) && parentheses === 0 && !inTest) delimiterAt = word.length;
       while (text[i + 1] === ' ' || text[i + 1] === '\t') i++;
       redirecting = true;
     } else if (char === '&' || char === '|') {
@@ -149,11 +161,15 @@ function splitPieces(text) {
       endPiece(double ? char + char : char);
     } else if (';()\r\n'.includes(char)) {
       endPiece(char === '\r' ? '\n' : char);
+      if (char === '(') parentheses++;
+      if (char === ')' && parentheses > 0) parentheses--;
       if (char === '\n' && heredocs.length) i = skipHeredocBodies(text, i, heredocs) - 1;
       if (char === '\n') heredocs = [];
     } else if (/\s/.test(char)) {
       endWord();
     } else {
+      if (word === null && text.startsWith('[[', i)) inTest = true;
+      if (word === null && /^\]\]($|[\s;&|)])/.test(text.slice(i, i + 3))) inTest = false;
       word = (word ?? '') + char;
     }
   }
@@ -321,30 +337,45 @@ function isSecretName(name, guard) {
 // True when a glob path may name something inside the state folder: each of its first segments
 // matches the state folder's (in the shell, `*` does not cross a `/`).
 function globMayReach(file, dir, stateDir) {
-  const parts = path.resolve(dir, file).split(path.sep);
+  const parts = path.resolve(dir || '', file).split(path.sep);
   const folder = path.resolve(stateDir).split(path.sep);
   return parts.length >= folder.length && folder.every((segment, i) => shellGlobRegExp(parts[i]).test(segment));
 }
 
-// True when `file` is in the state folder. A path through another variable, a glob, braces or
-// `~user` cannot be resolved: it counts as inside when it names the state folders.
+// True when `word` names something in the state folder. `~user` may be this user's home, so it
+// is read as `~`. Only the shell knows what a variable, a brace range or `~+` gives: such a word
+// counts as inside when it names the state folders. A glob is compared with the real folder.
 function inStateFolder(word, dir, stateDir) {
   if (!stateDir || !word) return false;
-  const file = expandHome(word);
-  const unresolved = /[$`*?[{]/.test(file) || /^~[^\\/]/.test(file);
-  if (unresolved && /\.relaylead|missions/i.test(file)) return true;
+  const file = expandHome(word.replace(/^~[^\\/+-]*/, '~'));
+  if (/[$`{]/.test(file) || file.startsWith('~')) return /\.relaylead|missions/i.test(file);
   if (dir === null && !path.isAbsolute(file)) return false;
-  if (/[*?[]/.test(file) && globMayReach(file, dir || '', stateDir)) return true;
-  if (unresolved) return false;
+  if (/[*?[]/.test(file)) return globMayReach(file, dir, stateDir);
   const normalize = (p) => (CASE_INSENSITIVE ? p.toLowerCase() : p);
   const full = normalize(path.resolve(dir || '', file));
   const folder = normalize(path.resolve(stateDir));
   return full === folder || full.startsWith(folder + path.sep);
 }
 
+// Brace expansion, as the shell does it: `a{b,c}` gives `ab` and `ac`. A range such as `{1..3}`
+// stays as it is, and so does a word that gives more than 64 names.
+function expandBraces(word) {
+  const group = /\{([^{}]*,[^{}]*)\}/;
+  let words = [word];
+  while (words.length <= 64 && words.some((w) => group.test(w))) {
+    words = words.flatMap((w) => {
+      const match = group.exec(w);
+      if (!match) return [w];
+      const [before, after] = [w.slice(0, match.index), w.slice(match.index + match[0].length)];
+      return match[1].split(',').map((choice) => before + choice + after);
+    });
+  }
+  return words;
+}
+
 // Reason to refuse a file named in a Bash word, or null. `--env-file=.env` names .env too.
 function checkFileWord(word, dir, guard, stateDir) {
-  for (const part of word.replace(/^[<>&]+/, '').split('=')) {
+  for (const part of expandBraces(word.replace(/^[<>&]+/, '')).flatMap((name) => name.split('='))) {
     if (inStateFolder(part, dir, stateDir)) return 'access to the mission state folder';
     const name = path.posix.basename(part);
     if (name && isSecretName(name, guard)) return `access to secret file ${name}`;

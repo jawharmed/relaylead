@@ -273,6 +273,27 @@ test('a quoted or unclosed heredoc marker hides nothing', () => {
   assertDenied(bash('git commit -m "${x#"}" -m "<<EOF"\ngit push origin main\nEOF', dir), reason);
 });
 
+test('a << that starts no heredoc hides no secret', () => {
+  const dir = repoOn('relaylead/x');
+  const reason = 'access to secret file .env';
+  // A shift or a comparison, not a heredoc.
+  assertDenied(bash('echo $((1<<2))\ncat .env', dir), reason);
+  assertDenied(bash(': $((1<<2))\ncat .env\n2', dir), reason);
+  assertDenied(bash('(( x = 1 << 2 ))\ncat .env', dir), reason);
+  assertDenied(bash('(( x = 1 << 2 ))\ncat .env\n2', dir), reason);
+  assertDenied(bash('[[ 1 << 2 ]]\ncat .env\n2', dir), reason);
+  assertDenied(bash('[[ a == "]]" << 2 ]]\ncat .env\n2', dir), reason);
+  // The delimiter comes after `<<-` and spaces; without a delimiter or a closing line, all is judged.
+  assertDenied(bash('cat <<- EOF\nbody\nEOF\ncat .env', dir), reason);
+  assertDenied(bash('cat << -EOF\nbody\n-EOF\ncat .env\nEOF', dir), reason);
+  assertDenied(bash('cat <<\ncat .env', dir), reason);
+  assertDenied(bash('bash <<EOF\ncat .env', dir), reason);
+  assertDenied(bash('cat <<A <<B\na\nA\nb\nB\ncat .env', dir), reason);
+  // A real heredoc body may still mention a secret.
+  assert.deepStrictEqual(bash('cat > notes.md <<- EOF\n\tread .env first\n\tEOF\ngit status', dir), ALLOW);
+  assert.deepStrictEqual(bash('cat <<A <<B\nsee .env\nA\nsee .env\nB\ngit status', dir), ALLOW);
+});
+
 test('example env files are not secrets', () => {
   const dir = tmpDir();
   assert.deepStrictEqual(bash('cat .env.example .env.sample .env.template', dir), ALLOW);
@@ -331,6 +352,10 @@ test('the mission state folder is refused under ~, $HOME or $RELAYLEAD_HOME', (t
   assertDenied(atHome('Bash', { command: 'cat ~/.relaylead/missions/dem[o]/mission.json' }), reason);
   assertDenied(atHome('Bash', { command: 'cat ~/.relaylead/{missions}/demo/mission.json' }), reason);
   assertDenied(atHome('Bash', { command: 'cat ~someone/.relaylead/missions/demo/mission.json' }), reason);
+  // Braces are expanded and `~user` is read as `~` before judging.
+  assertDenied(atHome('Bash', { command: 'cat ~/.relay{lead,x}/mis{sions,}/demo/mission.json' }), reason);
+  assertDenied(atHome('Bash', { command: 'cat ~someone/.r*/m*/demo/mission.json' }), reason);
+  assertDenied(atHome('Bash', { command: 'cat ~/.r*/*/*/mission.json' }), reason);
   assert.deepStrictEqual(atHome('Bash', { command: 'ls docs/missions ~/Workspace/*.md' }), ALLOW);
   assert.deepStrictEqual(atHome('Bash', { command: 'cat $HOME/notes.txt "$TMPDIR/a.log"' }), ALLOW);
 
@@ -344,6 +369,30 @@ test('the mission state folder is refused under ~, $HOME or $RELAYLEAD_HOME', (t
   const stateDir = path.join(home, 'missions', 'demo');
   const command = 'cat ${RELAYLEAD_HOME}/missions/demo/mission.json $RELAYLEAD_HOME/x';
   assertDenied(checkToolUse({ tool_name: 'Bash', tool_input: { command }, cwd: tmpDir() }, GUARD, stateDir), reason);
+});
+
+test('everyday words that contain "missions" are allowed', () => {
+  const homeState = path.join(os.homedir(), '.relaylead', 'missions', 'demo');
+  const dir = repoOn('relaylead/x');
+  const run = (command) => checkToolUse({ tool_name: 'Bash', tool_input: { command }, cwd: dir }, GUARD, homeState);
+  assert.deepStrictEqual(run('node --test test/missions*.test.js'), ALLOW);
+  assert.deepStrictEqual(run('grep -E "missions?" core/*.js'), ALLOW);
+  assert.deepStrictEqual(run('grep -rn "missions\\[" core/'), ALLOW);
+  assert.deepStrictEqual(run('rg "missions.*demo" core'), ALLOW);
+  assert.deepStrictEqual(run('jq ".missions[]" out.json'), ALLOW);
+  assert.deepStrictEqual(run('ls docs/missions/*.md fixtures/missions*'), ALLOW);
+  const message = 'git commit -m "$(cat <<\'EOF\'\nfix(missions): list missions/*.json\nEOF\n)"';
+  assert.deepStrictEqual(run(message), ALLOW);
+  // A glob that may reach the state folder is still refused.
+  const inHome = { tool_name: 'Bash', tool_input: { command: 'ls missions/*' }, cwd: path.dirname(path.dirname(homeState)) };
+  assertDenied(checkToolUse(inHome, GUARD, homeState), 'access to the mission state folder');
+});
+
+test('braces are expanded before judging', () => {
+  const dir = repoOn('relaylead/x');
+  assertDenied(bash('cat .e{nv,xample}', dir), 'access to secret file .env');
+  assertDenied(bash('git push origin {main,x}', dir), 'push to a branch that cannot be judged');
+  assert.deepStrictEqual(bash('ls src/{a,b}.js && find . -name x -exec cat {} \;', dir), ALLOW);
 });
 
 test('the mission guard decides the protected branches and the secrets', () => {
