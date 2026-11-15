@@ -37,11 +37,16 @@ test('concurrent writers never leave a truncated file', async () => {
     const child = spawn(process.execPath, [helper, file, label, '200'], { stdio: ['ignore', 'ignore', 'pipe'] });
     let stderr = '';
     child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.on('error', (err) => { failures.push(String(err)); running--; });
-    child.on('exit', (code) => {
-      if (code !== 0) failures.push(`writer ${label} exited with ${code}: ${stderr}`);
+    let finished = false;
+    const finish = (problem) => {
+      if (finished) return; // 'error' and 'close' can both fire
+      finished = true;
+      if (problem) failures.push(problem);
       running--;
-    });
+    };
+    child.on('error', (err) => finish(String(err)));
+    // 'close' fires after stderr is fully read
+    child.on('close', (code) => finish(code === 0 ? null : `writer ${label} exited with ${code}: ${stderr}`));
   }
   // Read while the writers run; stop when they end, fail, or after the deadline.
   const deadline = Date.now() + 30000;

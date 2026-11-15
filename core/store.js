@@ -1,22 +1,24 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const MAX_ATTEMPTS = 5;
+const RETRY_BUDGET_MS = 2000;
 
 function sleep(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-// On Windows, opening or renaming a file can fail briefly while another process
-// is renaming or reading it. Retry a few times, only for those errors.
+// On Windows, opening or renaming a file is denied (EPERM, EBUSY, EACCES) while another
+// process has it open or is renaming over it. The denial is short-lived, so retry for up
+// to about 2 s. The delay grows and has a random part so two writers do not retry in lockstep.
 function withWindowsRetry(action) {
+  const start = Date.now();
   for (let attempt = 1; ; attempt++) {
     try {
       return action();
     } catch (err) {
-      const busy = err.code === 'EPERM' || err.code === 'EBUSY';
-      if (!busy || process.platform !== 'win32' || attempt >= MAX_ATTEMPTS) throw err;
-      sleep(50);
+      const busy = err.code === 'EPERM' || err.code === 'EBUSY' || err.code === 'EACCES';
+      if (!busy || process.platform !== 'win32' || Date.now() - start >= RETRY_BUDGET_MS) throw err;
+      sleep(Math.min(10 * attempt, 100) + Math.floor(Math.random() * 21));
     }
   }
 }
