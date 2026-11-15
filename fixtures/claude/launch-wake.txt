@@ -1,0 +1,1 @@
+woke session 0f0b2950 with its saved options (--allowedTools, --permission-mode, --name, --settings, --setting-sources, --strict-mcp-config, --model).

@@ -1,2 +1,2 @@
-started a copy as 9c1d2e3f (from 0f0b2950)
-backgrounded · 9c1d2e3f · spike-note-e3c
+started a copy as 0334d933. `claude attach 6a25653f` opens the original.
+backgrounded · 0334d933

@@ -45,7 +45,7 @@ test('prompt is the last argument', () => {
 });
 
 test('never passes --session-id or --agents, and skips what the profile leaves out', () => {
-  const args = build({ profile: { name: 'bare', tools: [], model: null, effort: null, instructions: '' } });
+  const args = build({ profile: { name: 'bare', tools: [], model: null, effort: null, instructions: '' }, permissionMode: 'all' });
   assert.ok(!args.includes('--session-id'));
   assert.ok(!args.includes('--agents'));
   assert.ok(!args.includes('--model'));
@@ -59,4 +59,9 @@ test('compareVersion reads the claude version text', () => {
   assert.strictEqual(compareVersion('2.1.9 (Claude Code)', '2.1.325'), false);
   assert.strictEqual(compareVersion('3.0.0', '2.1.325'), true);
   assert.strictEqual(compareVersion('nonsense', '2.1.325'), false);
+});
+
+test('a profile without tools is refused in allowlist mode', () => {
+  assert.throws(() => build({ profile: { ...profile, tools: [] } }), { code: 'profile-without-tools' });
+  assert.doesNotThrow(() => build({ profile: { ...profile, tools: [] }, permissionMode: 'all' }));
 });

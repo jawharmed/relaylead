@@ -23,6 +23,15 @@ test('hook commands quote paths with spaces', () => {
   assert.strictEqual(permission.command, `"${process.execPath}" "${path.join(dir, 'core', 'hooks', 'permission.js')}"`);
 });
 
+test('hook commands keep a Windows path with backslashes and spaces', () => {
+  const dir = 'C:\\Program Files\\relay lead';
+  const command = settingsFor({ packageDir: dir }).hooks.PreToolUse[0].hooks[0].command;
+  assert.ok(command.includes(`"${path.join(dir, 'core', 'hooks', 'pretool.js')}"`));
+  assert.ok(command.startsWith(`"${process.execPath}" "`));
+  assert.ok(command.includes('C:\\Program Files\\relay lead'));
+  assert.strictEqual(JSON.parse(JSON.stringify({ command })).command, command);
+});
+
 test('settings carry mission, home and bash timeout', () => {
   const settings = settingsFor();
   assert.strictEqual(settings.env.RELAYLEAD_MISSION, 'demo');

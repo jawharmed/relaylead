@@ -4,7 +4,14 @@ const ALL_MODE_TOOLS = ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep'];
 
 // The tools a session may use: the profile's own, or the usual set in 'all' mode.
 function allowedTools(profile, permissionMode) {
-  return permissionMode === 'all' ? ALL_MODE_TOOLS : profile.tools;
+  if (permissionMode === 'all') return ALL_MODE_TOOLS;
+  // --allowedTools takes several values: with none, it would swallow the next option.
+  if (profile.tools.length === 0) {
+    const err = new Error(`profile "${profile.name}" lists no tools: an allowlist profile must list its tools`);
+    err.code = 'profile-without-tools';
+    throw err;
+  }
+  return profile.tools;
 }
 
 // Order matters: --allowedTools takes several values, so it goes first and nothing

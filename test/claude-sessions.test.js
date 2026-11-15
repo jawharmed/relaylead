@@ -9,10 +9,16 @@ const fixture = (name) => fs.readFileSync(path.join(__dirname, '..', 'fixtures',
 test('parses the short id, a copy and an untrusted folder from recorded outputs', () => {
   assert.deepStrictEqual(parseLaunchOutput(fixture('launch-ok.txt')), { shortId: '0f0b2950' });
   assert.deepStrictEqual(parseLaunchOutput(fixture('launch-ok-colour-crlf.txt')), { shortId: '7764803b' });
-  assert.deepStrictEqual(parseLaunchOutput(fixture('launch-copy.txt')), { shortId: '9c1d2e3f', copyOf: '0f0b2950' });
+  assert.deepStrictEqual(parseLaunchOutput(fixture('launch-copy.txt')), { shortId: '0334d933', copyOf: '6a25653f' });
+  assert.deepStrictEqual(parseLaunchOutput(fixture('launch-copy-2.txt')), { shortId: '8805d640', copyOf: '0f0b2950' });
+  assert.deepStrictEqual(parseLaunchOutput(fixture('launch-wake.txt')), { shortId: '0f0b2950', woke: true });
   assert.deepStrictEqual(parseLaunchOutput(fixture('launch-untrusted.txt')), { error: 'untrusted-dir' });
   assert.deepStrictEqual(parseLaunchOutput(fixture('launch-unknown.txt')), { error: 'unknown' });
   assert.deepStrictEqual(parseLaunchOutput(''), { error: 'unknown' });
+});
+
+test('an unknown state counts as working', () => {
+  assert.strictEqual(mapState({ id: 'a', name: 'm/crew/1', state: 'starting' }).state, 'working');
 });
 
 test('maps claude states', () => {
