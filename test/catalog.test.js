@@ -43,7 +43,8 @@ test('catalog profiles parse with the expected fields', () => {
   const developer = loadProfile('developer', { dir });
   assert.deepStrictEqual([developer.agent, developer.model, developer.effort], ['claude', 'sonnet', 'medium']);
   assert.deepStrictEqual(developer.tools, [
-    'Bash(git *)', 'Bash(npm test*)', 'Bash(node *)', 'Bash(relaylead task *)', 'Read', 'Write', 'Edit', 'Glob', 'Grep',
+    'Bash(git *)', 'Bash(npm test*)', 'Bash(npm ci*)', 'Bash(npm install*)', 'Bash(node *)', 'Bash(relaylead task *)',
+    'Read', 'Write', 'Edit', 'Glob', 'Grep',
   ]);
   for (const command of ['relaylead task done', 'relaylead task fail']) {
     assert.ok(developer.instructions.includes(command), `developer instructions should mention ${command}`);

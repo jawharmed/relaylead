@@ -2,12 +2,13 @@
 // tasks/<id>.json is written by the core, tasks/<id>.result.json by the crew member only.
 const fs = require('node:fs');
 const path = require('node:path');
-const { home, missionDir } = require('./paths');
+const { home, missionDir, slug } = require('./paths');
 const { writeJson, readJson } = require('./store');
 const { codedError } = require('./messages');
 const { readMission, getState } = require('./missions');
 const { recordSession, listSessions, isAlive } = require('./sessions');
 const { loadProfile } = require('./profiles');
+const { listQuestions } = require('./questions');
 const { getAdapter } = require('../adapters');
 const { getDelivery } = require('../deliveries');
 const tasksDirSource = require('../sources/tasks-dir');
@@ -92,12 +93,26 @@ function findTask(name, id) {
   return task;
 }
 
-function crewPrompt(task, cwd, branch) {
+// The question a task with `ask` needed answered before it starts (the lead asks it with the task
+// id as key), or null when the task asks nothing.
+function answeredQuestion(name, task) {
+  if (!task.ask) return null;
+  const question = listQuestions(name).find((candidate) => candidate.id === `q-${slug(task.id)}`);
+  if (!question || question.state !== 'answered') throw codedError('task-not-answered', { id: task.id });
+  return question;
+}
+
+function crewPrompt(task, cwd, branch, question) {
+  // The crew member cannot read the questions: the answer it needs comes with its task.
+  const asked = question
+    ? [`Question asked before this task: ${question.text}`, `Answer from the user: ${question.answer.choice}`, '']
+    : [];
   return [
     `Task ${task.id}: ${task.title}`,
     '',
     task.body.trim(),
     '',
+    ...asked,
     `Working folder: ${cwd}`,
     `Branch: ${branch || 'none'}`,
     '',
@@ -190,11 +205,14 @@ async function startTask(name, { id, profile = 'developer' }) {
 
 async function launchCrew(mission, id, profile) {
   const name = mission.name;
-  if (getState(name) === 'stopped') throw codedError('mission-stopped', { mission: name });
+  const state = getState(name);
+  if (state === 'stopped') throw codedError('mission-stopped', { mission: name });
+  if (state === 'done') throw codedError('mission-done', { mission: name });
   const task = findTask(name, id);
   if (task.state === 'running') return readJson(taskFile(name, id));
   if (task.state !== 'todo') throw codedError('task-not-startable', { id, state: task.state });
-  // Read before the task's folder or branch is made: an unknown profile leaves nothing behind.
+  // Checked before the task's folder or branch is made, so a refusal leaves nothing behind.
+  const question = answeredQuestion(name, task);
   const crewProfile = loadProfile(profile, { dir: mission.dir });
 
   const { cwd, branch } = getDelivery(mission.config.delivery.type).prepareTask(mission, task);
@@ -205,7 +223,7 @@ async function launchCrew(mission, id, profile) {
     name: `${name}/${profile}/${number}`,
     role: 'crew',
     profile: crewProfile,
-    prompt: crewPrompt(task, cwd, branch),
+    prompt: crewPrompt(task, cwd, branch, question),
     cwd,
     env: { RELAYLEAD_MISSION: name, RELAYLEAD_HOME: home(), RELAYLEAD_TASK: id },
     permissionMode: mission.config.permissionMode,

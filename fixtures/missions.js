@@ -9,6 +9,9 @@ const { listMissions } = require('../core/missions');
 const fake = require('../adapters/fake');
 const { tmpDir } = require('./helpers');
 
+// Taken now, so the cleanup still kills sessions when a test has replaced fake.stop.
+const stopSession = fake.stop;
+
 const TASK_A = '---\ntitle: First task\n---\n\nWrite the first file.\n';
 const TASK_B = '---\ntitle: Second task\ndepends: [a]\n---\n\nWrite the second file.\n';
 
@@ -24,7 +27,7 @@ function setupProject(t, mission) {
   fs.writeFileSync(path.join(dir, 'tasks', 'b.md'), TASK_B);
   t.after(async () => {
     process.env.RELAYLEAD_HOME = home;
-    for (const session of listSessions(mission)) await fake.stop(session);
+    for (const session of listSessions(mission)) await stopSession(session);
   });
   return dir;
 }
@@ -39,7 +42,7 @@ function freshHome(t) {
   t.after(async () => {
     process.env.RELAYLEAD_HOME = home;
     for (const mission of listMissions()) {
-      for (const session of listSessions(mission.name)) await fake.stop(session);
+      for (const session of listSessions(mission.name)) await stopSession(session);
     }
   });
 }

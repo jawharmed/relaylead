@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { run } = require('../core/cli');
-const { listMissions, lockFile } = require('../core/missions');
+const { listMissions, lockFile, reapLead } = require('../core/missions');
 const { listSessions, recordSession, isAlive } = require('../core/sessions');
 const { readJson, writeJson } = require('../core/store');
 const { missionDir } = require('../core/paths');
@@ -314,4 +314,100 @@ test('the helper exits at once when the lead is no longer working', { timeout: 2
   const reaped = await cliProcess(['_reap', 'demo']);
 
   assert.deepStrictEqual([reaped.code, reaped.err], [0, '']);
+});
+
+// A crew session of mission demo that stays alive until stopped.
+async function launchCrew(dir, number) {
+  const crew = await fake.launch({
+    mission: 'demo',
+    name: `demo/developer/${number}`,
+    role: 'crew',
+    profile: null,
+    prompt: '',
+    cwd: dir,
+    env: { RELAYLEAD_MISSION: 'demo' },
+    permissionMode: 'allowlist',
+  });
+  recordSession('demo', crew);
+  return crew;
+}
+
+// Replaces fake[name] for the test.
+function stub(t, name, replacement) {
+  const original = fake[name];
+  fake[name] = replacement(original);
+  t.after(() => {
+    fake[name] = original;
+  });
+}
+
+test('a failing crew stop does not keep the others running, and the lock is released last', async (t) => {
+  freshHome(t);
+  const dir = tmpDir('relaylead-project-');
+  assert.strictEqual((await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir])).code, 0);
+  await waitUntilWorking('demo');
+  const first = await launchCrew(dir, 1);
+  const second = await launchCrew(dir, 2);
+  const lock = lockFile(fs.realpathSync.native(dir));
+  const lockSeen = [];
+  stub(t, 'stop', (original) => async (session) => {
+    lockSeen.push(fs.existsSync(lock));
+    if (session.shortId === first.shortId) throw new Error('stop failed');
+    return original(session);
+  });
+
+  const done = await cli(['state', 'set', 'done', '--mission', 'demo']);
+
+  assert.strictEqual(done.code, 1);
+  assert.match(done.err, /stop failed/);
+  await waitFor(() => !isAlive(second.pid), 30000, 'the second crew member to end');
+  assert.deepStrictEqual(lockSeen, [true, true]);
+  assert.strictEqual(fs.existsSync(lock), false);
+  assert.strictEqual((await cli(['state', 'get', '--mission', 'demo'])).out.trim(), 'done');
+});
+
+// The lead as the registry knows it, once the mission demo is launched.
+async function launchedLead(t) {
+  freshHome(t);
+  const dir = tmpDir('relaylead-project-');
+  assert.strictEqual((await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir])).code, 0);
+  await waitUntilWorking('demo');
+  return listSessions('demo')[0];
+}
+
+test('the helper stops a lead that is done but still has a process', async (t) => {
+  const lead = await launchedLead(t);
+  stub(t, 'list', () => async () => [{ ...lead, state: 'done' }]);
+
+  await reapLead('demo');
+
+  await waitFor(() => !isAlive(lead.pid), 30000, 'the lead to be stopped');
+});
+
+test('the helper keeps polling when the list fails, then stops the lead at the deadline', async (t) => {
+  const lead = await launchedLead(t);
+  stub(t, 'list', () => async () => {
+    throw new Error('list failed');
+  });
+  process.env.RELAYLEAD_REAP_MAX_MS = '200';
+  t.after(() => {
+    delete process.env.RELAYLEAD_REAP_MAX_MS;
+  });
+
+  await reapLead('demo');
+
+  await waitFor(() => !isAlive(lead.pid), 30000, 'the lead to be stopped');
+});
+
+test('the helper writes to the journal when it cannot stop the lead', async (t) => {
+  const lead = await launchedLead(t);
+  stub(t, 'list', () => async () => [{ ...lead, state: 'done' }]);
+  stub(t, 'stop', () => async () => {
+    throw new Error('stop failed');
+  });
+
+  await reapLead('demo');
+
+  const journal = fs.readFileSync(path.join(missionDir('demo'), 'journal.log'), 'utf8');
+  assert.match(journal, new RegExp(`could not stop the lead ${lead.shortId}: stop failed`));
 });

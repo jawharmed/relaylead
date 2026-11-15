@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { checkToolUse, isAllowed, denyMessage } = require('../core/guard');
@@ -131,7 +132,9 @@ test('a cd that may not have happened keeps the first folder possible', () => {
   const crew = repoOn('relaylead/x');
   const missing = path.join(tmpDir(), 'missing');
   assertDenied(bash(`cd "${missing}"; git push`, main), 'push to protected branch main');
-  assertDenied(bash(`cd "${missing}" && true; git push`, main), 'push to protected branch main');
+  assertDenied(bash(`cd "${crew}" && true; git push`, main), 'push to protected branch main');
+  // In the missing folder itself, git cannot read a branch.
+  assertDenied(bash(`cd "${missing}" && git push`, main), 'push to an unreadable branch: current branch unknown');
   assertDenied(bash(`(cd "${crew}"); git commit -m wip`, main), 'commit on protected branch main');
   assertDenied(bash(`cd "${crew}" | true; git commit -m wip`, main), 'commit on protected branch main');
   assertDenied(bash('cd "$DIR" && git push', crew), 'push to a branch that cannot be judged');
@@ -153,8 +156,17 @@ test('bare git push on a crew branch is allowed', () => {
   assert.deepStrictEqual(bash('git push', repoOn('relaylead/x')), ALLOW);
 });
 
-test('bare git push outside a repository is allowed', () => {
-  assert.deepStrictEqual(bash('git push', tmpDir('relaylead not a repo-')), ALLOW);
+test('bare git push or commit where the current branch cannot be read is refused', () => {
+  const notARepo = tmpDir('relaylead not a repo-');
+  assertDenied(bash('git push', notARepo), 'push to an unreadable branch: current branch unknown');
+  assertDenied(bash('git commit -m wip', notARepo), 'commit on an unreadable branch: current branch unknown');
+});
+
+test('bare git push on an unborn main branch is refused', () => {
+  const dir = fs.realpathSync.native(tmpDir('relaylead unborn-'));
+  git(dir, 'init', '-q', '-b', 'main');
+  assertDenied(bash('git push', dir), 'push to protected branch main');
+  assertDenied(bash('git commit -m first', dir), 'commit on protected branch main');
 });
 
 test('bare git push -C, --git-dir or --work-tree on main is refused', () => {

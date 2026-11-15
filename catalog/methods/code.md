@@ -14,15 +14,18 @@ The project lists its tasks, one Markdown file per task; `relaylead task list` s
    - if its `ask` is not null, ask its question first (see "Tasks that ask first") and start it only once the answer says to go ahead;
    - otherwise start it: `relaylead task start <id>`.
 5. Report every new failure with a question (see "When something fails").
-6. If the end criterion below is met, finish. Otherwise run `relaylead wait`, then go back to step 2. If nothing can move until the user answers a question, run `relaylead state set waiting --note "<what you wait for>"` first, and `relaylead state set working` once it moves again.
+6. If the end criterion below is met, finish. Otherwise run `relaylead wait --timeout 540`: on an empty list of changes, run it again directly; on changes, go back to step 2. If nothing can move until the user answers a question, run `relaylead state set waiting --note "<what you wait for>"` first, and `relaylead state set working` once it moves again.
 
 ## End criterion
 
 The mission is finished when every task of the project is in one of these cases:
 
 - delivered;
-- failed, or not deliverable, and reported to the user, who chose to finish without it;
-- set aside, because the user answered not to do it;
-- unable to start because a task it depends on is in one of the two cases above.
+- failed, and reported to the user;
+- not deliverable, reported to the user, who chose to finish without it;
+- set aside, because the user answered "Skip this task";
+- unable to start because a task it depends on is in one of the cases above.
+
+Only wait for the answers that change what happens next (a task that asks first, a failed delivery). A failed task's question needs no answer once everything else is settled.
 
 Then run `relaylead state set done --note "<what was delivered, failed or set aside>"`, and end your turn.

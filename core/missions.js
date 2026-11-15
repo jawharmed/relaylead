@@ -9,13 +9,14 @@ const { loadConfig } = require('./config');
 const { codedError } = require('./messages');
 const { recordSession, listSessions, isAlive } = require('./sessions');
 const { loadProfile, loadMethod } = require('./profiles');
+const { writeJournal } = require('./guard');
 const { getAdapter } = require('../adapters');
 const { getDelivery } = require('../deliveries');
 
 // States the lead may declare. 'stopped' is written by the core only.
 const STATES = ['starting', 'working', 'waiting', 'done'];
 const BIN = path.join(__dirname, '..', 'bin', 'relaylead.js');
-const REAP_POLL_MS = 1000;
+const REAP_POLL_MS = 2000;
 // How long the helper waits for the lead to end its turn after `state set done`; tests shorten it.
 const reapMaxMs = () => Number(process.env.RELAYLEAD_REAP_MAX_MS) || 10 * 60 * 1000;
 
@@ -196,23 +197,35 @@ async function setState(name, state, note) {
   if (readState(name) === 'stopped') throw codedError('mission-stopped', { mission: name });
   writeJson(missionFile(name, 'state.json'), { state, note, updatedAt: now() });
   if (state === 'done') {
-    releaseLock(mission.dir, name);
-    await endMission(mission);
+    // The lock is released last: until the crew is stopped, the folder is still in use.
+    try {
+      await endMission(mission);
+    } finally {
+      releaseLock(mission.dir, name);
+    }
   }
 }
 
 // Once the mission is done, no session of it may keep running. The crew is stopped now. The lead
 // cannot be: this very command runs inside its turn. A detached helper stops it once its turn is over.
+// A stop that fails does not keep the other sessions running: its error is thrown at the end.
 async function endMission(mission) {
   const adapter = getAdapter(mission.agent);
   const lead = readJson(missionFile(mission.name, 'lead.json'), {});
+  let firstError = null;
   try {
     for (const session of await adapter.list(mission.name)) {
-      if (session.shortId !== lead.shortId && session.state !== 'stopped') await adapter.stop(session);
+      if (session.shortId === lead.shortId || session.state === 'stopped') continue;
+      try {
+        await adapter.stop(session);
+      } catch (err) {
+        firstError = firstError || err;
+      }
     }
   } finally {
     await spawnReaper(mission.name);
   }
+  if (firstError) throw firstError;
 }
 
 // Runs `relaylead _reap <mission>` on its own: it outlives this command and the lead's turn.
@@ -231,20 +244,31 @@ async function spawnReaper(name) {
   child.unref();
 }
 
-// The helper: waits until the lead is no longer working (10 min at most), then stops it.
+// The helper: waits until the lead is no longer working (10 min at most), then stops it. A failing
+// list is tried again until the deadline; then the lead is stopped anyway. Nobody watches the
+// helper, so a stop that fails is written to the mission's journal.
 async function reapLead(name) {
   const mission = readMission(name);
   const adapter = getAdapter(mission.agent);
   const lead = readJson(missionFile(name, 'lead.json'), {});
   const giveUpAt = Date.now() + reapMaxMs();
-  for (;;) {
-    const session = (await adapter.list(name)).find((candidate) => candidate.shortId === lead.shortId);
-    if (!session || session.state === 'stopped') return;
-    if (session.state !== 'working' || Date.now() >= giveUpAt) {
-      await adapter.stop(session);
-      return;
+  while (Date.now() < giveUpAt) {
+    try {
+      const session = (await adapter.list(name)).find((candidate) => candidate.shortId === lead.shortId);
+      if (!session || session.state === 'stopped') return;
+      if (session.state !== 'working') break;
+    } catch {
+      // `claude agents` may fail for a moment: try again at the next turn.
     }
     await sleep(REAP_POLL_MS);
+  }
+  // The registry record: it has the pid and short id the adapter needs, even when the list failed.
+  const session = listSessions(name).find((candidate) => candidate.shortId === lead.shortId);
+  if (!session) return;
+  try {
+    await adapter.stop(session);
+  } catch (err) {
+    writeJournal(name, 'reaper', `could not stop the lead ${lead.shortId}: ${err.message}`);
   }
 }
 

@@ -36,6 +36,9 @@ const messages = {
     'session-exists': 'mission "{mission}" already has another session with the short id {shortId}',
     'task-unknown': 'mission "{mission}" has no task "{id}"; see the tasks with: relaylead task list',
     'task-not-startable': 'task "{id}" is {state}; only a todo task can be started',
+    'task-not-answered':
+      'task "{id}" asks a question first; ask it with: relaylead question ask --key {id} …, and start the task once it is answered',
+    'mission-done': 'mission "{mission}" is done; no task can start',
     'start-busy': 'another task of mission "{mission}" has been starting or delivering for a minute; try again',
     'task-not-deliverable': 'task "{id}" is {state}; only a done task can be delivered',
     'protected-branch':
@@ -124,6 +127,9 @@ const messages = {
     'session-exists': 'la mission « {mission} » a déjà une autre session d\'id court {shortId}',
     'task-unknown': 'la mission « {mission} » n\'a pas de tâche « {id} » ; voir les tâches avec : relaylead task list',
     'task-not-startable': 'la tâche « {id} » est {state} ; seule une tâche todo peut être lancée',
+    'task-not-answered':
+      'la tâche « {id} » pose d\'abord une question ; posez-la avec : relaylead question ask --key {id} …, puis lancez la tâche une fois la réponse donnée',
+    'mission-done': 'la mission « {mission} » est terminée ; aucune tâche ne peut être lancée',
     'start-busy': 'une autre tâche de la mission « {mission} » est en lancement ou en livraison depuis une minute ; réessayez',
     'task-not-deliverable': 'la tâche « {id} » est {state} ; seule une tâche done peut être livrée',
     'protected-branch':
