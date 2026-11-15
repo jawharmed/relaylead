@@ -249,7 +249,7 @@ Programme Node.js lancé toutes les 5 min par le planificateur du système (laun
 
 ### Alertes
 
-La notification `system` (locale) part toujours quand elle est disponible, mais elle ne prouve pas que l'humain l'a vue : sous macOS, `osascript` répond « réussi » même quand l'Éditeur de script n'a pas le droit de notifier et que rien ne s'affiche. L'installation envoie donc une notification de test, demande à l'utilisateur s'il l'a vue et, sinon, lui dit quoi autoriser (Réglages Système › Notifications › Éditeur de script). Ensuite, liste ordonnée de canaux distants, chacun avec une condition ; le premier qui réussit gagne :
+La notification `system` (locale) part toujours quand elle est disponible, mais elle ne prouve pas que l'humain l'a vue : sous macOS, `osascript` répond « réussi » même quand l'Éditeur de script n'a pas le droit de notifier et que rien ne s'affiche. L'installation envoie donc une notification de test, demande à l'utilisateur s'il l'a vue et, sinon, lui dit quoi faire : l'Éditeur de script n'apparaît dans Réglages Système › Notifications qu'après une première demande, qu'on déclenche en ouvrant dans l'Éditeur de script un petit script de test à exécuter. Une fois autorisé, l'envoi depuis le terminal est reçu (vérifié). Ensuite, liste ordonnée de canaux distants, chacun avec une condition ; le premier qui réussit gagne :
 
 ```json
 "alerts": [
