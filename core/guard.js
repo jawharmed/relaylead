@@ -14,6 +14,8 @@ const CASE_INSENSITIVE = process.platform === 'win32' || process.platform === 'd
 
 // The branch of a folder reached through `cd $DIR` or `cd -`: only known when the shell runs.
 const COMPUTED = '$computed';
+// The current branch when git could not read it: a bare push or a commit there is refused.
+const UNKNOWN = '$unknown';
 
 // Words that start a shell construct: the command itself comes after them.
 const SHELL_KEYWORDS = ['{', '}', '!', 'if', 'then', 'else', 'elif', 'do', 'while', 'until', 'time'];
@@ -209,25 +211,29 @@ function moveTo(dir, target) {
   return path.resolve(dir, expanded);
 }
 
-// The branch checked out in `dir`: null when there is none (not a repository, detached HEAD),
-// COMPUTED when the folder itself is unknown.
+// The branch checked out in `dir`: null on a detached HEAD, COMPUTED when the folder itself is
+// unknown, UNKNOWN when git cannot say (not a repository, git too slow or failing).
+// `rev-parse` fails on a branch with no commit yet: `symbolic-ref` still names it.
 function currentBranch(dir) {
   if (dir === null) return COMPUTED;
+  const options = { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10000, windowsHide: true };
   try {
-    const branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
-      cwd: dir,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
+    const branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], options).trim();
     return branch === 'HEAD' ? null : branch;
   } catch {
-    return null;
+    // try the other way below
+  }
+  try {
+    return execFileSync('git', ['symbolic-ref', '--short', 'HEAD'], options).trim();
+  } catch {
+    return UNKNOWN;
   }
 }
 
 // Reason to refuse `action` ('push to', 'commit on') on `branch`, or null.
 function branchRefusal(action, branch, guard) {
   if (branch === null) return null;
+  if (branch === UNKNOWN) return `${action} an unreadable branch: current branch unknown`;
   // `$BRANCH`, `$(…)`, an unknown folder, a pattern such as `refs/heads/*`, or `{main,x}`.
   if (/[$*?[{]/.test(branch)) return `${action} a branch that cannot be judged`;
   if (guard.protectedBranches.some((pattern) => globMatch(pattern, branch))) {

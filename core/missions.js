@@ -2,19 +2,30 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawn } = require('node:child_process');
 const { home, missionDir, slug } = require('./paths');
 const { writeJson, readJson } = require('./store');
 const { loadConfig } = require('./config');
 const { codedError } = require('./messages');
 const { recordSession, listSessions, isAlive } = require('./sessions');
+const { loadProfile, loadMethod } = require('./profiles');
+const { writeJournal } = require('./guard');
 const { getAdapter } = require('../adapters');
 const { getDelivery } = require('../deliveries');
 
 // States the lead may declare. 'stopped' is written by the core only.
 const STATES = ['starting', 'working', 'waiting', 'done'];
+const BIN = path.join(__dirname, '..', 'bin', 'relaylead.js');
+const REAP_POLL_MS = 2000;
+// How long the helper waits for the lead to end its turn after `state set done`; tests shorten it.
+const reapMaxMs = () => Number(process.env.RELAYLEAD_REAP_MAX_MS) || 10 * 60 * 1000;
 
 function now() {
   return new Date().toISOString();
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function missionFile(name, file) {
@@ -90,6 +101,9 @@ async function createMission({ name, dir, request, team, priority, agent, params
   const config = loadConfig({ dir: realDir, params });
   const adapter = getAdapter(agent || config.agent);
   const delivery = getDelivery(config.delivery.type);
+  // Read before anything is created: an unknown profile or method leaves nothing behind.
+  const leadProfile = loadProfile('lead', { dir: realDir });
+  const method = loadMethod(config.method, { dir: realDir });
 
   takeLock(realDir, missionName);
   let reserved = false;
@@ -115,8 +129,8 @@ async function createMission({ name, dir, request, team, priority, agent, params
       mission: missionName,
       name: `${missionName}/lead/1`,
       role: 'lead',
-      profile: null,
-      prompt: request || '',
+      profile: leadProfile,
+      prompt: leadPrompt(method, mission),
       cwd: realDir,
       env: { RELAYLEAD_MISSION: missionName, RELAYLEAD_HOME: home() },
       permissionMode: config.permissionMode,
@@ -144,6 +158,22 @@ async function createMission({ name, dir, request, team, priority, agent, params
   }
 }
 
+// The lead's first message: the method to follow, then this mission. The lead profile's own
+// instructions go with the profile (the adapter passes them as a system prompt).
+function leadPrompt(method, mission) {
+  return [
+    method.instructions.trim(),
+    '',
+    '## This mission',
+    '',
+    `Mission: ${mission.name}`,
+    `Limit: at most ${mission.config.parallel} tasks running at a time.`,
+    '',
+    'Request from the user:',
+    mission.request || 'No request was given: carry out the tasks listed by `relaylead task list`.',
+  ].join('\n');
+}
+
 function readMission(name) {
   const mission = readJson(missionFile(name, 'mission.json'), null);
   if (!mission) throw codedError('mission-unknown', { mission: name });
@@ -160,13 +190,95 @@ function getState(name) {
   return readState(name);
 }
 
-function setState(name, state, note) {
+async function setState(name, state, note) {
   const mission = readMission(name);
   if (!STATES.includes(state)) throw codedError('bad-state', { state, states: STATES.join(', ') });
   // A lead restarted after a stop must not erase the stop.
   if (readState(name) === 'stopped') throw codedError('mission-stopped', { mission: name });
   writeJson(missionFile(name, 'state.json'), { state, note, updatedAt: now() });
-  if (state === 'done') releaseLock(mission.dir, name);
+  if (state === 'done') {
+    // The lock is released last: until the crew is stopped, the folder is still in use.
+    try {
+      await endMission(mission);
+    } finally {
+      releaseLock(mission.dir, name);
+    }
+  }
+}
+
+// Once the mission is done, no session of it may keep running. The crew is stopped now. The lead
+// cannot be: this very command runs inside its turn. A detached helper stops it once its turn is over.
+// A stop that fails does not keep the other sessions running: its error is thrown at the end.
+async function endMission(mission) {
+  const adapter = getAdapter(mission.agent);
+  const lead = readJson(missionFile(mission.name, 'lead.json'), {});
+  let firstError = null;
+  try {
+    for (const session of await adapter.list(mission.name)) {
+      if (session.shortId === lead.shortId || session.state === 'stopped') continue;
+      try {
+        await adapter.stop(session);
+      } catch (err) {
+        firstError = firstError || err;
+      }
+    }
+  } finally {
+    await spawnReaper(mission.name);
+  }
+  if (firstError) throw firstError;
+}
+
+// Runs `relaylead _reap <mission>` on its own: it outlives this command and the lead's turn.
+// No shell, so a path with spaces or quotes is passed as it is.
+async function spawnReaper(name) {
+  const child = spawn(process.execPath, [BIN, '_reap', name], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+  // Without an 'error' listener, a failed start would crash the whole process.
+  await new Promise((resolve, reject) => {
+    child.once('spawn', resolve);
+    child.once('error', reject);
+  });
+  child.unref();
+}
+
+// The helper: waits until the lead is no longer working (10 min at most), then stops it. A failing
+// list is tried again until the deadline; then the lead is stopped anyway. Nobody watches the
+// helper, so a stop that fails is written to the mission's journal.
+async function reapLead(name) {
+  const mission = readMission(name);
+  const adapter = getAdapter(mission.agent);
+  const lead = readJson(missionFile(name, 'lead.json'), {});
+  const giveUpAt = Date.now() + reapMaxMs();
+  while (Date.now() < giveUpAt) {
+    try {
+      const session = (await adapter.list(name)).find((candidate) => candidate.shortId === lead.shortId);
+      if (!session || session.state === 'stopped') return;
+      if (session.state !== 'working') break;
+    } catch {
+      // `claude agents` may fail for a moment: try again at the next turn.
+    }
+    await sleep(REAP_POLL_MS);
+  }
+  // The registry record: it has the pid and short id the adapter needs, even when the list failed.
+  const session = listSessions(name).find((candidate) => candidate.shortId === lead.shortId);
+  if (!session) return;
+  try {
+    await adapter.stop(session);
+  } catch (err) {
+    writeJournal(name, 'reaper', `could not stop the lead ${lead.shortId}: ${err.message}`);
+  }
+}
+
+// `relaylead show`: the user's terminal joins the lead's session. Resolves with its exit code.
+async function attachLead(name) {
+  const mission = readMission(name);
+  const lead = readJson(missionFile(name, 'lead.json'), null);
+  const session = lead && listSessions(name).find((candidate) => candidate.shortId === lead.shortId);
+  if (!session) throw codedError('no-lead', { mission: name });
+  return getAdapter(mission.agent).attach(session);
 }
 
 function listMissions() {
@@ -211,4 +323,14 @@ async function stopMission(name) {
   releaseLock(mission.dir, name);
 }
 
-module.exports = { createMission, listMissions, stopMission, readMission, getState, setState, lockFile };
+module.exports = {
+  createMission,
+  listMissions,
+  stopMission,
+  readMission,
+  getState,
+  setState,
+  reapLead,
+  attachLead,
+  lockFile,
+};

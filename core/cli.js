@@ -1,19 +1,11 @@
 const path = require('node:path');
 const { t, codedError } = require('./messages');
 const { loadConfig } = require('./config');
-const { createMission, listMissions, stopMission, getState, setState } = require('./missions');
+const { createMission, listMissions, stopMission, getState, setState, reapLead, attachLead } = require('./missions');
 const { listTasks, startTask, deliverTask, finishTask } = require('./tasks');
 const { waitForChanges } = require('./wait');
 const { askQuestion, answerQuestion, listQuestions } = require('./questions');
 const pkg = require('../package.json');
-
-// A sub-command not delivered yet.
-function notImplemented(name) {
-  return async (args, io) => {
-    io.err.write(t('notImplemented', { command: name }));
-    return 1;
-  };
-}
 
 // Options that take no value.
 const FLAGS = ['all'];
@@ -50,11 +42,8 @@ function language(io) {
   }
 }
 
-// Each sub-command is (args, io) -> Promise<exit code>. Later tasks replace the placeholders.
+// Each sub-command is (args, io) -> Promise<exit code>.
 const commands = {};
-for (const name of ['launch', 'list', 'show', 'stop', 'task', 'state', 'wait', 'question', 'answer']) {
-  commands[name] = notImplemented(name);
-}
 
 commands.launch = async (args, io) => {
   const { options } = parseArgs(args);
@@ -78,6 +67,12 @@ commands.list = async (args, io) => {
     io.out.write(`${mission.name}  ${mission.state}  ${lead}  ${mission.dir}\n`);
   }
   return 0;
+};
+
+commands.show = async (args) => {
+  const [name] = parseArgs(args).positional;
+  if (!name) throw codedError('usage', { usage: 'relaylead show <mission>' });
+  return attachLead(name);
 };
 
 commands.stop = async (args, io) => {
@@ -105,7 +100,7 @@ commands.state = async (args, io) => {
   if (action === 'get') {
     io.out.write(getState(mission) + '\n');
   } else {
-    setState(mission, state, options.note);
+    await setState(mission, state, options.note);
   }
   return 0;
 };
@@ -179,6 +174,12 @@ commands.answer = async (args, io) => {
   }
   const chosen = answerQuestion(mission, id, choice);
   io.out.write(t('questionAnswered', { id, choice: chosen }, language(io)));
+  return 0;
+};
+
+// Internal, not in the help: started by `state set done`, it stops the lead once its turn is over.
+commands._reap = async (args) => {
+  await reapLead(parseArgs(args).positional[0]);
   return 0;
 };
 
