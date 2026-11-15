@@ -1,19 +1,21 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
+const MAX_ATTEMPTS = 5;
+
 function sleep(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-// On Windows, rename can fail briefly when another process holds the file.
-function renameWithRetry(from, to) {
+// On Windows, opening or renaming a file can fail briefly while another process
+// is renaming or reading it. Retry a few times, only for those errors.
+function withWindowsRetry(action) {
   for (let attempt = 1; ; attempt++) {
     try {
-      fs.renameSync(from, to);
-      return;
+      return action();
     } catch (err) {
       const busy = err.code === 'EPERM' || err.code === 'EBUSY';
-      if (!busy || process.platform !== 'win32' || attempt >= 5) throw err;
+      if (!busy || process.platform !== 'win32' || attempt >= MAX_ATTEMPTS) throw err;
       sleep(50);
     }
   }
@@ -24,9 +26,9 @@ function writeJson(file, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const random = Math.random().toString(36).slice(2, 10);
   const tmp = `${file}.${process.pid}.${random}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n');
   try {
-    renameWithRetry(tmp, file);
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n');
+    withWindowsRetry(() => fs.renameSync(tmp, file));
   } catch (err) {
     fs.rmSync(tmp, { force: true });
     throw err;
@@ -36,7 +38,7 @@ function writeJson(file, data) {
 function readJson(file, fallback) {
   let text;
   try {
-    text = fs.readFileSync(file, 'utf8');
+    text = withWindowsRetry(() => fs.readFileSync(file, 'utf8'));
   } catch (err) {
     if (err.code === 'ENOENT') return fallback;
     throw err;

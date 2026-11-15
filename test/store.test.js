@@ -31,18 +31,26 @@ test('concurrent writers never leave a truncated file', async () => {
   const file = path.join(tmpDir(), 'shared.json');
   writeJson(file, { writer: 'init' });
   const helper = path.join(__dirname, '..', 'fixtures', 'writer.js');
-  const children = ['a', 'b'].map((label) => new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [helper, file, label, '200'], { stdio: 'inherit' });
-    child.on('error', reject);
-    child.on('exit', (code) => (code === 0 ? resolve() : reject(new Error('writer exit ' + code))));
-  }));
+  const failures = [];
+  let running = 2;
+  for (const label of ['a', 'b']) {
+    const child = spawn(process.execPath, [helper, file, label, '200'], { stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', (err) => { failures.push(String(err)); running--; });
+    child.on('exit', (code) => {
+      if (code !== 0) failures.push(`writer ${label} exited with ${code}: ${stderr}`);
+      running--;
+    });
+  }
+  // Read while the writers run; stop when they end, fail, or after the deadline.
+  const deadline = Date.now() + 30000;
   let reads = 0;
-  let running = true;
-  Promise.all(children).then(() => { running = false; });
-  while (running || reads < 200) {
+  while ((running > 0 || reads < 200) && failures.length === 0 && Date.now() < deadline) {
     assert.ok(readJson(file).writer); // throws if the file is truncated
     reads++;
     await new Promise((resolve) => setImmediate(resolve));
   }
-  await Promise.all(children);
+  assert.deepStrictEqual(failures, []);
+  assert.ok(running === 0, 'writers did not finish within 30 s');
 });

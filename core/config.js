@@ -24,6 +24,7 @@ function isPlainObject(value) {
 function deepMerge(base, extra) {
   const result = { ...base };
   for (const [key, value] of Object.entries(extra)) {
+    if (value === undefined) continue;
     result[key] = isPlainObject(value) && isPlainObject(base[key]) ? deepMerge(base[key], value) : value;
   }
   return result;
@@ -33,7 +34,7 @@ function deepMerge(base, extra) {
 function loadConfig({ dir, params } = {}) {
   const machine = readJson(path.join(home(), 'config.json'), {});
   const project = dir ? readJson(path.join(dir, '.relaylead.json'), {}) : {};
-  return deepMerge(deepMerge(deepMerge(DEFAULTS, machine), project), params || {});
+  return deepMerge(deepMerge(deepMerge(structuredClone(DEFAULTS), machine), project), params || {});
 }
 
 // Secrets are never stored in config: only "env:NAME" or "file:path" references.
