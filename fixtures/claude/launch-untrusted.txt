@@ -1,1 +1,1 @@
-Workspace not trusted. Run `claude` in /tmp/some project once and accept the trust prompt
+Workspace not trusted. Run `claude` in /path/to/dir once and accept the trust prompt, then retry.

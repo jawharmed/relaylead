@@ -10,10 +10,12 @@ function hookEntry(packageDir, script) {
   return [{ hooks: [{ type: 'command', command: `"${process.execPath}" "${file}"` }] }];
 }
 
-// Pure: builds the settings object, writes nothing.
-function sessionSettings({ mission, packageDir, profile, permissionMode }) {
+// Pure: builds the settings object, writes nothing. `env` is the session's own environment (a
+// background session does not inherit the launcher's); the fixed keys below win over it.
+function sessionSettings({ mission, packageDir, profile, permissionMode, env = {} }) {
   const settings = {
     env: {
+      ...env,
       RELAYLEAD_MISSION: mission.name,
       RELAYLEAD_HOME: home(),
       BASH_DEFAULT_TIMEOUT_MS: '600000',
@@ -29,9 +31,9 @@ function sessionSettings({ mission, packageDir, profile, permissionMode }) {
 }
 
 // Writes missions/<mission>/settings/<session name, "/" as "-">.json and returns its path.
-function writeSessionSettings({ mission, packageDir, profile, permissionMode, sessionName }) {
+function writeSessionSettings({ mission, packageDir, profile, permissionMode, sessionName, env }) {
   const file = path.join(missionDir(mission.name), 'settings', `${sessionName.replace(/\//g, '-')}.json`);
-  writeJson(file, sessionSettings({ mission, packageDir, profile, permissionMode }));
+  writeJson(file, sessionSettings({ mission, packageDir, profile, permissionMode, env }));
   return file;
 }
 

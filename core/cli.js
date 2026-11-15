@@ -202,7 +202,9 @@ async function run(argv, io) {
     return await commands[first](args, io);
   } catch (err) {
     // Expected errors (codedError) are printed in the user's language; others show their own text.
-    const text = err.vars ? t(err.code, err.vars, language(io)) : err.message;
+    // err.suffix says what became of a session the failure left behind (stopped, or still running).
+    let text = err.message;
+    if (err.vars) text = t(err.code, err.vars, language(io)) + (err.suffix ? t(err.suffix.key, err.suffix.vars, language(io)) : '');
     io.err.write(`relaylead ${first}: ${text}\n`);
     return 1;
   }

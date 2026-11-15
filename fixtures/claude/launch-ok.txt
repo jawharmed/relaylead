@@ -1,1 +1,4 @@
 backgrounded · 0f0b2950 · demo-mission/lead/1
+  claude attach 0f0b2950    open in this terminal
+  claude logs 0f0b2950      show recent output
+  claude stop 0f0b2950      stop this session
