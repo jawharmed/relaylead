@@ -162,7 +162,7 @@ test('refuses a protected integration branch', async (t) => {
   const before = checkoutState(dir);
 
   const launched = await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir]);
-  assert.strictEqual(launched.code, 1);
+  assert.strictEqual(launched.code, 1, launched.err);
   assert.match(launched.err, /"main" is protected/);
   assert.strictEqual(fs.existsSync(missionDir('demo')), false);
   assert.strictEqual(fs.existsSync(path.join(dir, '.relaylead')), false);
@@ -174,7 +174,7 @@ test('refuses a folder that is not a git repository', async (t) => {
   const dir = tmpDir('relaylead project-');
 
   const launched = await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir]);
-  assert.strictEqual(launched.code, 1);
+  assert.strictEqual(launched.code, 1, launched.err);
   assert.match(launched.err, /not the root of a git repository/);
   assert.strictEqual(fs.existsSync(missionDir('demo')), false);
 });
@@ -194,7 +194,7 @@ test('files delivery checks the output folder', async (t) => {
   finishTask('demo', 'a', { state: 'done' });
 
   const refused = await deliver('a');
-  assert.strictEqual(refused.code, 1);
+  assert.strictEqual(refused.code, 1, refused.err);
   assert.match(refused.err, /output folder .* is empty/);
   assert.strictEqual(listTasks('demo')[0].state, 'done');
 
@@ -228,10 +228,11 @@ test('a merge conflict is aborted and the task stays done', async (t) => {
   const mission = preparedMission(dir);
   finishedTask(mission, 'a', 'shared.txt', 'from a');
   finishedTask(mission, 'c', 'shared.txt', 'from c');
-  assert.strictEqual((await deliver('a')).code, 0);
+  const first = await deliver('a');
+  assert.strictEqual(first.code, 0, first.err);
 
   const refused = await deliver('c');
-  assert.strictEqual(refused.code, 1);
+  assert.strictEqual(refused.code, 1, refused.err);
   assert.match(refused.err, /conflict/);
   assert.strictEqual(listTasks('demo').find((task) => task.id === 'c').state, 'done');
   assert.strictEqual(git(integrationDir(dir), 'status', '--porcelain'), '');
@@ -292,12 +293,12 @@ test('refuses to deliver uncommitted or empty work', async (t) => {
   finishTask('demo', 'c', { state: 'done' });
 
   const uncommitted = await deliver('a');
-  assert.strictEqual(uncommitted.code, 1);
+  assert.strictEqual(uncommitted.code, 1, uncommitted.err);
   assert.match(uncommitted.err, /not committed/);
   assert.strictEqual(fs.readFileSync(path.join(cwd, 'a.txt'), 'utf8'), 'a\n');
 
   const empty = await deliver('c');
-  assert.strictEqual(empty.code, 1);
+  assert.strictEqual(empty.code, 1, empty.err);
   assert.match(empty.err, /no commit/);
 
   assert.deepStrictEqual(
@@ -325,7 +326,7 @@ test('refuses to deliver a task whose branch is gone', async (t) => {
   git(dir, 'branch', '-D', 'relaylead/demo/a');
 
   const refused = await deliver('a');
-  assert.strictEqual(refused.code, 1);
+  assert.strictEqual(refused.code, 1, refused.err);
   assert.match(refused.err, /branch relaylead\/demo\/a is missing/);
   assert.strictEqual(listTasks('demo')[0].state, 'done');
 });
@@ -358,7 +359,7 @@ test('refuses tasks not committed in the user checkout', async (t) => {
   const modified = userRepo({ 'tasks/a.md': TASK_A });
   fs.writeFileSync(path.join(modified, 'tasks', 'a.md'), TASK_A + 'More.\n');
   const refused = await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', modified]);
-  assert.strictEqual(refused.code, 1);
+  assert.strictEqual(refused.code, 1, refused.err);
   assert.match(refused.err, /not committed/);
   assert.strictEqual(fs.existsSync(missionDir('demo')), false);
 
@@ -438,7 +439,8 @@ test('a replayed delivery keeps work done on the task branch since', async (t) =
   finishedTask(mission, 'a');
   const cwd = taskWorktree(dir, 'a');
   git(dir, 'worktree', 'lock', cwd);
-  assert.strictEqual((await deliver('a')).code, 0);
+  const first = await deliver('a');
+  assert.strictEqual(first.code, 0, first.err);
   git(dir, 'worktree', 'unlock', cwd);
   // Late work after the delivery: committed on the branch, and not committed.
   fs.writeFileSync(path.join(cwd, 'late.txt'), 'late\n');
@@ -485,4 +487,18 @@ test('a delivery waits for a git lock to be released', async (t) => {
   const delivered = await deliver('a');
   assert.strictEqual(delivered.code, 0, delivered.err);
   assert.strictEqual(git(dir, 'show', 'relaylead/integration:a.txt'), 'a');
+});
+
+test('git messages that a short wait cures are recognised', () => {
+  for (const message of [
+    "fatal: Unable to create 'C:/repo/.git/index.lock': File exists.",
+    "error: unable to unlink old 'a.txt': Invalid argument",
+    'error: unable to unlink old a.txt: Permission denied',
+    'fatal: cannot remove: Device or resource busy',
+    'The process cannot access the file because it is being used by another process.',
+  ]) {
+    assert.ok(localMerge.isTransientGitError(message), message);
+  }
+  assert.ok(!localMerge.isTransientGitError("fatal: not a git repository"));
+  assert.ok(!localMerge.isTransientGitError('CONFLICT (content): Merge conflict in shared.txt'));
 });

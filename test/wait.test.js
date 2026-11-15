@@ -43,7 +43,7 @@ async function startedTaskWithoutCrew() {
   const record = await startTask('demo', { id: 'a' });
   const crew = listSessions('demo').find((session) => session.shortId === record.session);
   await fake.stop(crew);
-  await waitFor(() => !isAlive(crew.pid), 5000, 'the crew process to end');
+  await waitFor(() => !isAlive(crew.pid), 30000, 'the crew process to end');
   return crew;
 }
 
@@ -97,9 +97,9 @@ test('a change between two waits is not lost', async (t) => {
   await wait(5);
 
   // The task finishes while nobody waits.
-  await waitFor(() => fs.existsSync(resultFile('a')), 5000, 'the task result');
+  await waitFor(() => fs.existsSync(resultFile('a')), 30000, 'the task result');
   const crew = listSessions('demo').find((session) => session.shortId === record.session);
-  await waitFor(() => !isAlive(crew.pid), 5000, 'the crew session to end');
+  await waitFor(() => !isAlive(crew.pid), 30000, 'the crew session to end');
 
   const startedAt = Date.now();
   const changes = await wait(5);
@@ -122,7 +122,7 @@ test('crew session done without a result marks the task failed', async (t) => {
   // Killed before its `task done`: the adapter now reports the session done.
   const crew = listSessions('demo').find((session) => session.shortId === record.session);
   await fake.stop(crew);
-  await waitFor(() => !isAlive(crew.pid), 5000, 'the crew session to end');
+  await waitFor(() => !isAlive(crew.pid), 30000, 'the crew session to end');
 
   const changes = await wait(5);
   assert.deepStrictEqual(

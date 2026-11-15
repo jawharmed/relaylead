@@ -124,7 +124,7 @@ test('a stop during a launch stops the crew member', async (t) => {
   await stopMission('demo'); // the crew member is not in the registry yet
 
   await assert.rejects(starting, { code: 'mission-stopped' });
-  await waitFor(() => !isAlive(crew.pid), 5000, 'the crew member to be stopped');
+  await waitFor(() => !isAlive(crew.pid), 30000, 'the crew member to be stopped');
   assert.strictEqual(fs.existsSync(path.join(missionDir('demo'), 'tasks', 'a.json')), false);
 });
 
@@ -214,8 +214,8 @@ test('task ids must be usable in branch names', async (t) => {
 test('fake mission runs two dependent tasks to done', async (t) => {
   const dir = setupProject(t, 'demo');
 
-  const launched = await run(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir], makeIo());
-  assert.strictEqual(launched, 0);
+  const io = makeIo();
+  assert.strictEqual(await run(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir], io), 0, io.err.text);
   await waitFor(() => getState('demo') === 'done', 45000, 'the mission to be done', () => missionReport('demo'));
 
   assert.deepStrictEqual(

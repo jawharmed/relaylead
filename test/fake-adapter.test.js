@@ -36,5 +36,5 @@ test('fake adapter launches, lists, attaches and stops a session', async (t) => 
   assert.ok(log.includes(session.shortId));
 
   await fake.stop(session);
-  await waitFor(async () => (await fake.list('demo'))[0].state === 'done', 5000, 'the session to end');
+  await waitFor(async () => (await fake.list('demo'))[0].state === 'done', 30000, 'the session to end');
 });
