@@ -1,0 +1,1 @@
+{"statusLine":{"type":"command","command":"node ${SPIKE}/statusline-probe.js"},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"node ${SPIKE}/stop-hook.js"}]}]}}
