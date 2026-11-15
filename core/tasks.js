@@ -13,6 +13,8 @@ const { getAdapter } = require('../adapters');
 const { getDelivery } = require('../deliveries');
 const tasksDirSource = require('../sources/tasks-dir');
 
+// The option the lead adds to the question of a task that asks first (catalog/profiles/lead.md).
+const SKIP_CHOICE = 'Skip this task';
 // Long enough for a slow agent launch held by another start.
 const START_LOCK_WAIT_MS = 60 * 1000;
 const EMPTY_LOCK_STALE_MS = 10 * 1000;
@@ -87,18 +89,28 @@ function listTasks(name) {
   return tasks;
 }
 
-function findTask(name, id) {
-  const task = listTasks(name).find((candidate) => candidate.id === id);
+function findTask(name, id, tasks = listTasks(name)) {
+  const task = tasks.find((candidate) => candidate.id === id);
   if (!task) throw codedError('task-unknown', { mission: name, id });
   return task;
 }
 
+// A task starts once every task it depends on is delivered (see `ready` in listTasks, which has
+// already checked that each dependency exists).
+function checkDependencies(tasks, task) {
+  const missing = task.depends.filter((dep) => tasks.find((candidate) => candidate.id === dep).state !== 'delivered');
+  if (missing.length > 0) throw codedError('task-not-ready', { id: task.id, missing: missing.join(', ') });
+}
+
 // The question a task with `ask` needed answered before it starts (the lead asks it with the task
-// id as key), or null when the task asks nothing.
+// id as key), or null when the task asks nothing. An answer "Skip this task" sets the task aside.
 function answeredQuestion(name, task) {
   if (!task.ask) return null;
   const question = listQuestions(name).find((candidate) => candidate.id === `q-${slug(task.id)}`);
   if (!question || question.state !== 'answered') throw codedError('task-not-answered', { id: task.id });
+  if (question.answer.choice.trim().toLowerCase() === SKIP_CHOICE.toLowerCase()) {
+    throw codedError('task-skipped', { id: task.id });
+  }
   return question;
 }
 
@@ -208,10 +220,12 @@ async function launchCrew(mission, id, profile) {
   const state = getState(name);
   if (state === 'stopped') throw codedError('mission-stopped', { mission: name });
   if (state === 'done') throw codedError('mission-done', { mission: name });
-  const task = findTask(name, id);
+  const tasks = listTasks(name);
+  const task = findTask(name, id, tasks);
   if (task.state === 'running') return readJson(taskFile(name, id));
   if (task.state !== 'todo') throw codedError('task-not-startable', { id, state: task.state });
   // Checked before the task's folder or branch is made, so a refusal leaves nothing behind.
+  checkDependencies(tasks, task);
   const question = answeredQuestion(name, task);
   const crewProfile = loadProfile(profile, { dir: mission.dir });
 
