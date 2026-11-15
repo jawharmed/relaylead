@@ -24,6 +24,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
+const { writeJson, readJson, withWindowsRetry } = require('../../core/store');
 
 const STATE_DIR = process.env.FAKE_CLAUDE_STATE;
 const SCENARIO = new Set((process.env.FAKE_CLAUDE_SCENARIO || 'normal').split(','));
@@ -34,18 +35,17 @@ const WOKE_MARKER = path.join(STATE_DIR, 'woke');
 // On a stop it lingers 300 ms, like a real session finishing its last write (no signal handlers on Windows).
 const SLEEPER = "process.on('SIGTERM', () => setTimeout(() => process.exit(0), 300)); setTimeout(() => {}, 120000);";
 
+// Through core/store: the write is atomic and both sides retry when Windows denies the file for a moment.
 function readSessions() {
-  try {
-    return JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
-  } catch {
-    return [];
-  }
+  return readJson(SESSIONS_FILE, []);
 }
 
 function writeSessions(sessions) {
-  const tmp = `${SESSIONS_FILE}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(sessions, null, 2));
-  fs.renameSync(tmp, SESSIONS_FILE);
+  writeJson(SESSIONS_FILE, sessions);
+}
+
+function appendLog(name, line) {
+  withWindowsRetry(() => fs.appendFileSync(path.join(STATE_DIR, name), line));
 }
 
 function recorded(name) {
@@ -65,7 +65,7 @@ function isAlive(pid) {
 function startSleeper() {
   const child = spawn(process.execPath, ['-e', SLEEPER], { detached: true, stdio: 'ignore', windowsHide: true });
   child.unref();
-  fs.appendFileSync(path.join(STATE_DIR, 'pids.log'), `${child.pid}\n`);
+  appendLog('pids.log', `${child.pid}\n`);
   return child.pid;
 }
 
@@ -128,7 +128,7 @@ function resume(args) {
   }
   Object.assign(original, { pid: startSleeper(), status: 'busy', state: 'working' });
   writeSessions(sessions);
-  fs.writeFileSync(WOKE_MARKER, original.id);
+  writeJson(WOKE_MARKER, original.id);
   process.stdout.write(recorded('launch-wake.txt').replace('0f0b2950', original.id));
   return 0;
 }
@@ -169,7 +169,7 @@ function agents() {
 }
 
 function main(args) {
-  fs.appendFileSync(path.join(STATE_DIR, 'calls.log'), JSON.stringify(args) + '\n');
+  appendLog('calls.log', JSON.stringify(args) + '\n');
   if (SCENARIO.has('noisy')) process.stderr.write('warning: this is a noisy fake\n');
   if (args[0] === '--version') {
     process.stdout.write(SCENARIO.has('old-version') ? '2.1.300 (Claude Code)\n' : '2.1.325 (Claude Code)\n');
@@ -185,4 +185,10 @@ function main(args) {
   return 2;
 }
 
-process.exitCode = main(process.argv.slice(2));
+try {
+  process.exitCode = main(process.argv.slice(2));
+} catch (err) {
+  // An unexpected failure must explain itself: the adapter only shows our stderr.
+  process.stderr.write(`fake claude: ${err.message}\n${err.stack}\n`);
+  process.exitCode = 70;
+}

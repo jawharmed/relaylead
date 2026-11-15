@@ -69,4 +69,4 @@ function readJson(file, fallback) {
   }
 }
 
-module.exports = { writeJson, writeJsonExclusive, readJson };
+module.exports = { writeJson, writeJsonExclusive, readJson, withWindowsRetry };
