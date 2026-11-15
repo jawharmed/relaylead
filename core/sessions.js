@@ -3,13 +3,20 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { missionDir } = require('./paths');
 const { writeJson, readJson } = require('./store');
+const { codedError } = require('./messages');
 
 function sessionsDir(mission) {
   return path.join(missionDir(mission), 'sessions');
 }
 
+// Updating a session is fine; taking the file of another session with the same short id is not.
 function recordSession(mission, session) {
-  writeJson(path.join(sessionsDir(mission), `${session.shortId}.json`), session);
+  const file = path.join(sessionsDir(mission), `${session.shortId}.json`);
+  const existing = readJson(file, null);
+  if (existing && existing.sessionId !== session.sessionId) {
+    throw codedError('session-exists', { mission, shortId: session.shortId });
+  }
+  writeJson(file, session);
 }
 
 function listSessions(mission) {

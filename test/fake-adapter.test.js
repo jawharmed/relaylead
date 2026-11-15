@@ -21,8 +21,8 @@ test('fake adapter launches, lists, attaches and stops a session', async (t) => 
     permissionMode: 'allowlist',
   });
   t.after(() => fake.stop(session));
-  assert.match(session.sessionId, /^fake-/);
-  assert.strictEqual(session.shortId, session.sessionId.slice(0, 8));
+  assert.match(session.sessionId, /^fake-[0-9a-f]{16}$/);
+  assert.strictEqual(session.shortId, session.sessionId.slice(5, 13));
   recordSession('demo', session);
 
   const listed = await fake.list('demo');

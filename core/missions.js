@@ -20,7 +20,7 @@ function missionFile(name, file) {
   return path.join(missionDir(name), file);
 }
 
-// `realDir` must already be a real path (fs.realpathSync), so every spelling of a folder shares one lock.
+// `realDir` must come from fs.realpathSync.native, so every spelling of a folder shares one lock.
 function lockFile(realDir) {
   const hash = crypto.createHash('sha1').update(realDir).digest('hex').slice(0, 16);
   return path.join(home(), 'locks', `${hash}.lock`);
@@ -83,13 +83,15 @@ function reserveName(name) {
 }
 
 async function createMission({ name, dir, request, team, priority, agent, params }) {
-  const realDir = fs.realpathSync(dir);
+  // The native version also gives the real letter case (macOS, Windows): CaseProj and caseproj are one folder.
+  const realDir = fs.realpathSync.native(dir);
   const missionName = slug(name || path.basename(realDir));
   const config = loadConfig({ dir: realDir, params });
   const adapter = getAdapter(agent || config.agent);
 
   takeLock(realDir, missionName);
   let reserved = false;
+  let lead = null;
   try {
     reserveName(missionName);
     reserved = true;
@@ -105,7 +107,7 @@ async function createMission({ name, dir, request, team, priority, agent, params
     };
     writeJson(missionFile(missionName, 'mission.json'), mission);
 
-    const lead = await adapter.launch({
+    lead = await adapter.launch({
       mission: missionName,
       name: `${missionName}/lead/1`,
       role: 'lead',
@@ -126,7 +128,9 @@ async function createMission({ name, dir, request, team, priority, agent, params
     recordSession(missionName, lead);
     return mission;
   } catch (err) {
-    if (reserved) fs.rmSync(missionDir(missionName), { recursive: true, force: true });
+    if (lead) await adapter.stop(lead); // no orphan session
+    // Retries: the stopped lead may still be finishing a write in the folder.
+    if (reserved) fs.rmSync(missionDir(missionName), { recursive: true, force: true, maxRetries: 5 });
     releaseLock(realDir, missionName);
     throw err;
   }
@@ -182,6 +186,8 @@ function listMissions() {
 
 async function stopMission(name) {
   const mission = readMission(name);
+  // A finished mission is left alone: its recorded pids may now belong to unrelated processes.
+  if (['stopped', 'done'].includes(readState(name))) return;
   const adapter = getAdapter(mission.agent);
   for (const session of listSessions(name)) {
     await adapter.stop(session);

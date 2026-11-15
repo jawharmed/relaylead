@@ -9,7 +9,8 @@ const { listSessions, isAlive } = require('../../core/sessions');
 const AGENT = path.join(__dirname, 'agent.js');
 
 async function launch(spec) {
-  const sessionId = 'fake-' + crypto.randomBytes(8).toString('hex');
+  const hex = crypto.randomBytes(8).toString('hex');
+  const sessionId = 'fake-' + hex;
   const child = spawn(process.execPath, [AGENT, spec.role], {
     cwd: spec.cwd,
     env: { ...process.env, ...spec.env },
@@ -25,7 +26,7 @@ async function launch(spec) {
   child.unref();
   return {
     sessionId,
-    shortId: sessionId.slice(0, 8),
+    shortId: hex.slice(0, 8),
     name: spec.name,
     role: spec.role,
     state: 'working',

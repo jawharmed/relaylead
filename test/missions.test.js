@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { run } = require('../core/cli');
-const { listMissions, stopMission, lockFile } = require('../core/missions');
+const { listMissions, lockFile } = require('../core/missions');
 const { listSessions, recordSession, isAlive } = require('../core/sessions');
 const { readJson, writeJson } = require('../core/store');
 const { missionDir } = require('../core/paths');
@@ -13,13 +13,16 @@ const { tmpDir, makeIo, waitFor } = require('../fixtures/helpers');
 
 const BIN = path.join(__dirname, '..', 'bin', 'relaylead.js');
 
-// Each test gets a fresh RELAYLEAD_HOME, and every mission still running is stopped afterwards.
+// Each test gets a fresh RELAYLEAD_HOME, and every session it started is killed afterwards.
 function freshHome(t) {
   const home = tmpDir('relaylead-home-');
   process.env.RELAYLEAD_HOME = home;
+  // Kill every recorded session directly: stopMission leaves a finished mission alone.
   t.after(async () => {
     process.env.RELAYLEAD_HOME = home;
-    for (const mission of listMissions()) await stopMission(mission.name);
+    for (const mission of listMissions()) {
+      for (const session of listSessions(mission.name)) await fake.stop(session);
+    }
   });
 }
 
@@ -64,7 +67,7 @@ test('launch creates mission.json with the resolved config and starts a lead', a
   assert.strictEqual(result.out.trim(), 'demo');
 
   const mission = readJson(path.join(missionDir('demo'), 'mission.json'));
-  assert.strictEqual(mission.dir, fs.realpathSync(dir));
+  assert.strictEqual(mission.dir, fs.realpathSync.native(dir));
   assert.strictEqual(mission.request, 'Do the tasks');
   assert.strictEqual(mission.agent, 'fake');
   assert.strictEqual(mission.config.parallel, 2);
@@ -96,7 +99,7 @@ test('a stale lock is taken over', async (t) => {
   freshHome(t);
   const dir = tmpDir('relaylead-project-');
   const deadPid = spawnSync(process.execPath, ['-e', '']).pid;
-  const lock = lockFile(fs.realpathSync(dir));
+  const lock = lockFile(fs.realpathSync.native(dir));
   writeJson(lock, { pid: deadPid, mission: 'crashed' });
 
   const result = await cli(['launch', '--agent', 'fake', '--name', 'after-crash', '--dir', dir]);
@@ -116,7 +119,7 @@ test('name defaults to the folder slug', async (t) => {
   const result = await cli(['launch', '--agent', 'fake'], { cwd: dir });
   assert.strictEqual(result.code, 0, result.err);
   assert.strictEqual(result.out.trim(), 'my-project');
-  assert.strictEqual(readJson(path.join(missionDir('my-project'), 'mission.json')).dir, fs.realpathSync(dir));
+  assert.strictEqual(readJson(path.join(missionDir('my-project'), 'mission.json')).dir, fs.realpathSync.native(dir));
 });
 
 test('stop stops every session of the mission', async (t) => {
@@ -144,8 +147,75 @@ test('stop stops every session of the mission', async (t) => {
   await waitFor(() => pids.every((pid) => !isAlive(pid)), 5000, 'the sessions to end');
 
   assert.strictEqual((await cli(['state', 'get', '--mission', 'demo'])).out.trim(), 'stopped');
-  assert.strictEqual(fs.existsSync(lockFile(fs.realpathSync(dir))), false);
+  assert.strictEqual(fs.existsSync(lockFile(fs.realpathSync.native(dir))), false);
   const refused = await cli(['state', 'set', 'working'], { env: { RELAYLEAD_MISSION: 'demo' } });
   assert.strictEqual(refused.code, 1);
   assert.match(refused.err, /stopped/);
+});
+
+test('the lock ignores the letter case of the folder path', async (t) => {
+  freshHome(t);
+  const dir = path.join(tmpDir('relaylead-project-'), 'CaseProj');
+  fs.mkdirSync(dir);
+  const otherSpelling = path.join(path.dirname(dir), 'CASEPROJ');
+  if (!fs.existsSync(otherSpelling)) {
+    t.skip('case-sensitive file system');
+    return;
+  }
+
+  const first = await cli(['launch', '--agent', 'fake', '--name', 'one', '--dir', dir]);
+  assert.strictEqual(first.code, 0, first.err);
+  const second = await cli(['launch', '--agent', 'fake', '--name', 'two', '--dir', otherSpelling]);
+  assert.strictEqual(second.code, 1);
+  assert.match(second.err, /busy/);
+});
+
+test('a failure after the lead started stops the lead and leaves nothing behind', async (t) => {
+  freshHome(t);
+  const dir = tmpDir('relaylead-project-');
+  const originalLaunch = fake.launch;
+  let lead;
+  // Injected failure: another session already holds the lead's registry file.
+  fake.launch = async (spec) => {
+    lead = await originalLaunch(spec);
+    recordSession(spec.mission, { ...lead, sessionId: 'fake-someone-else' });
+    return lead;
+  };
+  t.after(() => {
+    fake.launch = originalLaunch;
+    if (lead) return fake.stop(lead);
+  });
+
+  const result = await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir]);
+  assert.strictEqual(result.code, 1);
+  await waitFor(() => !isAlive(lead.pid), 5000, 'the lead to be stopped');
+  assert.strictEqual(fs.existsSync(path.join(missionDir('demo'), 'mission.json')), false);
+  assert.strictEqual(fs.existsSync(lockFile(fs.realpathSync.native(dir))), false);
+});
+
+test('stop on a stopped or done mission kills nothing', async (t) => {
+  freshHome(t);
+  const originalStop = fake.stop;
+  let stopCalls = 0;
+  fake.stop = async (session) => {
+    stopCalls++;
+    return originalStop(session);
+  };
+  t.after(() => {
+    fake.stop = originalStop;
+  });
+
+  const stoppedDir = tmpDir('relaylead-project-');
+  assert.strictEqual((await cli(['launch', '--agent', 'fake', '--name', 'stopped', '--dir', stoppedDir])).code, 0);
+  assert.strictEqual((await cli(['stop', 'stopped'])).code, 0);
+  assert.strictEqual(stopCalls, 1);
+  assert.strictEqual((await cli(['stop', 'stopped'])).code, 0);
+  assert.strictEqual(stopCalls, 1);
+
+  const doneDir = tmpDir('relaylead-project-');
+  assert.strictEqual((await cli(['launch', '--agent', 'fake', '--name', 'done', '--dir', doneDir])).code, 0);
+  assert.strictEqual((await cli(['state', 'set', 'done', '--mission', 'done'])).code, 0);
+  assert.strictEqual((await cli(['stop', 'done'])).code, 0);
+  assert.strictEqual(stopCalls, 1);
+  assert.strictEqual((await cli(['state', 'get', '--mission', 'done'])).out.trim(), 'done');
 });
