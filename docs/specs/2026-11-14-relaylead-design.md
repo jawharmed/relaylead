@@ -77,11 +77,11 @@ Défauts constatés sur un prototype d'orchestrateur fait à la main, qui serven
 - Contexte et limites d'usage exposés par la barre d'état (`context_window.used_percentage`, `rate_limits.five_hour|seven_day.used_percentage|resets_at`, ce dernier seulement pour Pro/Max) ; aucun hook ne les reçoit. Les hooks reçoivent le chemin du transcript, qui contient l'usage en jetons de chaque réponse.
 - `claude --bg`, `claude agents --json`, `attach`, `logs`, `stop`, `rm`, `respawn`, `--resume`, `--name`, `--append-system-prompt`, `--effort`, `--model`, `--allowedTools`, `--permission-mode`. **Vérifié par l'essai** : `--session-id` est ignoré avec `--bg` (l'id se lit dans la sortie) ; `--agents <json>` est ignoré en `--bg` et l'effort d'un agent de plugin aussi ; les options à valeurs multiples (`--allowedTools`…) avalent la consigne si elles la précèdent ; le dossier de la session doit avoir été approuvé une fois ; une session `--bg` doit entrer dans un worktree avant de modifier un dépôt git.
 - Hooks utiles : SessionStart, PreToolUse, PostToolUse, PermissionRequest, Stop, StopFailure (erreur `rate_limit` ; le dernier message donne une heure de reprise lisible, ex. « resets 2:54am (Europe/Paris) »), SubagentStart/Stop, PreCompact.
-- Après une mort brutale (`kill -9`), le démon de Claude Code relance seul la session (même id, message « Continue from where you left off ») ; il ne relance ni une session arrêtée, ni une machine redémarrée : il faut un veilleur extérieur. Aucune commande n'envoie un message à une session vivante : le veilleur passe par des fichiers et par le réveil.
+- Après une mort brutale (`kill -9`), le démon de Claude Code a relancé seul la session (même id, message « Continue from where you left off » ; une observation, sous macOS). Une session arrêtée n'est pas relancée ; le redémarrage de la machine n'a pas été essayé : il faut un veilleur extérieur. Aucune commande n'envoie un message à une session vivante : le veilleur passe par des fichiers et par le réveil.
 - « Agent teams » (expérimental) ne survit pas à la fin de session.
 - La façon dont les limites d'abonnement comptent le cache de prompt n'est pas publiée.
 - Les hooks d'un plugin s'appliquent à toutes les sessions de l'utilisateur ; ceux passés par `--settings` à un lancement ne s'appliquent qu'à cette session. `--setting-sources`, `--strict-mcp-config` et `--plugin-dir` permettent d'isoler une session de la configuration de l'utilisateur.
-- `PermissionRequest` ne se déclenche que si une demande allait s'afficher (jamais en mode sans autorisations) ; un refus valable dans tous les modes passe par `PreToolUse`.
+- `PermissionRequest` ne se déclenche que si une demande allait s'afficher (jamais en mode sans autorisations) ; un refus indépendant du mode passe par `PreToolUse` (prouvé en mode manuel et en liste blanche élargie ; à vérifier avec le mode sans autorisations natif au lot 3).
 - Une session qui a fini son tour (`blocked`) ne reçoit plus de hooks : un message en boîte aux lettres ne l'atteint pas tant qu'elle n'est pas réveillée.
 - `claude stop` et `claude rm` prennent l'identifiant court de la session ; seuls `attach` et `logs` acceptent un nom (même partiel).
 
@@ -133,7 +133,7 @@ relaylead (paquet npm, Node.js)
   sources/             tasks-dir (fichiers du dépôt), github-issues, request (demande libre)
   deliveries/          github-pr, local-merge, files
   adapters/claude/     pilotage de Claude Code : réglages de session (hooks, barre d'état,
-                       définitions d'agents) passés à chaque lancement ; plugin réduit aux
+                       options du profil) passés à chaque lancement ; plugin réduit aux
                        commandes /relaylead:*
   profiles/ methods/ teams/   catalogue de départ, indépendant de l'agent (anglais, français)
 ```
@@ -158,7 +158,7 @@ Contrat d'un adaptateur (chaque capacité déclare son niveau ; le cœur s'adapt
 
 Une session garde les options de son lancement : en changer demande une session neuve.
 
-Sans `inject`, le cœur passe les messages au prochain lancement ou à la reprise ; sans `guard`, le mode sans autorisations est refusé pour cet agent et seuls ses propres mécanismes d'autorisation s'appliquent ; sans `heartbeat`, le veilleur se fie à l'activité du transcript.
+Sans `inject`, le cœur passe les messages au prochain lancement ou à la reprise ; sans `guard`, le mode « tout autorisé » est refusé pour cet agent et seuls ses propres mécanismes d'autorisation s'appliquent ; sans `heartbeat`, le veilleur se fie à l'activité du transcript.
 
 ### Mesures : contexte et limites d'usage
 
@@ -212,7 +212,7 @@ Paramètres d'une mission : `name` (défaut : nom du dossier), `dir` (défaut : 
 
 ### Cycle de vie
 
-1. **Lancer** : l'outil vérifie l'unicité, écrit `mission.json`, crée l'identifiant, démarre le lead par l'adaptateur de son profil, avec `RELAYLEAD_MISSION=<nom>`, dans le dossier de la mission.
+1. **Lancer** : l'outil vérifie l'unicité, écrit `mission.json`, démarre le lead par l'adaptateur de son profil, avec `RELAYLEAD_MISSION=<nom>`, dans le dossier de la mission, et enregistre l'identifiant rendu par l'adaptateur.
 2. **Travailler** : le lead lit `mission.json`, son état, la source et les sessions vivantes ; choisit les tâches prêtes ; écrit `tasks/<id>.json` et lance un équipier par tâche (adaptateur du profil, consigne en fichier). L'équipier travaille (worktree propre pour du code), pousse tôt et souvent quand la livraison le permet, écrit son résultat, s'arrête. Le lead fait relire, livre, marque la tâche faite. Une correction = une nouvelle tâche sur la même branche.
 3. **Relève** : `seuil = min(base + budget_profil, plafond % × fenêtre)` ; base = première mesure de la session (essai : environ 40 k jetons pour une session isolée, 52 k avec la configuration de l'utilisateur) ; budget par profil (départ : lead 150 k, équipier 250-300 k, à caler) ; plafond 40 % ; seuil souple (« à la prochaine étape finie ») et dur (+20 %). Alerte si la base dépasse la moitié du seuil. Le lead écrit son état, `state: handover`, s'arrête sans attendre ses équipiers ; le veilleur lance le suivant dans le même passage. Un équipier au seuil dur pousse, note où il en est, s'arrête ; le lead relance la tâche.
 4. **Limites d'usage** : seuils de pause par priorité (réglables) quand la mesure est exacte :
@@ -249,23 +249,22 @@ Programme Node.js lancé toutes les 5 min par le planificateur du système (laun
 
 ### Alertes
 
-Liste ordonnée de canaux, chacun avec une condition ; le premier qui réussit gagne :
+La notification `system` (locale) part toujours quand elle est disponible, mais elle ne prouve pas que l'humain l'a vue. Ensuite, liste ordonnée de canaux distants, chacun avec une condition ; le premier qui réussit gagne :
 
 ```json
 "alerts": [
-  { "channel": "system" },
   { "channel": "ntfy", "server": "https://ntfy.sh", "topic": "…", "token": "env:NTFY_TOKEN" }
 ]
 ```
 
-Canaux v1 : `system` (notification du système, défaut), `ntfy`, `command` (commande fournie par l'utilisateur : mail, Slack…), et `agent` (mini-session jetable d'un agent qui sait notifier le téléphone), en option seulement : l'essai a montré que l'outil de Claude Code refuse d'envoyer quand il juge le terminal actif, et ne pousse au téléphone qu'avec Remote Control.
+Canaux v1 : `system` (notification locale du système, toujours envoyée en plus), puis, au choix et dans l'ordre configuré, `ntfy`, `command` (commande fournie par l'utilisateur : mail, Slack…), et `agent` (mini-session jetable d'un agent qui sait notifier le téléphone), en option seulement : l'essai a montré que l'outil de Claude Code refuse d'envoyer quand il juge le terminal actif, et ne pousse au téléphone qu'avec Remote Control.
 
 ### Garde-fous et autorisations
 
 - **Liste blanche par défaut** (lire ; écrire dans le dossier de la mission et ses worktrees ; git sur les branches de travail ; commandes de test et de build déclarées) + liste blanche du projet. Hors liste → question.
 - **Mode « tout autorisé »** : choisi explicitement, avec avertissement, seulement pour un agent dont l'adaptateur a `guard` ; les garde-fous restent actifs. Pour Claude, il s'écrit par la liste blanche élargie (`Bash` sans motif, outils de fichiers) : le mode sans autorisations natif est inaccessible à une session `--bg` isolée (il exige les réglages de l'utilisateur).
 - **Rien n'attend un humain** : un hook `PermissionRequest` répond à toute demande restante (accord selon la liste, sinon refus avec message et question). Les consignes des profils demandent une commande par appel, car une commande composée est jugée en bloc.
-- **Garde-fous communs** (par `PreToolUse`, donc actifs dans tous les modes, y compris sans autorisations) : secrets déclarés, push vers la branche principale ou des tags, push forcé, suppressions récursives hors du dossier de la mission, irréversible sans autorisation à usage unique.
+- **Garde-fous communs** (par `PreToolUse`, actifs quel que soit le mode : prouvé en mode manuel et en liste blanche élargie, à vérifier avec le mode sans autorisations natif au lot 3) : secrets déclarés, push vers la branche principale ou des tags, push forcé, suppressions récursives hors du dossier de la mission, irréversible sans autorisation à usage unique.
 - **Interdits du projet** dans `.relaylead.json`.
 - **Web en quarantaine** : les profils qui ont des accès en écriture n'ont pas les outils web ; ils délèguent la lecture à un profil `web-reader` (outils web seuls) qui rend un résumé. Les profils purement web n'ont pas de push et livrent des fichiers.
 - **Accès confiés** : l'outil n'impose rien ; l'assistant `init` explique et conseille.

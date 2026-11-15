@@ -1,6 +1,6 @@
 // Lance une session d'essai en arrière-plan dans le bac à sable, isolée de la configuration de l'utilisateur.
 // node spike/launch.js --name <nom> [--settings <fichier>] [--model haiku] [--mode isolated|user|bypass|manual]
-//                      [--resume <sessionId>] [--session-id auto|none] [--agents <json>] [--agent <nom>] [--env K=V]... -- "<consigne>"
+//                      [--effort low] [--system <consignes>] [--resume <sessionId> (crée une copie : voir wake.js)] [--session-id auto|none] [--agents <json>] [--agent <nom>] [--env K=V]... -- "<consigne>"
 const { spawnSync } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -44,6 +44,8 @@ function main() {
   else if (o.mode === 'manual') args.push('--permission-mode', 'manual');
   else args.push('--allowedTools', 'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', '--permission-mode', 'acceptEdits');
   args.push('--bg', '--name', o.name, '--model', o.model, '--settings', sessionSettings(o));
+  if (o.effort) args.push('--effort', o.effort);
+  if (o.system) args.push('--append-system-prompt', o.system);
   if (o.mode !== 'user') args.push('--setting-sources', 'project,local', '--strict-mcp-config');
   const wanted = o.sessionId === 'auto' ? crypto.randomUUID() : null;
   if (wanted) args.push('--session-id', wanted);
