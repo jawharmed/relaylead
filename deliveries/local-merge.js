@@ -259,9 +259,10 @@ function removeWorktree(mission, cwd) {
   }
 }
 
-// Merges a done task. Refuses work that is not committed or empty, which `worktree remove --force`
-// would otherwise destroy. Returns the warnings of finish().
-function deliver(mission, task) {
+// Refuses work that is not committed or empty: it could not be delivered, and `worktree remove
+// --force` would destroy it. Run by `relaylead task done`, while the crew member can still fix it,
+// and again by deliver. Returns branchWork(): 'new' or 'merged'.
+function checkDone(mission, task) {
   const cwd = taskDir(mission, task);
   const branch = taskBranch(mission, task);
   checkTaskWorktree(mission, task);
@@ -271,6 +272,13 @@ function deliver(mission, task) {
   if (!branchExists(mission.dir, branch)) throw codedError('task-branch-missing', { id: task.id, branch });
   const work = branchWork(mission, branch);
   if (work === 'empty') throw codedError('task-empty', { id: task.id, branch });
+  return work;
+}
+
+// Merges a done task, once checkDone accepts its work. Returns the warnings of finish().
+function deliver(mission, task) {
+  const branch = taskBranch(mission, task);
+  const work = checkDone(mission, task);
   if (work === 'new' && !mergeOrAbort(integrationDir(mission), [branch])) {
     throw codedError('merge-conflict', { id: task.id, branch });
   }
@@ -313,4 +321,4 @@ function finish(mission, task) {
   return [];
 }
 
-module.exports = { prepareMission, prepareTask, deliver, finish, isTransientGitError };
+module.exports = { prepareMission, prepareTask, checkDone, deliver, finish, isTransientGitError };

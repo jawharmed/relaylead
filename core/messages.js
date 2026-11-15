@@ -56,8 +56,9 @@ const messages = {
       'task "{id}" is delivered, but its branch {branch} or its folder {dir} has work done since; they were kept: deliver that work as a new task',
     'integration-sync-conflict':
       'your current branch conflicts with the integration branch "{branch}"; the update was cancelled. Merge your branch into it by hand in {dir}, then launch again',
-    'task-uncommitted': 'task "{id}" has work not committed in {dir}; commit it on its branch, then deliver again',
-    'task-empty': 'task "{id}" has no commit on its branch {branch}; nothing to deliver',
+    'task-uncommitted':
+      'task "{id}" has changes not committed in {dir} (see `git status` there); commit them on its branch, or remove what must not be kept, then try again',
+    'task-empty': 'task "{id}" has no commit on its branch {branch}, so nothing to deliver; commit the work on that branch first',
     'task-branch-missing': 'cannot deliver task "{id}": its branch {branch} is missing',
     'worktree-mismatch':
       'the folder {dir} is on branch "{actual}", not "{branch}"; it was left by another mission: remove it with: git worktree remove "{dir}"',
@@ -149,8 +150,9 @@ const messages = {
       'la tâche « {id} » est livrée, mais sa branche {branch} ou son dossier {dir} contient du travail fait depuis ; ils sont conservés : livrez ce travail dans une nouvelle tâche',
     'integration-sync-conflict':
       'votre branche courante est en conflit avec la branche d\'intégration « {branch} » ; la mise à jour est annulée. Fusionnez votre branche à la main dans {dir}, puis relancez',
-    'task-uncommitted': 'la tâche « {id} » a du travail non commité dans {dir} ; commitez-le sur sa branche, puis livrez de nouveau',
-    'task-empty': 'la tâche « {id} » n\'a aucun commit sur sa branche {branch} ; rien à livrer',
+    'task-uncommitted':
+      'la tâche « {id} » a des changements non commités dans {dir} (voir `git status` dans ce dossier) ; commitez-les sur sa branche, ou supprimez ce qui ne doit pas rester, puis réessayez',
+    'task-empty': 'la tâche « {id} » n\'a aucun commit sur sa branche {branch}, donc rien à livrer ; commitez d\'abord le travail sur cette branche',
     'task-branch-missing': 'impossible de livrer la tâche « {id} » : sa branche {branch} n\'existe plus',
     'worktree-mismatch':
       'le dossier {dir} est sur la branche « {actual} », pas « {branch} » ; il vient d\'une autre mission : supprimez-le avec : git worktree remove "{dir}"',

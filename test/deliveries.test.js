@@ -7,7 +7,7 @@ const { run } = require('../core/cli');
 const { listTasks, finishTask } = require('../core/tasks');
 const { getState, readMission } = require('../core/missions');
 const { listSessions, isAlive } = require('../core/sessions');
-const { readJson } = require('../core/store');
+const { readJson, writeJson } = require('../core/store');
 const { missionDir } = require('../core/paths');
 const fake = require('../adapters/fake');
 const localMerge = require('../deliveries/local-merge');
@@ -280,6 +280,42 @@ test('a delivery whose cleanup failed succeeds and is cleaned up by the next del
   assert.strictEqual(git(dir, 'branch', '--list', 'relaylead/demo/a'), '');
 });
 
+// The result a crew member writes with `relaylead task done`, written here directly: `task done`
+// refuses the work these tests deliver, but a worktree may still change after it.
+function reportDone(id) {
+  writeJson(path.join(missionDir('demo'), 'tasks', `${id}.result.json`), { id, state: 'done', summary: null });
+}
+
+test('task done refuses work not committed or with no commit; task fail is allowed', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A, 'tasks/c.md': TASK_A });
+  const mission = preparedMission(dir);
+  const { cwd } = localMerge.prepareTask(mission, { id: 'a' });
+  localMerge.prepareTask(mission, { id: 'c' });
+  const done = (id) => cli(['task', 'done', id, '--mission', 'demo']);
+
+  const empty = await done('a');
+  assert.strictEqual(empty.code, 1, empty.err);
+  assert.match(empty.err, /no commit/);
+
+  fs.writeFileSync(path.join(cwd, 'a.txt'), 'a\n');
+  git(cwd, 'add', 'a.txt');
+  git(cwd, 'commit', '-q', '-m', 'a');
+  fs.writeFileSync(path.join(cwd, 'package-lock.json'), '{}\n'); // left untracked by an npm install
+  const dirty = await done('a');
+  assert.strictEqual(dirty.code, 1, dirty.err);
+  assert.match(dirty.err, /not committed/);
+  assert.match(dirty.err, /git status/);
+  assert.strictEqual(listTasks('demo')[0].state, 'todo');
+
+  fs.rmSync(path.join(cwd, 'package-lock.json'));
+  const accepted = await done('a');
+  assert.strictEqual(accepted.code, 0, accepted.err);
+  const failed = await cli(['task', 'fail', 'c', '--mission', 'demo']);
+  assert.strictEqual(failed.code, 0, failed.err);
+  assert.deepStrictEqual(listTasks('demo').map((task) => task.state), ['done', 'failed']);
+});
+
 test('refuses to deliver uncommitted or empty work', async (t) => {
   freshHome(t);
   const dir = userRepo({ 'tasks/a.md': TASK_A, 'tasks/c.md': TASK_A });
@@ -287,10 +323,10 @@ test('refuses to deliver uncommitted or empty work', async (t) => {
   // a: the crew member wrote its file but did not commit it.
   const { cwd } = localMerge.prepareTask(mission, { id: 'a' });
   fs.writeFileSync(path.join(cwd, 'a.txt'), 'a\n');
-  finishTask('demo', 'a', { state: 'done' });
+  reportDone('a');
   // c: the crew member did nothing.
   localMerge.prepareTask(mission, { id: 'c' });
-  finishTask('demo', 'c', { state: 'done' });
+  reportDone('c');
 
   const uncommitted = await deliver('a');
   assert.strictEqual(uncommitted.code, 1, uncommitted.err);

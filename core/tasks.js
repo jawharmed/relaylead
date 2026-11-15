@@ -269,8 +269,12 @@ async function deliverTask(name, id) {
 }
 
 // Called by the crew member (`relaylead task done|fail`): it is the only writer of the result.
+// Work that could not be delivered is refused now, while the crew member can still fix it: once
+// the task is done, its session is stopped.
 function finishTask(name, id, { state, summary }) {
-  findTask(name, id);
+  const mission = readMission(name);
+  const task = findTask(name, id);
+  if (state === 'done') getDelivery(mission.config.delivery.type).checkDone(mission, task);
   writeJson(resultFile(name, id), { id, state, summary: summary || null, finishedAt: now() });
 }
 

@@ -19,6 +19,9 @@ function prepareTask(mission, task) {
   return { cwd, branch: null };
 }
 
+// Nothing to check when the crew member reports done: an empty output folder is refused at delivery.
+function checkDone() {}
+
 // The task record says it is delivered: there is no source to mark in a branch. No warnings.
 function deliver(mission, task) {
   const folder = outDir(mission, task);
@@ -36,4 +39,4 @@ function finish() {
   return [];
 }
 
-module.exports = { prepareMission, prepareTask, deliver, finish };
+module.exports = { prepareMission, prepareTask, checkDone, deliver, finish };
