@@ -214,7 +214,13 @@ async function endMission(mission) {
   const lead = readJson(missionFile(mission.name, 'lead.json'), {});
   let firstError = null;
   try {
-    for (const session of await adapter.list(mission.name)) {
+    let sessions;
+    try {
+      sessions = await adapter.list(mission.name);
+    } catch {
+      sessions = listSessions(mission.name); // `claude agents` may fail for a moment: stop each recorded session
+    }
+    for (const session of sessions) {
       if (session.shortId === lead.shortId || session.state === 'stopped') continue;
       try {
         await adapter.stop(session);
@@ -310,19 +316,31 @@ function writeStopped(name) {
   writeJson(missionFile(name, 'state.json'), { state: 'stopped', updatedAt: now() });
 }
 
+// Returns false when there was nothing to do. A stop that fails does not keep the other sessions
+// running: its error is thrown at the end, and the stop can be run again.
 async function stopMission(name) {
   const mission = readMission(name);
-  // A finished mission is left alone: its recorded pids may now belong to unrelated processes.
-  if (['stopped', 'done'].includes(readState(name))) return;
   const adapter = getAdapter(mission.agent);
+  const state = readState(name);
+  // A finished mission is left alone by an adapter that stops by pid: its recorded pids may now
+  // belong to unrelated processes. One that stops by id (claude) is asked again: that retries a
+  // stop that failed. A done mission stays done.
+  if (['stopped', 'done'].includes(state) && !adapter.stopById) return false;
   // Written first, so a `state set` from a session being stopped is refused instead of erasing the stop.
-  writeStopped(name);
+  if (state !== 'done') writeStopped(name);
+  let firstError = null;
   for (const session of listSessions(name)) {
-    await adapter.stop(session);
+    try {
+      await adapter.stop(session);
+    } catch (err) {
+      firstError = firstError || err;
+    }
   }
   // Written again: a `state set` that read the state just before the first write may have landed since.
-  writeStopped(name);
+  if (state !== 'done') writeStopped(name);
+  if (firstError) throw firstError; // the folder stays locked: a session may still run in it
   releaseLock(mission.dir, name);
+  return true;
 }
 
 module.exports = {

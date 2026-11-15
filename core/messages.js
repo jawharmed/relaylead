@@ -22,6 +22,7 @@ const messages = {
     unknownCommand: 'relaylead: unknown command "{command}"\n\n',
     noMissions: 'no missions\n',
     missionStopped: 'mission {mission} stopped\n',
+    missionNothingToStop: 'mission {mission} is already {state}; nothing to do\n',
     taskDelivered: 'task {id} delivered\n',
     taskAlreadyDelivered: 'task {id} already delivered\n',
     // Errors: the key is the error code (see codedError).
@@ -120,6 +121,7 @@ const messages = {
     unknownCommand: 'relaylead : commande inconnue « {command} »\n\n',
     noMissions: 'aucune mission\n',
     missionStopped: 'mission {mission} arrêtée\n',
+    missionNothingToStop: 'la mission {mission} est déjà {state} ; rien à faire\n',
     taskDelivered: 'tâche {id} livrée\n',
     taskAlreadyDelivered: 'tâche {id} déjà livrée\n',
     usage: 'usage : {usage}',

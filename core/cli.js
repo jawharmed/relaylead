@@ -86,8 +86,9 @@ commands.stop = async (args, io) => {
   refuseInSession('stop', io);
   const [name] = parseArgs(args).positional;
   if (!name) throw codedError('usage', { usage: 'relaylead stop <mission>' });
-  await stopMission(name);
-  io.out.write(t('missionStopped', { mission: name }, language(io)));
+  const stopped = await stopMission(name);
+  if (stopped) io.out.write(t('missionStopped', { mission: name }, language(io)));
+  else io.out.write(t('missionNothingToStop', { mission: name, state: getState(name) }, language(io)));
   return 0;
 };
 
