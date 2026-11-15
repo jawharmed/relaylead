@@ -21,6 +21,17 @@ const messages = {
     ].join('\n'),
     notImplemented: 'relaylead {command}: not implemented yet\n',
     unknownCommand: 'relaylead: unknown command "{command}"\n\n',
+    noMissions: 'no missions\n',
+    missionStopped: 'mission {mission} stopped\n',
+    // Errors: the key is the error code (see codedError).
+    usage: 'usage: {usage}',
+    'dir-busy': 'the folder {dir} is busy with mission "{mission}"; stop it first with: relaylead stop {mission}',
+    'mission-exists': 'a mission named "{mission}" already exists; choose another name with --name',
+    'mission-unknown': 'no mission named "{mission}"',
+    'mission-stopped': 'mission "{mission}" was stopped; its state can no longer change',
+    'bad-state': 'unknown state "{state}"; use one of: {states}',
+    'no-mission': 'no mission given; use --mission <name> or set RELAYLEAD_MISSION',
+    'session-exists': 'mission "{mission}" already has another session with the short id {shortId}',
   },
   fr: {
     help: [
@@ -44,6 +55,16 @@ const messages = {
     ].join('\n'),
     notImplemented: 'relaylead {command} : pas encore disponible\n',
     unknownCommand: 'relaylead : commande inconnue « {command} »\n\n',
+    noMissions: 'aucune mission\n',
+    missionStopped: 'mission {mission} arrêtée\n',
+    usage: 'usage : {usage}',
+    'dir-busy': 'le dossier {dir} est occupé par la mission « {mission} » ; arrêtez-la d\'abord avec : relaylead stop {mission}',
+    'mission-exists': 'une mission nommée « {mission} » existe déjà ; choisissez un autre nom avec --name',
+    'mission-unknown': 'aucune mission nommée « {mission} »',
+    'mission-stopped': 'la mission « {mission} » a été arrêtée ; son état ne peut plus changer',
+    'bad-state': 'état inconnu « {state} » ; utilisez l\'un de : {states}',
+    'no-mission': 'aucune mission indiquée ; utilisez --mission <nom> ou RELAYLEAD_MISSION',
+    'session-exists': 'la mission « {mission} » a déjà une autre session d\'id court {shortId}',
   },
 };
 
@@ -54,4 +75,12 @@ function t(key, vars, lang) {
   return template.replace(/\{(\w+)\}/g, (_, name) => String(vars && vars[name]));
 }
 
-module.exports = { t };
+// An expected error: its text comes from the messages, so the CLI can print it in the user's language.
+function codedError(code, vars) {
+  const err = new Error(t(code, vars));
+  err.code = code;
+  err.vars = vars;
+  return err;
+}
+
+module.exports = { t, codedError };
