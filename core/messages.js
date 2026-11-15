@@ -71,6 +71,17 @@ const messages = {
     'bad-question': 'cannot ask the question: {detail}',
     'bad-task-id':
       'the task file {file} has a name unusable in a git branch; use letters, digits, ".", "_" and "-", not starting with "." or "-", not ending with "." (and not _integration)',
+    'claude-not-found': 'claude was not found; install Claude Code, or set RELAYLEAD_CLAUDE to its executable',
+    'claude-cmd-unsupported':
+      'only a claude.cmd was found on the PATH, which cannot be run without a shell; set RELAYLEAD_CLAUDE to the real claude.exe or to its JavaScript entry (.js)',
+    'claude-too-old': 'Claude Code {min} or later is needed, found "{found}"; update it with: claude update',
+    'untrusted-dir': 'Claude Code does not trust the folder {dir} yet; run `claude` once in {dir} and accept, then try again',
+    'not-started': 'the claude session {shortId} did not start its first turn within {seconds} s; it was stopped',
+    'wake-timeout': 'the claude session {shortId} was stopped but its process was still running after {seconds} s; it was not woken',
+    'wake-copy':
+      'waking the claude session {shortId} started a copy ({copy}) instead; the copy was stopped. See it with: claude attach {shortId}',
+    'claude-unexpected-output': 'unexpected output from {command}: {output}',
+    'claude-failed': '{command} failed: {output}',
   },
   fr: {
     help: [
@@ -143,6 +154,17 @@ const messages = {
     'bad-question': 'impossible de poser la question : {detail}',
     'bad-task-id':
       'le fichier de tâche {file} a un nom inutilisable dans une branche git ; utilisez lettres, chiffres, « . », « _ » et « - », sans commencer par « . » ni « - », sans finir par « . » (et pas _integration)',
+    'claude-not-found': 'claude est introuvable ; installez Claude Code, ou indiquez son exécutable dans RELAYLEAD_CLAUDE',
+    'claude-cmd-unsupported':
+      'seul un claude.cmd est dans le PATH, qui ne se lance pas sans shell ; indiquez dans RELAYLEAD_CLAUDE le vrai claude.exe ou son point d\'entrée JavaScript (.js)',
+    'claude-too-old': 'Claude Code {min} ou plus récent est nécessaire, trouvé « {found} » ; mettez-le à jour avec : claude update',
+    'untrusted-dir': 'Claude Code n\'approuve pas encore le dossier {dir} ; lancez `claude` une fois dans {dir} et acceptez, puis réessayez',
+    'not-started': 'la session claude {shortId} n\'a pas commencé son premier tour en {seconds} s ; elle a été arrêtée',
+    'wake-timeout': 'la session claude {shortId} a été arrêtée mais son processus tournait encore après {seconds} s ; elle n\'a pas été réveillée',
+    'wake-copy':
+      'le réveil de la session claude {shortId} a démarré une copie ({copy}) à la place ; la copie a été arrêtée. Voir la session avec : claude attach {shortId}',
+    'claude-unexpected-output': 'sortie inattendue de {command} : {output}',
+    'claude-failed': 'échec de {command} : {output}',
   },
 };
 
