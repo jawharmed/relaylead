@@ -45,6 +45,21 @@ const messages = {
     'merge-conflict':
       'task "{id}" conflicts with the integration branch; the merge was cancelled and the task stays done. Resolve it on branch {branch}, then deliver again',
     'empty-output': 'task "{id}" delivered nothing: its output folder {dir} is empty',
+    'cleanup-failed':
+      'task "{id}" is delivered, but its worktree or branch could not be cleaned up; the next "relaylead task deliver {id}" tries again ({detail})',
+    'task-uncommitted': 'task "{id}" has work not committed in {dir}; commit it on its branch, then deliver again',
+    'task-empty': 'task "{id}" has no commit on its branch {branch}; nothing to deliver',
+    'task-branch-missing': 'cannot deliver task "{id}": its branch {branch} is missing',
+    'worktree-mismatch':
+      'the folder {dir} is on branch "{actual}", not "{branch}"; it was left by another mission: remove it with: git worktree remove "{dir}"',
+    'branch-clash':
+      'the integration branch "{branch}" clashes with the task branches relaylead/{mission}/<id>; choose another mission name or delivery.branch',
+    'integration-mismatch':
+      'the integration worktree {dir} is on branch "{actual}", not "{branch}"; set delivery.branch back to "{actual}", or remove the worktree with: git worktree remove "{dir}"',
+    'tasks-not-committed':
+      'the task folder "{dir}" has changes not committed, or is missing from branch {branch}; commit it first: the crew works from commits',
+    'bad-task-id':
+      'the task file {file} has a name unusable in a git branch; use letters, digits, ".", "_" and "-", not starting with "." or "-" (and not _integration)',
   },
   fr: {
     help: [
@@ -91,6 +106,21 @@ const messages = {
     'merge-conflict':
       'la tâche « {id} » est en conflit avec la branche d\'intégration ; la fusion est annulée et la tâche reste done. Résolvez-le sur la branche {branch}, puis livrez de nouveau',
     'empty-output': 'la tâche « {id} » n\'a rien livré : son dossier de sortie {dir} est vide',
+    'cleanup-failed':
+      'la tâche « {id} » est livrée, mais son worktree ou sa branche n\'a pas pu être nettoyé ; le prochain « relaylead task deliver {id} » réessaie ({detail})',
+    'task-uncommitted': 'la tâche « {id} » a du travail non commité dans {dir} ; commitez-le sur sa branche, puis livrez de nouveau',
+    'task-empty': 'la tâche « {id} » n\'a aucun commit sur sa branche {branch} ; rien à livrer',
+    'task-branch-missing': 'impossible de livrer la tâche « {id} » : sa branche {branch} n\'existe plus',
+    'worktree-mismatch':
+      'le dossier {dir} est sur la branche « {actual} », pas « {branch} » ; il vient d\'une autre mission : supprimez-le avec : git worktree remove "{dir}"',
+    'branch-clash':
+      'la branche d\'intégration « {branch} » entre en conflit avec les branches des tâches relaylead/{mission}/<id> ; choisissez un autre nom de mission ou une autre delivery.branch',
+    'integration-mismatch':
+      'le worktree d\'intégration {dir} est sur la branche « {actual} », pas « {branch} » ; remettez delivery.branch à « {actual} », ou supprimez le worktree avec : git worktree remove "{dir}"',
+    'tasks-not-committed':
+      'le dossier des tâches « {dir} » a des changements non commités, ou manque dans la branche {branch} ; commitez-le d\'abord : les équipiers travaillent à partir des commits',
+    'bad-task-id':
+      'le fichier de tâche {file} a un nom inutilisable dans une branche git ; utilisez lettres, chiffres, « . », « _ » et « - », sans commencer par « . » ni « - » (et pas _integration)',
   },
 };
 

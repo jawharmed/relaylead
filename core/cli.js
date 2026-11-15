@@ -113,7 +113,8 @@ commands.task = async (args, io) => {
     const record = await startTask(mission, { id, profile: options.profile });
     io.out.write(JSON.stringify(record, null, 2) + '\n');
   } else if (action === 'deliver') {
-    const outcome = await deliverTask(mission, id);
+    const { outcome, warnings } = await deliverTask(mission, id);
+    for (const warning of warnings) io.err.write(`relaylead task: ${t(warning.code, warning.vars, language(io))}\n`);
     io.out.write(t(outcome === 'delivered' ? 'taskDelivered' : 'taskAlreadyDelivered', { id }, language(io)));
   } else {
     finishTask(mission, id, { state: action === 'done' ? 'done' : 'failed', summary: options.summary });

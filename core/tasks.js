@@ -53,6 +53,13 @@ function taskState(sourceTask, record, result) {
   return 'todo';
 }
 
+// The id goes into a git branch name (relaylead/<mission>/<id>) and a worktree folder name;
+// _integration is the integration worktree's folder.
+function checkTaskId(task) {
+  const usable = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/.test(task.id) && !task.id.includes('..') && !task.id.endsWith('.lock');
+  if (!usable || task.id === '_integration') throw codedError('bad-task-id', { file: task.file });
+}
+
 // Each task with its state, and `ready`: todo with every dependency delivered. A task only done
 // is not in the integration branch yet, so a task built on it could not see its work.
 function listTasks(name) {
@@ -68,6 +75,7 @@ function listTasks(name) {
       summary: (result || record || {}).summary || null,
     };
   });
+  tasks.forEach(checkTaskId);
   tasksDirSource.checkDependencies(tasks);
   const byId = new Map(tasks.map((task) => [task.id, task]));
   for (const task of tasks) {
@@ -212,15 +220,16 @@ async function launchCrew(mission, id, profile) {
   return record;
 }
 
-// Delivers a done task. Returns 'delivered', or 'already-delivered' when it was delivered before.
+// Delivers a done task. Returns {outcome: 'delivered' or 'already-delivered', warnings}. A task
+// already delivered is finished again: that completes a delivery that was interrupted.
 async function deliverTask(name, id) {
   const mission = readMission(name); // before the lock, which lives in the mission folder
+  const delivery = getDelivery(mission.config.delivery.type);
   return withStartLock(name, () => {
     const task = findTask(name, id);
-    if (task.state === 'delivered') return 'already-delivered';
+    if (task.state === 'delivered') return { outcome: 'already-delivered', warnings: delivery.finish(mission, task) };
     if (task.state !== 'done') throw codedError('task-not-deliverable', { id, state: task.state });
-    getDelivery(mission.config.delivery.type).deliver(mission, task);
-    return 'delivered';
+    return { outcome: 'delivered', warnings: delivery.deliver(mission, task) };
   });
 }
 

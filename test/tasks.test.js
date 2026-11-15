@@ -191,7 +191,7 @@ test('a dependency counts once it is delivered', async (t) => {
 
   fs.mkdirSync(path.join(dir, 'out', 'a'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'out', 'a', 'a.txt'), 'a\n');
-  assert.strictEqual(await deliverTask('demo', 'a'), 'delivered');
+  assert.strictEqual((await deliverTask('demo', 'a')).outcome, 'delivered');
   assert.deepStrictEqual(
     listTasks('demo').map((task) => [task.id, task.state, task.ready]),
     [
@@ -199,6 +199,16 @@ test('a dependency counts once it is delivered', async (t) => {
       ['b', 'todo', true],
     ],
   );
+});
+
+test('task ids must be usable in branch names', async (t) => {
+  for (const id of ['my task', '_integration', '-a', '.a', 'a..b', 'a.lock']) {
+    const dir = setupProject(t, 'demo');
+    writeMission('demo', dir);
+    fs.writeFileSync(path.join(dir, 'tasks', `${id}.md`), '---\ntitle: Bad\n---\n');
+    assert.throws(() => listTasks('demo'), { code: 'bad-task-id' }, id);
+    await assert.rejects(startTask('demo', { id: 'a' }), { code: 'bad-task-id' }, id);
+  }
 });
 
 test('fake mission runs two dependent tasks to done', async (t) => {

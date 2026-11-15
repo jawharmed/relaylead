@@ -19,7 +19,7 @@ function prepareTask(mission, task) {
   return { cwd, branch: null };
 }
 
-// The task record says it is delivered: there is no source to mark in a branch.
+// The task record says it is delivered: there is no source to mark in a branch. No warnings.
 function deliver(mission, task) {
   const folder = outDir(mission, task);
   if (!fs.existsSync(folder) || fs.readdirSync(folder).length === 0) {
@@ -28,6 +28,12 @@ function deliver(mission, task) {
   const file = path.join(missionDir(mission.name), 'tasks', `${task.id}.json`);
   const record = readJson(file, { id: task.id });
   writeJson(file, { ...record, state: 'delivered', deliveredAt: new Date().toISOString() });
+  return [];
 }
 
-module.exports = { prepareMission, prepareTask, deliver };
+// Nothing is left to finish once the record says delivered.
+function finish() {
+  return [];
+}
+
+module.exports = { prepareMission, prepareTask, deliver, finish };
