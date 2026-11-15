@@ -2,7 +2,7 @@
 
 **Spec :** [`docs/specs/2026-11-14-relaylead-design.md`](../specs/2026-11-14-relaylead-design.md)
 
-La version 1 se construit en lots. Chaque lot livre quelque chose qui marche et se vérifie seul. Le plan détaillé d'un lot s'écrit **après** le lot précédent, à partir de ce qu'il a appris, et passe par une relecture contradictoire avant d'être exécuté. Seul le lot 0 a son plan détaillé : [`2026-11-15-lot-0-essai.md`](2026-11-15-lot-0-essai.md).
+La version 1 se construit en lots. Chaque lot livre quelque chose qui marche et se vérifie seul. Le plan détaillé d'un lot s'écrit **après** le lot précédent, à partir de ce qu'il a appris, et passe par une relecture contradictoire avant d'être exécuté. Plans détaillés : lot 0, [`2026-11-15-lot-0-essai.md`](2026-11-15-lot-0-essai.md) (fait) ; lot 1, [`2026-11-15-lot-1-squelette.md`](2026-11-15-lot-1-squelette.md) (issues du jalon « Lot 1 : squelette marchant »).
 
 | Lot | Contenu | Terminé quand | Dépend de |
 |---|---|---|---|
