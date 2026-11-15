@@ -1,0 +1,1 @@
+{"statusLine":{"type":"command","command":"node ${SPIKE}/statusline-probe.js"},"hooks":{"PostToolUse":[{"hooks":[{"type":"command","command":"node ${SPIKE}/mailbox-hook.js"}]}]}}

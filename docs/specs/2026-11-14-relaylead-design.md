@@ -1,6 +1,6 @@
 # Relaylead : des équipes d'agents IA qu'on lance sur n'importe quelle mission
 
-Design du 15 novembre 2026, version 5 (après relecture contradictoire du plan). **Relaylead** est un nom de code ; le nom public sera choisi avant la première publication. Ce document est en français ; le produit est en anglais par défaut, avec le français.
+Design du 15 novembre 2026, version 6 (amendée par l'essai jetable : [`docs/spike-results.md`](../spike-results.md)). **Relaylead** est un nom de code ; le nom public sera choisi avant la première publication. Ce document est en français ; le produit est en anglais par défaut, avec le français.
 
 ## Intention
 
@@ -75,13 +75,13 @@ Défauts constatés sur un prototype d'orchestrateur fait à la main, qui serven
 ## Contraintes vérifiées (Claude Code 2.1.325)
 
 - Contexte et limites d'usage exposés par la barre d'état (`context_window.used_percentage`, `rate_limits.five_hour|seven_day.used_percentage|resets_at`, ce dernier seulement pour Pro/Max) ; aucun hook ne les reçoit. Les hooks reçoivent le chemin du transcript, qui contient l'usage en jetons de chaque réponse.
-- `claude --bg`, `claude agents --json`, `attach`, `logs`, `stop`, `respawn`, `--resume`, `--session-id`, `--name`, `--agent`, `--agents <json>` (définitions d'agents passées au lancement), `--effort`, `--model`.
-- Hooks utiles : SessionStart, PreToolUse, PostToolUse, PermissionRequest, Stop, StopFailure (erreur `rate_limit`, sans heure de remise), SubagentStart/Stop, PreCompact.
-- Rien ne relance une session morte : il faut un veilleur extérieur. Aucune commande n'envoie un message à une session : le veilleur passe par des fichiers.
+- `claude --bg`, `claude agents --json`, `attach`, `logs`, `stop`, `rm`, `respawn`, `--resume`, `--name`, `--append-system-prompt`, `--effort`, `--model`, `--allowedTools`, `--permission-mode`. **Vérifié par l'essai** : `--session-id` est ignoré avec `--bg` (l'id se lit dans la sortie) ; `--agents <json>` est ignoré en `--bg` et l'effort d'un agent de plugin aussi ; les options à valeurs multiples (`--allowedTools`…) avalent la consigne si elles la précèdent ; le dossier de la session doit avoir été approuvé une fois ; une session `--bg` doit entrer dans un worktree avant de modifier un dépôt git.
+- Hooks utiles : SessionStart, PreToolUse, PostToolUse, PermissionRequest, Stop, StopFailure (erreur `rate_limit` ; le dernier message donne une heure de reprise lisible, ex. « resets 2:54am (Europe/Paris) »), SubagentStart/Stop, PreCompact.
+- Après une mort brutale (`kill -9`), le démon de Claude Code a relancé seul la session (même id, message « Continue from where you left off » ; une observation, sous macOS). Une session arrêtée n'est pas relancée ; le redémarrage de la machine n'a pas été essayé : il faut un veilleur extérieur. Aucune commande n'envoie un message à une session vivante : le veilleur passe par des fichiers et par le réveil.
 - « Agent teams » (expérimental) ne survit pas à la fin de session.
 - La façon dont les limites d'abonnement comptent le cache de prompt n'est pas publiée.
 - Les hooks d'un plugin s'appliquent à toutes les sessions de l'utilisateur ; ceux passés par `--settings` à un lancement ne s'appliquent qu'à cette session. `--setting-sources`, `--strict-mcp-config` et `--plugin-dir` permettent d'isoler une session de la configuration de l'utilisateur.
-- `PermissionRequest` ne se déclenche que si une demande allait s'afficher (jamais en mode sans autorisations) ; un refus valable dans tous les modes passe par `PreToolUse`.
+- `PermissionRequest` ne se déclenche que si une demande allait s'afficher (jamais en mode sans autorisations) ; un refus indépendant du mode passe par `PreToolUse` (prouvé en mode manuel et en liste blanche élargie ; à vérifier avec le mode sans autorisations natif au lot 3).
 - Une session qui a fini son tour (`blocked`) ne reçoit plus de hooks : un message en boîte aux lettres ne l'atteint pas tant qu'elle n'est pas réveillée.
 - `claude stop` et `claude rm` prennent l'identifiant court de la session ; seuls `attach` et `logs` acceptent un nom (même partiel).
 
@@ -107,7 +107,7 @@ Défauts constatés sur un prototype d'orchestrateur fait à la main, qui serven
 5. Sessions nommées lisiblement (`<mission>/lead/<n>`, `<mission>/<profil>/<n>`), unicité contrôlée ; identifiant technique en coulisses.
 6. Relève : seuil relatif à la base mesurée, plafonné par un pourcentage.
 7. Questions sans réponse : on attend par défaut ; « appliquer la recommandation après un délai » est un réglage. L'irréversible attend toujours.
-8. Autorisations : liste blanche par défaut ; une demande hors liste devient une question ; le mode sans autorisations se choisit explicitement, avec avertissement.
+8. Autorisations : liste blanche par défaut ; une demande hors liste devient une question ; le mode « tout autorisé » se choisit explicitement, avec avertissement ; rien n’attend jamais un humain.
 9. Web en quarantaine pour les profils qui ont des accès en écriture ; l'outil n'impose aucune limite sur les accès confiés, il les conseille.
 10. Alertes : liste de canaux essayés dans l'ordre, chacun avec sa condition ; aucun canal externe imposé.
 11. Version 1 = moteur ; version 1.1 = tableau et pilotage.
@@ -133,7 +133,7 @@ relaylead (paquet npm, Node.js)
   sources/             tasks-dir (fichiers du dépôt), github-issues, request (demande libre)
   deliveries/          github-pr, local-merge, files
   adapters/claude/     pilotage de Claude Code : réglages de session (hooks, barre d'état,
-                       définitions d'agents) passés à chaque lancement ; plugin réduit aux
+                       options du profil) passés à chaque lancement ; plugin réduit aux
                        commandes /relaylead:*
   profiles/ methods/ teams/   catalogue de départ, indépendant de l'agent (anglais, français)
 ```
@@ -142,7 +142,7 @@ Contrat d'un adaptateur (chaque capacité déclare son niveau ; le cœur s'adapt
 
 | Capacité | Rôle | Claude Code (v1) |
 |---|---|---|
-| `launch` | lancer une session en arrière-plan avec profil, nom, identifiant, consigne, mode d'autorisation | `claude --bg --agents … --agent … --session-id … --name …` |
+| `launch` | lancer une session en arrière-plan avec profil, nom, consigne, mode d'autorisation ; rendre son identifiant | options à valeurs multiples d'abord, puis `claude --bg --name … --settings …` ; id court lu dans la sortie, id complet par `claude agents --json` ; vérifier le premier tour |
 | `resume` / `stop` / `list` | reprendre, arrêter, lister les sessions et leur état | `--resume`, `claude stop`, `claude agents --json` |
 | `attach` | ouvrir une session pour la regarder | `claude attach` |
 | `context` | mesurer le contexte utilisé | exact (barre d'état ou transcript) |
@@ -150,13 +150,15 @@ Contrat d'un adaptateur (chaque capacité déclare son niveau ; le cœur s'adapt
 | `inject` | faire lire un message à une session vivante | hook qui lit la boîte en fichiers |
 | `guard` | refuser une action avant qu'elle soit faite | hooks PreToolUse / PermissionRequest |
 | `heartbeat` | signe de vie à chaque action | hook PostToolUse |
-| `profile` | traduire un profil Relaylead en définition propre à l'agent | JSON passé par `--agents` (aucune écriture dans `~/.claude/agents`) |
+| `profile` | traduire un profil Relaylead en réglages propres à l'agent | options de lancement : `--append-system-prompt`, `--model`, `--effort`, `--allowedTools`, `--permission-mode` (aucune écriture dans `~/.claude/agents`) |
 | `subagents` | relectures courtes dans la session | oui |
-| `session-settings` | fournir hooks et mesure du contexte à la seule session lancée | `--settings` (hooks, barre d'état propre à la session) + `--agents` |
-| `wake` | réveiller une session inactive avec un message | `claude --bg --resume <id> "<message>"` ou hook `Stop` (choix selon l'essai) |
+| `session-settings` | fournir hooks, mesure du contexte, environnement et attribution des commits à la seule session lancée | `--settings` (hooks, barre d'état, `env`, `attribution`) + `--setting-sources project,local --strict-mcp-config` |
+| `wake` | réveiller une session inactive avec un message | `claude stop <id>` → attendre la fin du processus (délai maximal) → `claude --bg --resume <sessionId> "<message>"` **sans options**, depuis le dossier de la session → vérifier que la sortie nomme le même id (sinon c'est une copie : l'arrêter, alerter). Le hook `Stop` retient en plus la fin d'un tour quand un message attend |
 | `install` | brancher les commandes intégrées | plugin réduit aux commandes `/relaylead:*` |
 
-Sans `inject`, le cœur passe les messages au prochain lancement ou à la reprise ; sans `guard`, le mode sans autorisations est refusé pour cet agent et seuls ses propres mécanismes d'autorisation s'appliquent ; sans `heartbeat`, le veilleur se fie à l'activité du transcript.
+Une session garde les options de son lancement : en changer demande une session neuve.
+
+Sans `inject`, le cœur passe les messages au prochain lancement ou à la reprise ; sans `guard`, le mode « tout autorisé » est refusé pour cet agent et seuls ses propres mécanismes d'autorisation s'appliquent ; sans `heartbeat`, le veilleur se fie à l'activité du transcript.
 
 ### Mesures : contexte et limites d'usage
 
@@ -210,9 +212,9 @@ Paramètres d'une mission : `name` (défaut : nom du dossier), `dir` (défaut : 
 
 ### Cycle de vie
 
-1. **Lancer** : l'outil vérifie l'unicité, écrit `mission.json`, crée l'identifiant, démarre le lead par l'adaptateur de son profil, avec `RELAYLEAD_MISSION=<nom>`, dans le dossier de la mission.
+1. **Lancer** : l'outil vérifie l'unicité, écrit `mission.json`, démarre le lead par l'adaptateur de son profil, avec `RELAYLEAD_MISSION=<nom>`, dans le dossier de la mission, et enregistre l'identifiant rendu par l'adaptateur.
 2. **Travailler** : le lead lit `mission.json`, son état, la source et les sessions vivantes ; choisit les tâches prêtes ; écrit `tasks/<id>.json` et lance un équipier par tâche (adaptateur du profil, consigne en fichier). L'équipier travaille (worktree propre pour du code), pousse tôt et souvent quand la livraison le permet, écrit son résultat, s'arrête. Le lead fait relire, livre, marque la tâche faite. Une correction = une nouvelle tâche sur la même branche.
-3. **Relève** : `seuil = min(base + budget_profil, plafond % × fenêtre)` ; base = première mesure de la session ; budget par profil (départ : lead 150 k, équipier 250-300 k, à caler) ; plafond 40 % ; seuil souple (« à la prochaine étape finie ») et dur (+20 %). Alerte si la base dépasse la moitié du seuil. Le lead écrit son état, `state: handover`, s'arrête sans attendre ses équipiers ; le veilleur lance le suivant dans le même passage. Un équipier au seuil dur pousse, note où il en est, s'arrête ; le lead relance la tâche.
+3. **Relève** : `seuil = min(base + budget_profil, plafond % × fenêtre)` ; base = première mesure de la session (essai : environ 40 k jetons pour une session isolée, 52 k avec la configuration de l'utilisateur) ; budget par profil (départ : lead 150 k, équipier 250-300 k, à caler) ; plafond 40 % ; seuil souple (« à la prochaine étape finie ») et dur (+20 %). Alerte si la base dépasse la moitié du seuil. Le lead écrit son état, `state: handover`, s'arrête sans attendre ses équipiers ; le veilleur lance le suivant dans le même passage. Un équipier au seuil dur pousse, note où il en est, s'arrête ; le lead relance la tâche.
 4. **Limites d'usage** : seuils de pause par priorité (réglables) quand la mesure est exacte :
 
    | Priorité | Pause hebdomadaire | Pause 5 h |
@@ -236,7 +238,8 @@ Programme Node.js lancé toutes les 5 min par le planificateur du système (laun
 - **Lead absent**, mission ni en pause ni en attente → relancer (reprise si son contexte est bas, sinon session neuve).
 - **Relève** demandée → arrêter l'ancienne, lancer la nouvelle.
 - **Équipier mort** sans résultat → message au lead ; lead absent aussi → relancer le lead d'abord.
-- **Bloqué ou en attente** : distingués par le battement de cœur (ou l'activité du transcript). Jamais d'arrêt au seul motif « en attente ».
+- **Bloqué ou en attente** : distingués par le battement de cœur (ou l'activité du transcript). Jamais d'arrêt au seul motif « en attente » (`blocked` veut dire « attend une entrée »).
+- **Relance automatique en cours** : une session `working` sans processus est en cours de relance par Claude Code : délai de grâce avant toute action. Les actions du lead passent par `relaylead` et sont idempotentes, car une relance peut en rejouer une. Après `claude respawn` (mise à jour de Claude Code), le lead reste inactif : le veilleur le réveille.
 - **Réveil** : un lead qui attend termine son tour ; quand un équipier finit, qu'une réponse arrive ou qu'un message l'attend, le veilleur (ou l'outil, appelé par l'équipier en fin de tâche) le réveille par la capacité `wake` de l'adaptateur. Le lead ne tourne donc pas à vide pendant les longues attentes.
 - **Disjoncteur** : 3 relances ratées d'affilée → mission arrêtée, alerte.
 - **Usage et charge** : appliquer les seuils ; si la charge dépasse le plafond, ne plus lancer de session pour les missions `low`.
@@ -246,22 +249,22 @@ Programme Node.js lancé toutes les 5 min par le planificateur du système (laun
 
 ### Alertes
 
-Liste ordonnée de canaux, chacun avec une condition ; le premier qui réussit gagne :
+La notification `system` (locale) part toujours quand elle est disponible, mais elle ne prouve pas que l'humain l'a vue : sous macOS, `osascript` répond « réussi » même quand l'Éditeur de script n'a pas le droit de notifier et que rien ne s'affiche. L'installation envoie donc une notification de test, demande à l'utilisateur s'il l'a vue et, sinon, lui dit quoi autoriser (Réglages Système › Notifications › Éditeur de script). Ensuite, liste ordonnée de canaux distants, chacun avec une condition ; le premier qui réussit gagne :
 
 ```json
 "alerts": [
-  { "channel": "agent", "agent": "claude", "when": "usage_available", "model": "haiku", "effort": "low" },
   { "channel": "ntfy", "server": "https://ntfy.sh", "topic": "…", "token": "env:NTFY_TOKEN" }
 ]
 ```
 
-Canaux v1 : `system` (notification du système, défaut), `agent` (mini-session jetable d'un agent qui sait notifier le téléphone, comme Claude), `ntfy`, `command` (commande fournie par l'utilisateur : mail, Slack…).
+Canaux v1 : `system` (notification locale du système, toujours envoyée en plus), puis, au choix et dans l'ordre configuré, `ntfy`, `command` (commande fournie par l'utilisateur : mail, Slack…), et `agent` (mini-session jetable d'un agent qui sait notifier le téléphone), en option seulement : l'essai a montré que l'outil de Claude Code refuse d'envoyer quand il juge le terminal actif, et ne pousse au téléphone qu'avec Remote Control.
 
 ### Garde-fous et autorisations
 
 - **Liste blanche par défaut** (lire ; écrire dans le dossier de la mission et ses worktrees ; git sur les branches de travail ; commandes de test et de build déclarées) + liste blanche du projet. Hors liste → question.
-- **Mode sans autorisations** : choisi explicitement, seulement pour un agent dont l'adaptateur a `guard` ; les garde-fous restent actifs.
-- **Garde-fous communs** (par `PreToolUse`, donc actifs dans tous les modes, y compris sans autorisations) : secrets déclarés, push vers la branche principale ou des tags, push forcé, suppressions récursives hors du dossier de la mission, irréversible sans autorisation à usage unique.
+- **Mode « tout autorisé »** : choisi explicitement, avec avertissement, seulement pour un agent dont l'adaptateur a `guard` ; les garde-fous restent actifs. Pour Claude, il s'écrit par la liste blanche élargie (`Bash` sans motif, outils de fichiers) : le mode sans autorisations natif est inaccessible à une session `--bg` isolée (il exige les réglages de l'utilisateur).
+- **Rien n'attend un humain** : un hook `PermissionRequest` répond à toute demande restante (accord selon la liste, sinon refus avec message et question). Les consignes des profils demandent une commande par appel, car une commande composée est jugée en bloc.
+- **Garde-fous communs** (par `PreToolUse`, actifs quel que soit le mode : prouvé en mode manuel et en liste blanche élargie, à vérifier avec le mode sans autorisations natif au lot 3) : secrets déclarés, push vers la branche principale ou des tags, push forcé, suppressions récursives hors du dossier de la mission, irréversible sans autorisation à usage unique.
 - **Interdits du projet** dans `.relaylead.json`.
 - **Web en quarantaine** : les profils qui ont des accès en écriture n'ont pas les outils web ; ils délèguent la lecture à un profil `web-reader` (outils web seuls) qui rend un résumé. Les profils purement web n'ont pas de push et livrent des fichiers.
 - **Accès confiés** : l'outil n'impose rien ; l'assistant `init` explique et conseille.
@@ -274,7 +277,7 @@ Canaux v1 : `system` (notification du système, défaut), `agent` (mini-session 
 
 ### Assistants
 
-- **`init`** (`relaylead init` ou `/relaylead:init`) dans un projet : source, livraison, branche d'intégration, interdits, commandes lourdes, liste blanche, conseils d'accès → `.relaylead.json`. À la première utilisation sur la machine : prérequis (Node 18+, agents installés et leurs versions, `gh` si GitHub est choisi), langue, mode d'autorisation (avec avertissement), mesures d'usage (exactes, budget ou réaction selon l'agent et le compte), canaux d'alerte, installation du veilleur et des intégrations → `~/.relaylead/config.json`.
+- **`init`** (`relaylead init` ou `/relaylead:init`) dans un projet : fait approuver le dossier par l'agent si besoin (Claude Code refuse sinon de lancer une session `--bg`) ; source, livraison, branche d'intégration, interdits, commandes lourdes, liste blanche, conseils d'accès → `.relaylead.json`. À la première utilisation sur la machine : prérequis (Node 18+, agents installés et leurs versions, `gh` si GitHub est choisi), langue, mode d'autorisation (avec avertissement), mesures d'usage (exactes, budget ou réaction selon l'agent et le compte), canaux d'alerte, installation du veilleur et des intégrations → `~/.relaylead/config.json`.
 - **`new-team`** : méthode, profils (choisis dans le catalogue ou créés : agent, rôle, skills, modèle, effort, outils), réglages → `~/.relaylead/teams/<nom>.json` et `~/.relaylead/profiles/`.
 
 ### Version 1.1 : tableau et pilotage
@@ -298,9 +301,11 @@ Canaux v1 : `system` (notification du système, défaut), `agent` (mini-session 
 
 Un échec sur 1, 3, 4, 8 ou 9 change le design et revient en discussion avant le plan.
 
+**Résultat (15 nov. 2026)** : 1, 3, 4, 8, réveil et Linux prouvés ; 2 remplacé par les options de lancement ; 7 échoue pour le canal `agent` (non bloquant, ordre des canaux changé) ; 10 réussi par un faux serveur ; 6 reporté au lot 2b ; Windows reporté au lot 4. Détail : [`docs/spike-results.md`](../spike-results.md).
+
 ## Laissé au constructeur
 
 - Structure du code Node.js, format exact des fichiers, contrat détaillé de l'adaptateur.
 - Contenu des profils et méthodes de départ (anglais et français) ; choix de la troisième équipe type.
-- Version minimale de Claude Code ; mécanique de traduction.
+- Mécanique de traduction. Version minimale de Claude Code : 2.1.325 (celle de l'essai), vérifiée par `doctor`.
 - Ordre de construction, l'essai jetable en premier.

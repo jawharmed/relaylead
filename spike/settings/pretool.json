@@ -1,0 +1,1 @@
+{"statusLine":{"type":"command","command":"node ${SPIKE}/statusline-probe.js"},"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"node ${SPIKE}/pretool-hook.js"}]}]}}
