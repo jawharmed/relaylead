@@ -1,6 +1,6 @@
 # Relaylead : des équipes d'agents IA qu'on lance sur n'importe quelle mission
 
-Design du 15 novembre 2026, version 4. **Relaylead** est un nom de code ; le nom public sera choisi avant la première publication. Ce document est en français ; le produit est en anglais par défaut, avec le français.
+Design du 15 novembre 2026, version 5 (après relecture contradictoire du plan). **Relaylead** est un nom de code ; le nom public sera choisi avant la première publication. Ce document est en français ; le produit est en anglais par défaut, avec le français.
 
 ## Intention
 
@@ -80,7 +80,10 @@ Défauts constatés sur un prototype d'orchestrateur fait à la main, qui serven
 - Rien ne relance une session morte : il faut un veilleur extérieur. Aucune commande n'envoie un message à une session : le veilleur passe par des fichiers.
 - « Agent teams » (expérimental) ne survit pas à la fin de session.
 - La façon dont les limites d'abonnement comptent le cache de prompt n'est pas publiée.
-- Les hooks d'un plugin s'appliquent à toutes les sessions de l'utilisateur : chaque hook ne s'active que si `RELAYLEAD_MISSION` est défini.
+- Les hooks d'un plugin s'appliquent à toutes les sessions de l'utilisateur ; ceux passés par `--settings` à un lancement ne s'appliquent qu'à cette session. `--setting-sources`, `--strict-mcp-config` et `--plugin-dir` permettent d'isoler une session de la configuration de l'utilisateur.
+- `PermissionRequest` ne se déclenche que si une demande allait s'afficher (jamais en mode sans autorisations) ; un refus valable dans tous les modes passe par `PreToolUse`.
+- Une session qui a fini son tour (`blocked`) ne reçoit plus de hooks : un message en boîte aux lettres ne l'atteint pas tant qu'elle n'est pas réveillée.
+- `claude stop` et `claude rm` prennent l'identifiant court de la session ; seuls `attach` et `logs` acceptent un nom (même partiel).
 
 ## Approches considérées
 
@@ -114,6 +117,8 @@ Défauts constatés sur un prototype d'orchestrateur fait à la main, qui serven
 15. Open source, licence MIT ; nom public à choisir.
 16. Cœur indépendant de l'IA, adaptateurs ; Claude Code en v1.
 17. Aucune mention de projets réels de l'auteur dans ce qui est public.
+18. Hooks et barre d'état de mesure passés à chaque lancement de session d'équipe (`--settings`), jamais installés globalement ; le plugin ne porte que les commandes `/relaylead:*`.
+19. Dépôt public dès le début du développement, avec tests automatiques sur macOS, Linux et Windows (faux agent, sans compte Claude) ; essais avec le vrai Claude sous Windows sur une machine réelle avant la publication.
 
 ## Le design
 
@@ -127,8 +132,9 @@ relaylead (paquet npm, Node.js)
                        jetons, mesures, garde-fous communs
   sources/             tasks-dir (fichiers du dépôt), github-issues, request (demande libre)
   deliveries/          github-pr, local-merge, files
-  adapters/claude/     pilotage de Claude Code + intégration (plugin : commandes, hooks,
-                       définitions d'agents, greffe de barre d'état)
+  adapters/claude/     pilotage de Claude Code : réglages de session (hooks, barre d'état,
+                       définitions d'agents) passés à chaque lancement ; plugin réduit aux
+                       commandes /relaylead:*
   profiles/ methods/ teams/   catalogue de départ, indépendant de l'agent (anglais, français)
 ```
 
@@ -146,7 +152,9 @@ Contrat d'un adaptateur (chaque capacité déclare son niveau ; le cœur s'adapt
 | `heartbeat` | signe de vie à chaque action | hook PostToolUse |
 | `profile` | traduire un profil Relaylead en définition propre à l'agent | JSON passé par `--agents` (aucune écriture dans `~/.claude/agents`) |
 | `subagents` | relectures courtes dans la session | oui |
-| `install` | brancher l'intégration (commandes, hooks, greffe de barre d'état) | plugin installé pour l'utilisateur |
+| `session-settings` | fournir hooks et mesure du contexte à la seule session lancée | `--settings` (hooks, barre d'état propre à la session) + `--agents` |
+| `wake` | réveiller une session inactive avec un message | `claude --bg --resume <id> "<message>"` ou hook `Stop` (choix selon l'essai) |
+| `install` | brancher les commandes intégrées | plugin réduit aux commandes `/relaylead:*` |
 
 Sans `inject`, le cœur passe les messages au prochain lancement ou à la reprise ; sans `guard`, le mode sans autorisations est refusé pour cet agent et seuls ses propres mécanismes d'autorisation s'appliquent ; sans `heartbeat`, le veilleur se fie à l'activité du transcript.
 
@@ -157,7 +165,7 @@ Chaque adaptateur fournit la meilleure source disponible, dans cet ordre :
 - **Contexte** : (1) relevé exact de l'agent (barre d'état) ; (2) **calcul depuis le transcript** (jetons de la dernière réponse : entrée + cache) ; (3) limite simple en nombre de tours ou en durée, réglable.
 - **Limites d'usage** : (1) **chiffres exacts** de l'agent (pourcentages et heures de remise) ; (2) **budget** fixé par l'utilisateur (sessions simultanées, heures de travail par fenêtre, jetons comptés dans les transcripts, dollars pour une clé API) ; (3) **réaction** : à l'erreur de limite, pause de la mission et reprise à l'heure indiquée par l'erreur si elle existe, sinon essais espacés (15 min, 30 min, 1 h…).
 - Les relevés sont écrits avec leur heure dans `~/.relaylead/usage.json` (par agent) ; un relevé de plus de 30 min est considéré comme inconnu (pas de nouveau lancement sur cette base).
-- Barre d'état : jamais remplacée ; l'adaptateur s'y greffe s'il y en a une (relève puis appelle celle de l'utilisateur à l'identique), en installe une minimale s'il n'y en a pas et si l'utilisateur l'accepte, et se passe d'elle sinon (transcript, budget, réaction).
+- Barre d'état : celle de l'utilisateur n'est jamais touchée. Chaque session d'équipe reçoit, par `--settings`, sa propre barre d'état de mesure (invisible, elle ne fait qu'écrire les relevés). Si l'agent n'en a pas, on se passe d'elle (transcript, budget, réaction).
 
 ### Où vivent les choses
 
@@ -229,6 +237,7 @@ Programme Node.js lancé toutes les 5 min par le planificateur du système (laun
 - **Relève** demandée → arrêter l'ancienne, lancer la nouvelle.
 - **Équipier mort** sans résultat → message au lead ; lead absent aussi → relancer le lead d'abord.
 - **Bloqué ou en attente** : distingués par le battement de cœur (ou l'activité du transcript). Jamais d'arrêt au seul motif « en attente ».
+- **Réveil** : un lead qui attend termine son tour ; quand un équipier finit, qu'une réponse arrive ou qu'un message l'attend, le veilleur (ou l'outil, appelé par l'équipier en fin de tâche) le réveille par la capacité `wake` de l'adaptateur. Le lead ne tourne donc pas à vide pendant les longues attentes.
 - **Disjoncteur** : 3 relances ratées d'affilée → mission arrêtée, alerte.
 - **Usage et charge** : appliquer les seuils ; si la charge dépasse le plafond, ne plus lancer de session pour les missions `low`.
 - **Ménage** : jetons dont le PID est mort libérés ; orphelins signalés.
@@ -252,7 +261,7 @@ Canaux v1 : `system` (notification du système, défaut), `agent` (mini-session 
 
 - **Liste blanche par défaut** (lire ; écrire dans le dossier de la mission et ses worktrees ; git sur les branches de travail ; commandes de test et de build déclarées) + liste blanche du projet. Hors liste → question.
 - **Mode sans autorisations** : choisi explicitement, seulement pour un agent dont l'adaptateur a `guard` ; les garde-fous restent actifs.
-- **Garde-fous communs** : secrets déclarés, push vers la branche principale ou des tags, push forcé, suppressions récursives hors du dossier de la mission, irréversible sans autorisation à usage unique.
+- **Garde-fous communs** (par `PreToolUse`, donc actifs dans tous les modes, y compris sans autorisations) : secrets déclarés, push vers la branche principale ou des tags, push forcé, suppressions récursives hors du dossier de la mission, irréversible sans autorisation à usage unique.
 - **Interdits du projet** dans `.relaylead.json`.
 - **Web en quarantaine** : les profils qui ont des accès en écriture n'ont pas les outils web ; ils délèguent la lecture à un profil `web-reader` (outils web seuls) qui rend un résumé. Les profils purement web n'ont pas de push et livrent des fichiers.
 - **Accès confiés** : l'outil n'impose rien ; l'assistant `init` explique et conseille.
@@ -260,7 +269,7 @@ Canaux v1 : `system` (notification du système, défaut), `agent` (mini-session 
 
 ### Respect de la configuration de l'utilisateur
 
-- Barre d'état, hooks, réglages et définitions d'agents de l'utilisateur jamais modifiés ; l'intégration est inerte hors mission.
+- Barre d'état, hooks, réglages et définitions d'agents de l'utilisateur jamais modifiés. Les sessions d'équipe reçoivent leurs hooks et leur barre d'état par `--settings` à chaque lancement : rien ne s'applique aux autres sessions de l'utilisateur. Par défaut, elles sont aussi isolées de ses plugins et MCP (`--setting-sources`, `--strict-mcp-config`) ; un projet peut en réautoriser.
 - `relaylead uninstall` retire tout ce qu'`install` a ajouté et laisse `~/.relaylead` sauf demande contraire.
 
 ### Assistants

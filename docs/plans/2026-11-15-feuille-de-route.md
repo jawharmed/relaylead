@@ -1,0 +1,25 @@
+# Relaylead : feuille de route de la version 1
+
+**Spec :** [`docs/specs/2026-11-14-relaylead-design.md`](../specs/2026-11-14-relaylead-design.md)
+
+La version 1 se construit en lots. Chaque lot livre quelque chose qui marche et se vérifie seul. Le plan détaillé d'un lot s'écrit **après** le lot précédent, à partir de ce qu'il a appris, et passe par une relecture contradictoire avant d'être exécuté. Seul le lot 0 a son plan détaillé : [`2026-11-15-lot-0-essai.md`](2026-11-15-lot-0-essai.md).
+
+| Lot | Contenu | Terminé quand | Dépend de |
+|---|---|---|---|
+| **0. Essai jetable** | Vérifier sur Claude Code les hypothèses de la spec, dont le réveil d'une session inactive, les refus par `PreToolUse`, les vraies morts de session et l'isolation par `--settings` | `docs/spike-results.md` répond à chaque point avec preuve et conséquence. **Un point bloquant (1, 3, 4, 8, réveil) est prouvé, ou le périmètre de la v1 est réduit par écrit** ; jamais « reporté » | — |
+| **1. Squelette marchant** | Dépôt public, tests automatiques `node --test` sur macOS, Linux et Windows. Paquet Node.js, outil `relaylead` (`launch`, `list`, `show`, `stop`, `task`, `state`, `answer`), état en fichiers à écriture atomique, configuration à trois niveaux. **Faux agent** scripté (adaptateur de test, sans quota) et adaptateur Claude (`launch`, `list`, `stop`, `attach`, `profile`, `session-settings`, `wake`). Profil `lead` et méthode `code` minimale. Source « fichiers de tâches », livraisons « fichiers » et « branche fusionnée en local ». **Garde-fou minimal** par `PreToolUse` (secrets, branche principale, push forcé) et questions en fichier | Sur un dépôt jouet : `relaylead launch` mène deux tâches de bout en bout avec le faux agent sur les trois systèmes (CI) et avec Claude sur macOS, en mode liste blanche, sans intervention sauf une question posée et répondue par `relaylead answer` | 0 |
+| **2a. Continuité** | Veilleur (verrou, un seul lead, relance, disjoncteur, `STOP`, journal), planificateur du système, battement de cœur, réveil du lead, boîte aux lettres, mesure du contexte, relève | Avec le faux agent (CI) puis Claude : lead tué (`kill -9`) en pleine mission → reprise sans perte ; seuil forcé bas → relève sans perte ; lead inactif réveillé à la fin d'un équipier | 1 |
+| **2b. Usage et priorités** | Mesures d'usage (exact, budget, réaction), pause et reprise, arbitrage entre missions par priorité, plafond de charge, jetons de travaux lourds avec nettoyage | Deux missions de priorités différentes : usage simulé au seuil → la basse s'arrête, la haute continue ; reprise à l'heure ; aucun conteneur ni volume laissé | 2a |
+| **3. Humain dans la boucle** | Liste blanche complète et demande hors liste → question, autorisation à usage unique pour l'irréversible, garde-fous complets, `web-reader` en quarantaine, canaux d'alerte (`system`, `agent`, `ntfy`, `command`), réglage « questions sans réponse », résumé quotidien | Une mission qui rencontre une commande hors liste et une action irréversible pose deux questions, alerte, attend ou applique selon le réglage, sans bloquer le reste | 2b |
+| **4. Installation et grand public** | `install`, `uninstall`, `doctor` ; planificateurs launchd, systemd/cron, Planificateur de tâches Windows ; plugin réduit aux commandes `/relaylead:*` ; assistants `init` et `new-team` ; anglais et français ; catalogue de départ (profils, méthodes, 2 ou 3 équipes types) ; mode clé API | Installation propre et scénarios des lots 1 à 2b rejoués avec Claude sur macOS, Linux et Windows (machine réelle) ; `uninstall` rend la configuration de l'utilisateur à l'identique ; une mission en mode clé API se termine | 3 |
+| **5. GitHub** | Source « issues GitHub », livraison « PR GitHub », branche d'intégration | Une mission prend deux issues d'un dépôt d'essai, ouvre deux PR relues, les fusionne sur la branche d'intégration et ferme les issues | 4 |
+| **6. Usage réel** | Une semaine d'usage par l'auteur sur un vrai projet, à la place de son orchestrateur actuel ; mise à jour de Claude Code en pleine mission | Une semaine sans perte de travail ni session zombie ; défauts trouvés corrigés | 5 |
+| **7. Publication** | README, documentation, nom définitif, paquet npm, marketplace | Un utilisateur neuf installe et lance une mission en suivant le README seul. Actions publiques (publication npm, marketplace) avec l'accord explicite de l'auteur | 6 |
+| **v1.1** | Tableau de suivi et session de pilotage | Plan écrit à partir de l'usage réel | 7 |
+
+Règles communes à tous les lots :
+- Node.js 18 ou plus, sans étape de compilation, dépendances limitées au strict nécessaire ; aucun appel à des outils absents de Windows (`jq`, `uuidgen`, `sleep`…) dans le produit.
+- Code simple, lisible par un débutant ; tests du minimum utile (`node --test`), rejoués par la CI sur les trois systèmes.
+- Aucune écriture dans la configuration de l'utilisateur hors `relaylead install`, réversible par `uninstall`.
+- Aucune mention de projets réels de l'auteur dans le dépôt.
+- Sessions d'essai nommées `rl-…`, isolées de la configuration de l'utilisateur, arrêtées et supprimées en fin d'essai.
