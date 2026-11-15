@@ -31,4 +31,13 @@ async function waitFor(check, ms, what, explain) {
   }
 }
 
-module.exports = { tmpDir, makeIo, waitFor };
+// The environment of a person in a terminal: the tests may themselves run inside a mission session,
+// whose RELAYLEAD_MISSION and RELAYLEAD_TASK would make the CLI refuse the user's commands.
+function userEnv() {
+  const env = { ...process.env };
+  delete env.RELAYLEAD_MISSION;
+  delete env.RELAYLEAD_TASK;
+  return env;
+}
+
+module.exports = { tmpDir, makeIo, waitFor, userEnv };

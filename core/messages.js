@@ -73,6 +73,9 @@ const messages = {
     'bad-choice': 'answer "{choice}" is not one of the options; use a number or a text from: {options}',
     'question-key-clash': 'the key "{key}" makes the id "{id}", already used by the question with key "{storedKey}"; choose another key',
     'missing-value': 'the option --{name} needs a value',
+    'not-from-a-session': '"relaylead {command}" belongs to the user; a mission session cannot run it',
+    'not-your-task': 'this session works on task "{own}"; it cannot finish task "{id}"',
+    'not-for-crew': 'a crew member cannot start or deliver tasks; finish your own task with: relaylead task done {own}',
     questionAnswered: 'question {id} answered: {choice}\n',
     'bad-question': 'cannot ask the question: {detail}',
     'bad-task-id':
@@ -167,6 +170,9 @@ const messages = {
     'bad-choice': 'la réponse « {choice} » n\'est pas une des options ; donnez un numéro ou un texte parmi : {options}',
     'question-key-clash': 'la clé « {key} » donne l\'id « {id} », déjà pris par la question de clé « {storedKey} » ; choisissez une autre clé',
     'missing-value': 'l\'option --{name} attend une valeur',
+    'not-from-a-session': '« relaylead {command} » appartient à l\'utilisateur ; une session de mission ne peut pas le lancer',
+    'not-your-task': 'cette session travaille sur la tâche « {own} » ; elle ne peut pas terminer la tâche « {id} »',
+    'not-for-crew': 'un équipier ne peut ni lancer ni livrer de tâche ; terminez votre propre tâche avec : relaylead task done {own}',
     questionAnswered: 'question {id} répondue : {choice}\n',
     'bad-question': 'impossible de poser la question : {detail}',
     'bad-task-id':

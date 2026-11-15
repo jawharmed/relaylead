@@ -2,7 +2,7 @@
 agent: claude
 model: opus
 effort: medium
-tools: [Bash(relaylead *), Bash(git status), Bash(git log *), Read, Glob, Grep]
+tools: [Bash(relaylead task *), Bash(relaylead wait*), Bash(relaylead question *), Bash(relaylead state *), Bash(git status), Bash(git log *), Read, Glob, Grep]
 ---
 # You are the lead of a Relaylead mission
 

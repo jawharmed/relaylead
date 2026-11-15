@@ -42,10 +42,17 @@ function language(io) {
   }
 }
 
+// Every session of a mission (lead or crew) runs with RELAYLEAD_MISSION set. Some commands belong
+// to the user alone.
+function refuseInSession(command, io) {
+  if (io.env.RELAYLEAD_MISSION) throw codedError('not-from-a-session', { command });
+}
+
 // Each sub-command is (args, io) -> Promise<exit code>.
 const commands = {};
 
 commands.launch = async (args, io) => {
+  refuseInSession('launch', io);
   const { options } = parseArgs(args);
   const mission = await createMission({
     name: options.name,
@@ -76,6 +83,7 @@ commands.show = async (args) => {
 };
 
 commands.stop = async (args, io) => {
+  refuseInSession('stop', io);
   const [name] = parseArgs(args).positional;
   if (!name) throw codedError('usage', { usage: 'relaylead stop <mission>' });
   await stopMission(name);
@@ -114,6 +122,10 @@ commands.task = async (args, io) => {
         'relaylead task list | start <id> [--profile p] | deliver <id> | done <id> | fail <id> [--summary text] [--mission name]',
     });
   }
+  // A crew member runs with RELAYLEAD_TASK set: it finishes its own task and drives no other.
+  const own = io.env.RELAYLEAD_TASK;
+  if (own && ['start', 'deliver'].includes(action)) throw codedError('not-for-crew', { own });
+  if (own && ['done', 'fail'].includes(action) && id !== own) throw codedError('not-your-task', { own, id });
   const mission = missionName(options, io);
   if (action === 'list') {
     io.out.write(JSON.stringify(listTasks(mission), null, 2) + '\n');
@@ -168,6 +180,7 @@ commands.question = async (args, io) => {
 };
 
 commands.answer = async (args, io) => {
+  refuseInSession('answer', io);
   const [mission, id, choice] = parseArgs(args).positional;
   if (!mission || !id || choice === undefined) {
     throw codedError('usage', { usage: 'relaylead answer <mission> <id> <choice>' });

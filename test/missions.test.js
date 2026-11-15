@@ -9,7 +9,7 @@ const { listSessions, recordSession, isAlive } = require('../core/sessions');
 const { readJson, writeJson } = require('../core/store');
 const { missionDir } = require('../core/paths');
 const fake = require('../adapters/fake');
-const { tmpDir, makeIo, waitFor } = require('../fixtures/helpers');
+const { tmpDir, makeIo, waitFor, userEnv } = require('../fixtures/helpers');
 const { freshHome } = require('../fixtures/missions');
 
 const BIN = path.join(__dirname, '..', 'bin', 'relaylead.js');
@@ -23,7 +23,7 @@ async function cli(args, ioOverrides) {
 // Runs bin/relaylead.js in its own process.
 function cliProcess(args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [BIN, ...args], { env: process.env, windowsHide: true });
+    const child = spawn(process.execPath, [BIN, ...args], { env: userEnv(), windowsHide: true });
     let out = '';
     let err = '';
     child.stdout.on('data', (chunk) => (out += chunk));
