@@ -3,20 +3,23 @@
 const path = require('node:path');
 const { missionDir } = require('./paths');
 const { writeJson, readJson } = require('./store');
-const { readMission } = require('./missions');
+const { readMission, getState } = require('./missions');
+const { codedError } = require('./messages');
 const { listTasks, markFailed } = require('./tasks');
 const { getAdapter } = require('../adapters');
 
 const DEFAULT_TIMEOUT_S = 100;
 const MAX_TIMEOUT_S = 540;
 const POLL_MS = 250;
-// A 'working' session without a process may be restarting: it gets this long before it counts as ended.
+// A session missing from the adapter's list, or 'working' without a process, may be starting or
+// restarting: it gets this long before it counts as ended.
 const GRACE_MS = 60 * 1000;
 const ENDED_STATES = ['done', 'stopped', 'failed'];
 const NO_RESULT = 'crew session ended without a result';
 
 // Without a snapshot, everything that exists is reported as new (from: null).
-const EMPTY_SNAPSHOT = { tasks: {}, questions: {}, sessions: {}, noPidSince: {} };
+// lostSince keeps, per session, when it was first seen missing or without a process.
+const EMPTY_SNAPSHOT = { tasks: {}, questions: {}, sessions: {}, lostSince: {} };
 
 function snapshotFile(name) {
   return path.join(missionDir(name), 'wait-snapshot.json');
@@ -28,26 +31,28 @@ function sleep(ms) {
 
 // Judged on the state the adapter reports, never on the pid alone: a Claude session can be done
 // with a live process, or working without one while it restarts.
-function crewEnded(session, noPidSince, previousNoPidSince) {
-  if (!session || ENDED_STATES.includes(session.state)) return true;
-  if (session.state === 'working' && !session.pid) {
-    noPidSince[session.shortId] = previousNoPidSince[session.shortId] || new Date().toISOString();
-    return Date.now() - Date.parse(noPidSince[session.shortId]) >= GRACE_MS;
-  }
-  return false;
+function crewEnded(shortId, session, lostSince, previousLostSince) {
+  if (session && ENDED_STATES.includes(session.state)) return true;
+  const lost = !session || (session.state === 'working' && !session.pid);
+  if (!lost) return false;
+  lostSince[shortId] = previousLostSince[shortId] || new Date().toISOString();
+  return Date.now() - Date.parse(lostSince[shortId]) >= GRACE_MS;
 }
 
 // The current view of the mission, after marking the tasks whose crew ended without a result.
-async function look(name, adapter, previousNoPidSince) {
+async function look(name, adapter, previousLostSince) {
   // Sessions before tasks: a crew member writes its result before it ends, so when its session
   // is seen ended here, its result is already visible in listTasks below.
   const sessions = await adapter.list(name);
   const tasks = listTasks(name);
-  const noPidSince = {};
+  // Checked after those reads: a stop is written before its sessions are killed, so a crew seen
+  // ended by a stop is never taken for a crew failure. A wait left behind by a stopped lead ends here.
+  if (getState(name) === 'stopped') throw codedError('mission-stopped', { mission: name });
+  const lostSince = {};
   for (const task of tasks) {
     if (task.state !== 'running') continue;
     const session = sessions.find((candidate) => candidate.shortId === task.session);
-    if (crewEnded(session, noPidSince, previousNoPidSince)) {
+    if (crewEnded(task.session, session, lostSince, previousLostSince)) {
       markFailed(name, task.id, NO_RESULT);
       task.state = 'failed';
     }
@@ -59,7 +64,7 @@ async function look(name, adapter, previousNoPidSince) {
       tasks: Object.fromEntries(tasks.map((task) => [task.id, task.state])),
       questions: {}, // Task 7
       sessions: Object.fromEntries(sessions.map((session) => [session.shortId, session.state])),
-      noPidSince,
+      lostSince,
     },
   };
 }
@@ -87,21 +92,23 @@ async function stopFinishedCrew(adapter, changes, tasks, sessions) {
   }
 }
 
-// Returns the changes since the last wait, as soon as there is one, or [] after the timeout.
-async function waitForChanges(name, timeoutSeconds = DEFAULT_TIMEOUT_S) {
+// Gives the changes since the last wait to `report` as soon as there is one, or [] after the timeout.
+// The snapshot is saved only after `report` succeeds, so a change is never lost on the way out.
+async function waitForChanges(name, timeoutSeconds = DEFAULT_TIMEOUT_S, report = () => {}) {
   const mission = readMission(name);
   const adapter = getAdapter(mission.agent);
   const snapshot = { ...EMPTY_SNAPSHOT, ...readJson(snapshotFile(name), {}) };
   const deadline = Date.now() + Math.min(timeoutSeconds, MAX_TIMEOUT_S) * 1000;
   for (;;) {
-    const { tasks, sessions, view } = await look(name, adapter, snapshot.noPidSince);
+    const { tasks, sessions, view } = await look(name, adapter, snapshot.lostSince);
     const changes = diff(snapshot, view);
     if (changes.length > 0 || Date.now() >= deadline) {
+      report(changes);
       await stopFinishedCrew(adapter, changes, tasks, sessions);
       writeJson(snapshotFile(name), view);
       return changes;
     }
-    snapshot.noPidSince = view.noPidSince;
+    snapshot.lostSince = view.lostSince;
     await sleep(POLL_MS);
   }
 }

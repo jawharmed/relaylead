@@ -123,8 +123,9 @@ commands.wait = async (args, io) => {
   if (timeout !== undefined && !(timeout >= 0)) {
     throw codedError('usage', { usage: 'relaylead wait [--timeout seconds] [--mission name]' });
   }
-  const changes = await waitForChanges(missionName(options, io), timeout);
-  io.out.write(JSON.stringify({ changes }, null, 2) + '\n');
+  await waitForChanges(missionName(options, io), timeout, (changes) => {
+    io.out.write(JSON.stringify({ changes }, null, 2) + '\n');
+  });
   return 0;
 };
 

@@ -5,13 +5,20 @@ const path = require('node:path');
 const { home, missionDir } = require('./paths');
 const { writeJson, readJson } = require('./store');
 const { codedError } = require('./messages');
-const { readMission } = require('./missions');
-const { recordSession, listSessions } = require('./sessions');
+const { readMission, getState } = require('./missions');
+const { recordSession, listSessions, isAlive } = require('./sessions');
 const { getAdapter } = require('../adapters');
 const tasksDirSource = require('../sources/tasks-dir');
 
+// Long enough for a slow agent launch held by another start.
+const START_LOCK_WAIT_MS = 60 * 1000;
+
 function now() {
   return new Date().toISOString();
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function taskFile(mission, id) {
@@ -56,14 +63,11 @@ function listTasks(name) {
       summary: (result || record || {}).summary || null,
     };
   });
+  tasksDirSource.checkDependencies(tasks);
   const byId = new Map(tasks.map((task) => [task.id, task]));
   for (const task of tasks) {
     task.ready =
-      task.state === 'todo' &&
-      task.depends.every((dep) => {
-        if (!byId.has(dep)) throw new Error(`${task.file} depends on unknown task "${dep}"`);
-        return ['done', 'delivered'].includes(byId.get(dep).state);
-      });
+      task.state === 'todo' && task.depends.every((dep) => ['done', 'delivered'].includes(byId.get(dep).state));
   }
   return tasks;
 }
@@ -88,9 +92,57 @@ function crewPrompt(task, cwd, branch) {
   ].join('\n');
 }
 
+// Creating the file with 'wx' fails if it exists, so only one caller holds it. On Windows, a lock
+// file being deleted cannot be created again for a moment (EPERM): it counts as still held.
+function tryCreateLock(file) {
+  try {
+    fs.writeFileSync(file, String(process.pid), { flag: 'wx' });
+    return true;
+  } catch (err) {
+    if (err.code === 'EEXIST' || (process.platform === 'win32' && err.code === 'EPERM')) return false;
+    throw err;
+  }
+}
+
+// 0 when the lock is gone or its holder is still writing it.
+function lockHolder(file) {
+  try {
+    return Number(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return 0;
+  }
+}
+
+// One start at a time per mission: the lead may start tasks in parallel, and each start must see
+// the sessions and task records written by the previous one. A lock left by a dead process is taken over.
+async function withStartLock(name, action) {
+  const file = path.join(missionDir(name), 'start.lock');
+  const giveUpAt = Date.now() + START_LOCK_WAIT_MS;
+  while (!tryCreateLock(file)) {
+    const holder = lockHolder(file);
+    if (holder && !isAlive(holder)) {
+      fs.rmSync(file, { force: true });
+      continue;
+    }
+    if (Date.now() > giveUpAt) throw codedError('start-busy', { mission: name });
+    await sleep(50);
+  }
+  try {
+    return await action();
+  } finally {
+    fs.rmSync(file, { force: true });
+  }
+}
+
 // Idempotent: a running task is returned as it is, so a replayed start launches nobody.
 async function startTask(name, { id, profile = 'developer' }) {
-  const mission = readMission(name);
+  const mission = readMission(name); // before the lock, which lives in the mission folder
+  return withStartLock(name, () => launchCrew(mission, id, profile));
+}
+
+async function launchCrew(mission, id, profile) {
+  const name = mission.name;
+  if (getState(name) === 'stopped') throw codedError('mission-stopped', { mission: name });
   const task = findTask(name, id);
   if (task.state === 'running') return readJson(taskFile(name, id));
   if (task.state !== 'todo') throw codedError('task-not-startable', { id, state: task.state });

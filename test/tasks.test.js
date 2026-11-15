@@ -78,6 +78,30 @@ test('startTask twice does not launch twice', async (t) => {
   assert.strictEqual(listSessions('demo').length, 1);
 });
 
+test('concurrent starts of one task launch one crew member', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  const specs = spyLaunches(t);
+
+  const [first, second] = await Promise.all([startTask('demo', { id: 'a' }), startTask('demo', { id: 'a' })]);
+
+  assert.deepStrictEqual(second, first);
+  assert.strictEqual(specs.length, 1);
+  assert.strictEqual(listSessions('demo').length, 1);
+});
+
+test('concurrent starts of two tasks give distinct session names', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+
+  await Promise.all([startTask('demo', { id: 'a' }), startTask('demo', { id: 'b' })]);
+
+  assert.deepStrictEqual(
+    listSessions('demo').map((session) => session.name).sort(),
+    ['demo/developer/1', 'demo/developer/2'],
+  );
+});
+
 test('fake mission runs two dependent tasks to done', async (t) => {
   const dir = setupProject(t, 'demo');
 

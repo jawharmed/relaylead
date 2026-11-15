@@ -34,6 +34,7 @@ const messages = {
     'session-exists': 'mission "{mission}" already has another session with the short id {shortId}',
     'task-unknown': 'mission "{mission}" has no task "{id}"; see the tasks with: relaylead task list',
     'task-not-startable': 'task "{id}" is {state}; only a todo task can be started',
+    'start-busy': 'another task of mission "{mission}" has been starting for a minute; try again',
   },
   fr: {
     help: [
@@ -69,6 +70,7 @@ const messages = {
     'session-exists': 'la mission « {mission} » a déjà une autre session d\'id court {shortId}',
     'task-unknown': 'la mission « {mission} » n\'a pas de tâche « {id} » ; voir les tâches avec : relaylead task list',
     'task-not-startable': 'la tâche « {id} » est {state} ; seule une tâche todo peut être lancée',
+    'start-busy': 'une autre tâche de la mission « {mission} » est en lancement depuis une minute ; réessayez',
   },
 };
 

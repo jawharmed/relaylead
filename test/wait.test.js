@@ -4,8 +4,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { run } = require('../core/cli');
 const { listTasks, startTask } = require('../core/tasks');
+const { stopMission } = require('../core/missions');
 const { listSessions, isAlive } = require('../core/sessions');
-const { readJson } = require('../core/store');
+const { readJson, writeJson } = require('../core/store');
+const { waitForChanges } = require('../core/wait');
 const { missionDir } = require('../core/paths');
 const fake = require('../adapters/fake');
 const { makeIo, waitFor } = require('../fixtures/helpers');
@@ -21,6 +23,32 @@ async function wait(timeoutSeconds) {
 
 function resultFile(id) {
   return path.join(missionDir('demo'), 'tasks', `${id}.result.json`);
+}
+
+function snapshotFile() {
+  return path.join(missionDir('demo'), 'wait-snapshot.json');
+}
+
+// The adapter reports the sessions this test chooses.
+function stubList(t, list) {
+  const original = fake.list;
+  fake.list = async () => list();
+  t.after(() => {
+    fake.list = original;
+  });
+}
+
+// A started task whose real crew process is already gone, so only the stubbed list counts.
+async function startedTaskWithoutCrew() {
+  const record = await startTask('demo', { id: 'a' });
+  const crew = listSessions('demo').find((session) => session.shortId === record.session);
+  await fake.stop(crew);
+  await waitFor(() => !isAlive(crew.pid), 5000, 'the crew process to end');
+  return crew;
+}
+
+function secondsAgo(seconds) {
+  return new Date(Date.now() - seconds * 1000).toISOString();
 }
 
 test('wait reports a finished task as a JSON change', async (t) => {
@@ -105,4 +133,72 @@ test('crew session done without a result marks the task failed', async (t) => {
   assert.strictEqual(a.state, 'failed');
   assert.strictEqual(a.summary, 'crew session ended without a result');
   assert.strictEqual(fs.existsSync(resultFile('a')), false);
+});
+
+test('a wait running when the mission is stopped returns without changing anything', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  await startTask('demo', { id: 'a' });
+  await wait(5);
+  const taskBefore = fs.readFileSync(path.join(missionDir('demo'), 'tasks', 'a.json'), 'utf8');
+  const snapshotBefore = fs.readFileSync(snapshotFile(), 'utf8');
+
+  const io = makeIo({ env: { RELAYLEAD_MISSION: 'demo' } });
+  const waiting = run(['wait', '--timeout', '5'], io);
+  await stopMission('demo'); // kills the crew: no result will ever come
+  const startedAt = Date.now();
+  assert.strictEqual(await waiting, 1);
+  assert.ok(Date.now() - startedAt < 1000, 'wait must return as soon as the mission is stopped');
+  assert.match(io.err.text, /stopped/);
+
+  assert.strictEqual(fs.readFileSync(path.join(missionDir('demo'), 'tasks', 'a.json'), 'utf8'), taskBefore);
+  assert.strictEqual(fs.readFileSync(snapshotFile(), 'utf8'), snapshotBefore);
+  await assert.rejects(startTask('demo', { id: 'b' }), { code: 'mission-stopped' });
+});
+
+test('changes not printed are reported again', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+
+  const report = () => {
+    throw new Error('output closed');
+  };
+  await assert.rejects(waitForChanges('demo', 5, report), /output closed/);
+  assert.strictEqual(fs.existsSync(snapshotFile()), false);
+
+  let printed;
+  await waitForChanges('demo', 5, (changes) => (printed = changes));
+  assert.deepStrictEqual(printed, [
+    { kind: 'task', id: 'a', from: null, to: 'todo' },
+    { kind: 'task', id: 'b', from: null, to: 'todo' },
+  ]);
+});
+
+test('a working session without a process gets 60 s before its task fails', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  const crew = await startedTaskWithoutCrew();
+  stubList(t, () => [{ ...crew, state: 'working', pid: null }]);
+
+  writeJson(snapshotFile(), { lostSince: { [crew.shortId]: secondsAgo(1) } });
+  await wait(0);
+  assert.strictEqual(listTasks('demo')[0].state, 'running');
+
+  writeJson(snapshotFile(), { lostSince: { [crew.shortId]: secondsAgo(61) } });
+  await wait(0);
+  assert.strictEqual(listTasks('demo')[0].state, 'failed');
+});
+
+test('a session missing from the adapter list gets the same grace', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  const crew = await startedTaskWithoutCrew();
+  stubList(t, () => []);
+
+  await wait(0);
+  assert.strictEqual(listTasks('demo')[0].state, 'running');
+
+  writeJson(snapshotFile(), { lostSince: { [crew.shortId]: secondsAgo(61) } });
+  await wait(0);
+  assert.strictEqual(listTasks('demo')[0].state, 'failed');
 });
