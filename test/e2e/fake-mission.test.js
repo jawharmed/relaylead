@@ -74,34 +74,44 @@ test('fake mission delivers two tasks with one answered question', { timeout: 3 
   t.after(async () => {
     if (mission) for (const session of listSessions(mission)) await fake.stop(session);
   });
-  const report = () => missionReport(mission);
+  // The last poll's exit code and stderr go into a timeout report: a failing command shows there.
+  let lastPoll = null;
+  const poll = async (args) => {
+    const result = await relaylead(args, dir);
+    lastPoll = { args, code: result.code, err: result.err };
+    return result;
+  };
+  const report = () => `--- last poll\n${JSON.stringify(lastPoll)}\n` + missionReport(mission);
 
   const launched = await relaylead(['launch', '--agent', 'fake', '--request', 'Do the tasks'], dir);
   assert.strictEqual(launched.code, 0, launched.err);
   mission = launched.out.trim();
 
-  let question = null;
+  let questions = [];
   await waitFor(
     async () => {
-      const listed = await relaylead(['question', 'list', mission], dir);
-      [question] = JSON.parse(listed.out || '[]');
-      return Boolean(question);
+      questions = JSON.parse((await poll(['question', 'list', mission])).out || '[]');
+      return questions.length > 0;
     },
     MISSION_MS,
     'the question of task b',
     report,
   );
-  assert.strictEqual(question.text, 'Should greet also accept an optional language (en or fr)?');
+  assert.strictEqual(questions.length, 1, report());
+  const [question] = questions;
+  assert.strictEqual(question.text, 'Should greet speak English only, or English and French?');
   const answered = await relaylead(['answer', mission, question.id, '1'], dir);
   assert.strictEqual(answered.code, 0, answered.err);
 
   await waitFor(
-    async () => (await relaylead(['state', 'get', '--mission', mission], dir)).out.trim() === 'done',
+    async () => (await poll(['state', 'get', '--mission', mission])).out.trim() === 'done',
     MISSION_MS,
     'the mission to be done',
     report,
   );
 
+  // The fake lead offers "yes" and "no" whatever the ask text says (a real lead offers the
+  // choices of the text): option 1 is "yes".
   const [settled] = JSON.parse((await relaylead(['question', 'list', mission, '--all'], dir)).out);
   assert.deepStrictEqual([settled.state, settled.answer.choice], ['answered', 'yes']);
 
@@ -119,7 +129,11 @@ test('fake mission delivers two tasks with one answered question', { timeout: 3 
   const sessions = listSessions(mission);
   assert.strictEqual(sessions.length, 3, report());
   await waitFor(() => sessions.every((session) => !isAlive(session.pid)), 15000, 'every session to end', report);
-  const reaper = readJson(path.join(missionDir(mission), 'reaper.json'));
+  // `state set done` writes the state first, then starts the helper and records its pid: the
+  // mission may be done before reaper.json exists.
+  const reaperFile = path.join(missionDir(mission), 'reaper.json');
+  await waitFor(() => fs.existsSync(reaperFile), 15000, 'reaper.json', report);
+  const reaper = readJson(reaperFile);
   await waitFor(() => !isAlive(reaper.pid), 15000, 'the helper to end', report);
 
   // Only the user's checkout and the integration worktree are left.
