@@ -1,6 +1,7 @@
 // Process of a fake agent session. Usage: node agent.js <role>
 // Like a real session, it acts only through the relaylead CLI, never by writing state files.
 const { execFileSync } = require('node:child_process');
+const fs = require('node:fs');
 const path = require('node:path');
 const { missionDir } = require('../../core/paths');
 const { readJson } = require('../../core/store');
@@ -17,14 +18,26 @@ function idle() {
   setInterval(() => {}, 60 * 1000);
 }
 
-// Scripted lead: start the ready tasks (at most `parallel` at a time), wait, again, until all are finished.
+function readMission() {
+  return readJson(path.join(missionDir(process.env.RELAYLEAD_MISSION), 'mission.json'));
+}
+
+function listTasks() {
+  return JSON.parse(relaylead('task', 'list'));
+}
+
+// Scripted lead: deliver the done tasks, start the ready ones (at most `parallel` at a time), wait,
+// again, until every task is delivered or failed.
 function lead() {
   relaylead('state', 'set', 'working');
-  const mission = readJson(path.join(missionDir(process.env.RELAYLEAD_MISSION), 'mission.json'));
+  const mission = readMission();
   for (;;) {
-    const tasks = JSON.parse(relaylead('task', 'list'));
+    let tasks = listTasks();
     if (tasks.length === 0) return idle(); // nothing to do: wait to be stopped
-    if (tasks.every((task) => ['done', 'failed', 'delivered'].includes(task.state))) {
+    const done = tasks.filter((task) => task.state === 'done');
+    for (const task of done) relaylead('task', 'deliver', task.id);
+    if (done.length > 0) tasks = listTasks(); // delivered tasks make their dependents ready
+    if (tasks.every((task) => ['delivered', 'failed'].includes(task.state))) {
       relaylead('state', 'set', 'done');
       return;
     }
@@ -39,10 +52,17 @@ function lead() {
   }
 }
 
-// Scripted crew member: "works" 1 s on its task, reports it done, ends.
+// Scripted crew member: "works" 1 s on its task, writes <id>.txt in its working folder (committed on
+// its branch with local-merge), reports it done, ends.
 function crew() {
+  const id = process.env.RELAYLEAD_TASK;
   setTimeout(() => {
-    relaylead('task', 'done', process.env.RELAYLEAD_TASK, '--summary', 'fake work');
+    fs.writeFileSync(`${id}.txt`, `fake work on ${id}\n`);
+    if (readMission().config.delivery.type === 'local-merge') {
+      execFileSync('git', ['add', `${id}.txt`], { stdio: 'ignore', windowsHide: true });
+      execFileSync('git', ['commit', '-m', id], { stdio: 'ignore', windowsHide: true });
+    }
+    relaylead('task', 'done', id, '--summary', 'fake work');
   }, 1000);
 }
 

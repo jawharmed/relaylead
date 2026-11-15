@@ -12,9 +12,11 @@ const TASK_A = '---\ntitle: First task\n---\n\nWrite the first file.\n';
 const TASK_B = '---\ntitle: Second task\ndepends: [a]\n---\n\nWrite the second file.\n';
 
 // Fresh RELAYLEAD_HOME and project folder; every session of `mission` is stopped after the test.
+// The folder is not a git repository: its crew members deliver files (machine config).
 function setupProject(t, mission) {
   const home = tmpDir('relaylead-home-');
   process.env.RELAYLEAD_HOME = home;
+  writeJson(path.join(home, 'config.json'), { delivery: { type: 'files' } });
   const dir = fs.realpathSync.native(tmpDir('relaylead-project-'));
   fs.mkdirSync(path.join(dir, 'tasks'));
   fs.writeFileSync(path.join(dir, 'tasks', 'a.md'), TASK_A);

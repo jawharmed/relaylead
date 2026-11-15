@@ -8,6 +8,7 @@ const { loadConfig } = require('./config');
 const { codedError } = require('./messages');
 const { recordSession, listSessions, isAlive } = require('./sessions');
 const { getAdapter } = require('../adapters');
+const { getDelivery } = require('../deliveries');
 
 // States the lead may declare. 'stopped' is written by the core only.
 const STATES = ['starting', 'working', 'waiting', 'done'];
@@ -88,6 +89,7 @@ async function createMission({ name, dir, request, team, priority, agent, params
   const missionName = slug(name || path.basename(realDir));
   const config = loadConfig({ dir: realDir, params });
   const adapter = getAdapter(agent || config.agent);
+  const delivery = getDelivery(config.delivery.type);
 
   takeLock(realDir, missionName);
   let reserved = false;
@@ -105,6 +107,8 @@ async function createMission({ name, dir, request, team, priority, agent, params
       createdAt: now(),
       config,
     };
+    // Before the lead starts: the integration worktree is where the lead reads the tasks.
+    delivery.prepareMission(mission);
     writeJson(missionFile(missionName, 'mission.json'), mission);
 
     lead = await adapter.launch({

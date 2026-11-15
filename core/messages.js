@@ -23,6 +23,8 @@ const messages = {
     unknownCommand: 'relaylead: unknown command "{command}"\n\n',
     noMissions: 'no missions\n',
     missionStopped: 'mission {mission} stopped\n',
+    taskDelivered: 'task {id} delivered\n',
+    taskAlreadyDelivered: 'task {id} already delivered\n',
     // Errors: the key is the error code (see codedError).
     usage: 'usage: {usage}',
     'dir-busy': 'the folder {dir} is busy with mission "{mission}"; stop it first with: relaylead stop {mission}',
@@ -34,7 +36,15 @@ const messages = {
     'session-exists': 'mission "{mission}" already has another session with the short id {shortId}',
     'task-unknown': 'mission "{mission}" has no task "{id}"; see the tasks with: relaylead task list',
     'task-not-startable': 'task "{id}" is {state}; only a todo task can be started',
-    'start-busy': 'another task of mission "{mission}" has been starting for a minute; try again',
+    'start-busy': 'another task of mission "{mission}" has been starting or delivering for a minute; try again',
+    'task-not-deliverable': 'task "{id}" is {state}; only a done task can be delivered',
+    'protected-branch':
+      'the integration branch "{branch}" is protected; set another delivery.branch in .relaylead.json',
+    'not-a-git-repo':
+      '{dir} is not the root of a git repository; run the mission at the root, or set "delivery": {"type": "files"} in .relaylead.json',
+    'merge-conflict':
+      'task "{id}" conflicts with the integration branch; the merge was cancelled and the task stays done. Resolve it on branch {branch}, then deliver again',
+    'empty-output': 'task "{id}" delivered nothing: its output folder {dir} is empty',
   },
   fr: {
     help: [
@@ -60,6 +70,8 @@ const messages = {
     unknownCommand: 'relaylead : commande inconnue « {command} »\n\n',
     noMissions: 'aucune mission\n',
     missionStopped: 'mission {mission} arrêtée\n',
+    taskDelivered: 'tâche {id} livrée\n',
+    taskAlreadyDelivered: 'tâche {id} déjà livrée\n',
     usage: 'usage : {usage}',
     'dir-busy': 'le dossier {dir} est occupé par la mission « {mission} » ; arrêtez-la d\'abord avec : relaylead stop {mission}',
     'mission-exists': 'une mission nommée « {mission} » existe déjà ; choisissez un autre nom avec --name',
@@ -70,7 +82,15 @@ const messages = {
     'session-exists': 'la mission « {mission} » a déjà une autre session d\'id court {shortId}',
     'task-unknown': 'la mission « {mission} » n\'a pas de tâche « {id} » ; voir les tâches avec : relaylead task list',
     'task-not-startable': 'la tâche « {id} » est {state} ; seule une tâche todo peut être lancée',
-    'start-busy': 'une autre tâche de la mission « {mission} » est en lancement depuis une minute ; réessayez',
+    'start-busy': 'une autre tâche de la mission « {mission} » est en lancement ou en livraison depuis une minute ; réessayez',
+    'task-not-deliverable': 'la tâche « {id} » est {state} ; seule une tâche done peut être livrée',
+    'protected-branch':
+      'la branche d\'intégration « {branch} » est protégée ; indiquez une autre delivery.branch dans .relaylead.json',
+    'not-a-git-repo':
+      '{dir} n\'est pas la racine d\'un dépôt git ; lancez la mission à la racine, ou mettez "delivery": {"type": "files"} dans .relaylead.json',
+    'merge-conflict':
+      'la tâche « {id} » est en conflit avec la branche d\'intégration ; la fusion est annulée et la tâche reste done. Résolvez-le sur la branche {branch}, puis livrez de nouveau',
+    'empty-output': 'la tâche « {id} » n\'a rien livré : son dossier de sortie {dir} est vide',
   },
 };
 

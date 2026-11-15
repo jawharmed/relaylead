@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { run } = require('../core/cli');
-const { listTasks, startTask } = require('../core/tasks');
+const { listTasks, startTask, finishTask, deliverTask } = require('../core/tasks');
 const { getState, stopMission } = require('../core/missions');
 const { listSessions, isAlive } = require('../core/sessions');
 const { readJson } = require('../core/store');
@@ -42,7 +42,7 @@ test('startTask launches a crew member and records the task', async (t) => {
     profile: 'developer',
     state: 'running',
     session: session.shortId,
-    cwd: dir,
+    cwd: path.join(dir, 'out', 'a'),
     branch: null,
     startedAt: record.startedAt,
   });
@@ -55,6 +55,7 @@ test('startTask launches a crew member and records the task', async (t) => {
   assert.deepStrictEqual(spec.profile, { name: 'developer' });
   assert.match(spec.prompt, /First task/);
   assert.match(spec.prompt, /Write the first file\./);
+  assert.strictEqual(spec.cwd, path.join(dir, 'out', 'a'));
   assert.ok(spec.prompt.includes('relaylead task done a --summary'));
 
   const tasks = listTasks('demo');
@@ -174,6 +175,32 @@ test('a start lock that cannot be removed does not fail the start', async (t) =>
   assert.deepStrictEqual(readJson(path.join(missionDir('demo'), 'tasks', 'a.json')), record);
 });
 
+test('a dependency counts once it is delivered', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  await assert.rejects(deliverTask('demo', 'a'), { code: 'task-not-deliverable' });
+
+  finishTask('demo', 'a', { state: 'done' });
+  assert.deepStrictEqual(
+    listTasks('demo').map((task) => [task.id, task.state, task.ready]),
+    [
+      ['a', 'done', false],
+      ['b', 'todo', false],
+    ],
+  );
+
+  fs.mkdirSync(path.join(dir, 'out', 'a'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'out', 'a', 'a.txt'), 'a\n');
+  assert.strictEqual(await deliverTask('demo', 'a'), 'delivered');
+  assert.deepStrictEqual(
+    listTasks('demo').map((task) => [task.id, task.state, task.ready]),
+    [
+      ['a', 'delivered', false],
+      ['b', 'todo', true],
+    ],
+  );
+});
+
 test('fake mission runs two dependent tasks to done', async (t) => {
   const dir = setupProject(t, 'demo');
 
@@ -184,15 +211,18 @@ test('fake mission runs two dependent tasks to done', async (t) => {
   assert.deepStrictEqual(
     listTasks('demo').map((task) => [task.id, task.state]),
     [
-      ['a', 'done'],
-      ['b', 'done'],
+      ['a', 'delivered'],
+      ['b', 'delivered'],
     ],
   );
+  assert.strictEqual(fs.readFileSync(path.join(dir, 'out', 'b', 'b.txt'), 'utf8'), 'fake work on b\n');
   const tasksDir = path.join(missionDir('demo'), 'tasks');
   const aResult = readJson(path.join(tasksDir, 'a.result.json'));
   const bRecord = readJson(path.join(tasksDir, 'b.json'));
   assert.strictEqual(aResult.summary, 'fake work');
-  assert.ok(bRecord.startedAt >= aResult.finishedAt, 'b must start after a is done');
+  const aRecord = readJson(path.join(tasksDir, 'a.json'));
+  assert.ok(bRecord.startedAt >= aRecord.deliveredAt, 'b must start after a is delivered');
+  assert.ok(aRecord.deliveredAt >= aResult.finishedAt, 'a must be delivered after it is done');
   assert.deepStrictEqual(
     listSessions('demo').map((session) => session.name).sort(),
     ['demo/developer/1', 'demo/developer/2', 'demo/lead/1'],

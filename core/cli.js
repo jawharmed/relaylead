@@ -2,7 +2,7 @@ const path = require('node:path');
 const { t, codedError } = require('./messages');
 const { loadConfig } = require('./config');
 const { createMission, listMissions, stopMission, getState, setState } = require('./missions');
-const { listTasks, startTask, finishTask } = require('./tasks');
+const { listTasks, startTask, deliverTask, finishTask } = require('./tasks');
 const { waitForChanges } = require('./wait');
 const pkg = require('../package.json');
 
@@ -100,9 +100,10 @@ commands.state = async (args, io) => {
 commands.task = async (args, io) => {
   const { positional, options } = parseArgs(args);
   const [action, id] = positional;
-  if (!(action === 'list' || (['start', 'done', 'fail'].includes(action) && id))) {
+  if (!(action === 'list' || (['start', 'deliver', 'done', 'fail'].includes(action) && id))) {
     throw codedError('usage', {
-      usage: 'relaylead task list | start <id> [--profile p] | done <id> | fail <id> [--summary text] [--mission name]',
+      usage:
+        'relaylead task list | start <id> [--profile p] | deliver <id> | done <id> | fail <id> [--summary text] [--mission name]',
     });
   }
   const mission = missionName(options, io);
@@ -111,6 +112,9 @@ commands.task = async (args, io) => {
   } else if (action === 'start') {
     const record = await startTask(mission, { id, profile: options.profile });
     io.out.write(JSON.stringify(record, null, 2) + '\n');
+  } else if (action === 'deliver') {
+    const outcome = await deliverTask(mission, id);
+    io.out.write(t(outcome === 'delivered' ? 'taskDelivered' : 'taskAlreadyDelivered', { id }, language(io)));
   } else {
     finishTask(mission, id, { state: action === 'done' ? 'done' : 'failed', summary: options.summary });
   }

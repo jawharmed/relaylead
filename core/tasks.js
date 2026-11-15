@@ -8,6 +8,7 @@ const { codedError } = require('./messages');
 const { readMission, getState } = require('./missions');
 const { recordSession, listSessions, isAlive } = require('./sessions');
 const { getAdapter } = require('../adapters');
+const { getDelivery } = require('../deliveries');
 const tasksDirSource = require('../sources/tasks-dir');
 
 // Long enough for a slow agent launch held by another start.
@@ -42,15 +43,18 @@ function readSource(mission) {
   return tasksDirSource.list(sourceRoot(mission), source.dir);
 }
 
-// The source has the last word (done there means delivered), then the crew's result, then the core's record.
+// Delivered when the source says done (local-merge marks it there) or the record says delivered
+// (files delivery). Otherwise the crew's result, then the core's record.
 function taskState(sourceTask, record, result) {
   if (sourceTask.state === 'done') return 'delivered';
+  if (record && record.state === 'delivered') return 'delivered';
   if (result) return result.state;
   if (record) return record.state;
   return 'todo';
 }
 
-// Each task with its state, and `ready`: todo with every dependency done or delivered.
+// Each task with its state, and `ready`: todo with every dependency delivered. A task only done
+// is not in the integration branch yet, so a task built on it could not see its work.
 function listTasks(name) {
   const mission = readMission(name);
   const tasks = readSource(mission).map((sourceTask) => {
@@ -68,7 +72,7 @@ function listTasks(name) {
   const byId = new Map(tasks.map((task) => [task.id, task]));
   for (const task of tasks) {
     task.ready =
-      task.state === 'todo' && task.depends.every((dep) => ['done', 'delivered'].includes(byId.get(dep).state));
+      task.state === 'todo' && task.depends.every((dep) => byId.get(dep).state === 'delivered');
   }
   return tasks;
 }
@@ -151,8 +155,9 @@ async function takeOverStaleLock(file) {
   }
 }
 
-// One start at a time per mission: the lead may start tasks in parallel, and each start must see
-// the sessions and task records written by the previous one.
+// One start or delivery at a time per mission: the lead may start tasks in parallel, and each start
+// must see the sessions and task records written by the previous one. Deliveries take it too, so
+// two git commands never change the same repository at the same time.
 async function withStartLock(name, action) {
   const file = path.join(missionDir(name), 'start.lock');
   const giveUpAt = Date.now() + START_LOCK_WAIT_MS;
@@ -181,8 +186,7 @@ async function launchCrew(mission, id, profile) {
   if (task.state === 'running') return readJson(taskFile(name, id));
   if (task.state !== 'todo') throw codedError('task-not-startable', { id, state: task.state });
 
-  const cwd = mission.dir; // Task 6: the delivery prepares the place of work
-  const branch = null;
+  const { cwd, branch } = getDelivery(mission.config.delivery.type).prepareTask(mission, task);
   const number = listSessions(name).filter((s) => s.name.startsWith(`${name}/${profile}/`)).length + 1;
   const adapter = getAdapter(mission.agent);
   const session = await adapter.launch({
@@ -208,6 +212,18 @@ async function launchCrew(mission, id, profile) {
   return record;
 }
 
+// Delivers a done task. Returns 'delivered', or 'already-delivered' when it was delivered before.
+async function deliverTask(name, id) {
+  const mission = readMission(name); // before the lock, which lives in the mission folder
+  return withStartLock(name, () => {
+    const task = findTask(name, id);
+    if (task.state === 'delivered') return 'already-delivered';
+    if (task.state !== 'done') throw codedError('task-not-deliverable', { id, state: task.state });
+    getDelivery(mission.config.delivery.type).deliver(mission, task);
+    return 'delivered';
+  });
+}
+
 // Called by the crew member (`relaylead task done|fail`): it is the only writer of the result.
 function finishTask(name, id, { state, summary }) {
   findTask(name, id);
@@ -220,4 +236,4 @@ function markFailed(name, id, summary) {
   writeJson(taskFile(name, id), { ...record, state: 'failed', summary, failedAt: now() });
 }
 
-module.exports = { listTasks, startTask, finishTask, markFailed };
+module.exports = { listTasks, startTask, deliverTask, finishTask, markFailed };
