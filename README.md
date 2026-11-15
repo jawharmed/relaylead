@@ -10,6 +10,14 @@ Design documents are in French for now:
 - [Roadmap to v1](docs/plans/2026-11-15-feuille-de-route.md)
 - [Spike results on Claude Code](docs/spike-results.md)
 
+## Develop
+
+Run the tests with `npm test` (Node.js 18 or newer, no dependencies to install).
+
 ---
 
 Confiez une mission à un lead qui la mène en arrière-plan avec son équipe d'agents spécialisés. Projet au stade du design ; la documentation est en français pour l'instant.
+
+## Développer
+
+Lancez les tests avec `npm test` (Node.js 18 ou plus, aucune dépendance à installer).

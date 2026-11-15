@@ -1,0 +1,15 @@
+{
+  "name": "relaylead",
+  "version": "0.1.0",
+  "description": "Run a team of AI coding-agent sessions on a mission",
+  "license": "MIT",
+  "bin": {
+    "relaylead": "bin/relaylead.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}
