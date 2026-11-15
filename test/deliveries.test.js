@@ -2,10 +2,11 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawn } = require('node:child_process');
 const { run } = require('../core/cli');
 const { listTasks, finishTask } = require('../core/tasks');
 const { getState, readMission } = require('../core/missions');
-const { listSessions } = require('../core/sessions');
+const { listSessions, isAlive } = require('../core/sessions');
 const { readJson } = require('../core/store');
 const { missionDir } = require('../core/paths');
 const fake = require('../adapters/fake');
@@ -13,7 +14,7 @@ const localMerge = require('../deliveries/local-merge');
 const files = require('../deliveries/files');
 const tasksDirSource = require('../sources/tasks-dir');
 const { tmpDir, makeIo, waitFor } = require('../fixtures/helpers');
-const { writeMission } = require('../fixtures/missions');
+const { writeMission, missionReport } = require('../fixtures/missions');
 const { git, gitRepo } = require('../fixtures/git');
 
 const TASK_A = '---\ntitle: First task\n---\n\nWrite a.\n';
@@ -116,7 +117,7 @@ test('deliver merges the task branch and marks the source done', async (t) => {
   // The fake lead starts each ready task, then delivers it once its crew member is done.
   const launched = await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir]);
   assert.strictEqual(launched.code, 0, launched.err);
-  await waitFor(() => getState('demo') === 'done', 15000, 'the mission to be done');
+  await waitFor(() => getState('demo') === 'done', 45000, 'the mission to be done', () => missionReport('demo'));
 
   assert.deepStrictEqual(
     listTasks('demo').map((task) => [task.id, task.state]),
@@ -450,4 +451,38 @@ test('a replayed delivery keeps work done on the task branch since', async (t) =
   assert.match(replayed.err, /kept/);
   assert.strictEqual(fs.readFileSync(path.join(cwd, 'later.txt'), 'utf8'), 'later\n');
   assert.strictEqual(git(dir, 'rev-list', '--count', 'relaylead/integration..relaylead/demo/a'), '1');
+});
+
+test('the fake lead logs a delivery that keeps failing, then stops', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const launched = await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir]);
+  assert.strictEqual(launched.code, 0, launched.err);
+  // An untracked a.txt in the integration worktree blocks the merge of the crew's a.txt.
+  fs.writeFileSync(path.join(integrationDir(dir), 'a.txt'), 'in the way\n');
+
+  const lead = listSessions('demo').find((session) => session.role === 'lead');
+  await waitFor(() => !isAlive(lead.pid), 45000, 'the lead to stop', () => missionReport('demo'));
+
+  const log = fs.readFileSync(path.join(missionDir('demo'), `fake-lead-${lead.shortId}.log`), 'utf8');
+  assert.strictEqual(log.match(/task deliver a failed/g).length, 3, log);
+  assert.match(log, /a\.txt/);
+  assert.strictEqual(getState('demo'), 'working');
+  assert.strictEqual(listTasks('demo')[0].state, 'done');
+});
+
+test('a delivery waits for a git lock to be released', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir);
+  finishedTask(mission, 'a');
+  // Another git command holds the integration worktree's index for a moment.
+  const lock = path.resolve(integrationDir(dir), git(integrationDir(dir), 'rev-parse', '--git-path', 'index.lock'));
+  fs.writeFileSync(lock, '');
+  const releaser = spawn(process.execPath, ['-e', `setTimeout(() => require('fs').rmSync(${JSON.stringify(lock)}), 500)`]);
+  t.after(() => releaser.kill());
+
+  const delivered = await deliver('a');
+  assert.strictEqual(delivered.code, 0, delivered.err);
+  assert.strictEqual(git(dir, 'show', 'relaylead/integration:a.txt'), 'a');
 });

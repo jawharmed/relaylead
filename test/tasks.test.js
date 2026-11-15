@@ -11,7 +11,7 @@ const { readJson } = require('../core/store');
 const { missionDir } = require('../core/paths');
 const fake = require('../adapters/fake');
 const { makeIo, waitFor } = require('../fixtures/helpers');
-const { setupProject, writeMission } = require('../fixtures/missions');
+const { setupProject, writeMission, missionReport } = require('../fixtures/missions');
 
 // Counts the launches and keeps their specs, without changing what they do.
 function spyLaunches(t) {
@@ -216,7 +216,7 @@ test('fake mission runs two dependent tasks to done', async (t) => {
 
   const launched = await run(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir], makeIo());
   assert.strictEqual(launched, 0);
-  await waitFor(() => getState('demo') === 'done', 10000, 'the mission to be done');
+  await waitFor(() => getState('demo') === 'done', 45000, 'the mission to be done', () => missionReport('demo'));
 
   assert.deepStrictEqual(
     listTasks('demo').map((task) => [task.id, task.state]),

@@ -7,18 +7,35 @@ const { execFileSync } = require('node:child_process');
 const { codedError } = require('../core/messages');
 const tasksDirSource = require('../sources/tasks-dir');
 
+// Git refuses to start when another git command holds a lock file (index.lock, a ref's .lock),
+// for instance a crew member committing, or git's background maintenance. Its message names the
+// file, in every language: "Unable to create '.../index.lock': File exists".
+const LOCK_FILE = /\.lock['"]/;
+const LOCK_ATTEMPTS = 10; // about 5 s in all
+
+function sleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 // Never through a shell: paths may contain spaces. Git's own output is kept for the error message.
+// A command refused by a lock did nothing yet, so it is safe to run it again.
 function git(cwd, args) {
-  try {
-    return execFileSync('git', args, {
-      cwd,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-    }).trim();
-  } catch (err) {
-    const detail = String(err.stderr || err.stdout || err.message).trim();
-    throw new Error(`git ${args.join(' ')} failed: ${detail}`);
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return execFileSync('git', args, {
+        cwd,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      }).trim();
+    } catch (err) {
+      const detail = String(err.stderr || err.stdout || err.message).trim();
+      if (LOCK_FILE.test(detail) && attempt < LOCK_ATTEMPTS) {
+        sleep(100 * attempt);
+        continue;
+      }
+      throw new Error(`git ${args.join(' ')} failed: ${detail}`);
+    }
   }
 }
 
@@ -189,29 +206,34 @@ function mergeInProgress(cwd) {
 // Merges in the integration worktree; on a conflict, cancels the merge and returns false.
 // Relaylead's own commits skip the project's hooks (--no-verify): they hold only work already
 // committed and state lines.
+// A merge that meets a held index.lock stops like a conflict ("Unable to write index"), but with no
+// conflicted file: it is cancelled and tried again.
 function mergeOrAbort(integration, args) {
-  try {
-    git(integration, ['merge', '--no-ff', '--no-edit', '--no-verify', ...args]);
-    return true;
-  } catch (err) {
-    if (!mergeInProgress(integration)) throw err; // not a conflict, e.g. no git user configured
-    git(integration, ['merge', '--abort']);
-    return false;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      git(integration, ['merge', '--no-ff', '--no-edit', '--no-verify', ...args]);
+      return true;
+    } catch (err) {
+      if (!mergeInProgress(integration)) throw err; // stopped before merging, e.g. no git user configured
+      const conflicted = git(integration, ['diff', '--name-only', '--diff-filter=U']) !== '';
+      git(integration, ['merge', '--abort']);
+      if (conflicted) return false;
+      if (attempt >= LOCK_ATTEMPTS) throw err;
+      sleep(100 * attempt);
+    }
   }
 }
 
-function sleep(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-// On Windows, a folder that a process still uses as its working folder cannot be removed for a moment.
+// On Windows, a folder cannot be removed while a process still uses it: a crew member that has
+// just been stopped, or an antivirus scanning the new files. That lasts a moment, so retry for
+// about 5 s ("Permission denied", "Directory not empty", "busy"). Removing again is harmless.
 function removeWorktree(mission, cwd) {
   for (let attempt = 1; ; attempt++) {
     try {
       git(mission.dir, ['worktree', 'remove', '--force', cwd]);
       return;
     } catch (err) {
-      if (process.platform !== 'win32' || attempt >= 5) throw err;
+      if (process.platform !== 'win32' || attempt >= 7) throw err;
       sleep(200 * attempt);
     }
   }

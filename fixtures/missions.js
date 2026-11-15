@@ -39,4 +39,23 @@ function writeMission(name, dir) {
   });
 }
 
-module.exports = { setupProject, writeMission };
+// Every file of a mission folder (state, tasks, results, sessions, fake agent logs), for a test
+// failure message.
+function missionReport(name) {
+  const lines = [`--- mission ${name}`];
+  const walk = (folder) => {
+    for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
+      const file = path.join(folder, entry.name);
+      if (entry.isDirectory()) walk(file);
+      else lines.push(`--- ${path.relative(missionDir(name), file)}`, fs.readFileSync(file, 'utf8'));
+    }
+  };
+  try {
+    walk(missionDir(name));
+  } catch (err) {
+    lines.push(String(err));
+  }
+  return lines.join('\n');
+}
+
+module.exports = { setupProject, writeMission, missionReport };
