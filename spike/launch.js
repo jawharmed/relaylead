@@ -42,7 +42,7 @@ function main() {
   const args = [];
   if (o.mode === 'bypass') args.push('--dangerously-skip-permissions');
   else if (o.mode === 'manual') args.push('--permission-mode', 'manual');
-  else args.push('--allowedTools', 'Bash(node *)', 'Read', 'Write', 'Edit', '--permission-mode', 'acceptEdits');
+  else args.push('--allowedTools', 'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', '--permission-mode', 'acceptEdits');
   args.push('--bg', '--name', o.name, '--model', o.model, '--settings', sessionSettings(o));
   if (o.mode !== 'user') args.push('--setting-sources', 'project,local', '--strict-mcp-config');
   const wanted = o.sessionId === 'auto' ? crypto.randomUUID() : null;
