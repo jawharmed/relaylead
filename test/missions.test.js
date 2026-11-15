@@ -316,6 +316,22 @@ test('the helper exits at once when the lead is no longer working', { timeout: 2
   assert.deepStrictEqual([reaped.code, reaped.err], [0, '']);
 });
 
+test('done records the pid of the helper, which ends once the lead has ended', { timeout: 20000 }, async (t) => {
+  freshHome(t);
+  const dir = tmpDir('relaylead-project-');
+  assert.strictEqual((await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir])).code, 0);
+  await waitUntilWorking('demo');
+  const [lead] = listSessions('demo');
+  await fake.stop(lead);
+  await waitFor(() => !isAlive(lead.pid), 30000, 'the lead to end');
+
+  assert.strictEqual((await cli(['state', 'set', 'done', '--mission', 'demo'])).code, 0);
+
+  const reaper = readJson(path.join(missionDir('demo'), 'reaper.json'));
+  assert.ok(Number.isInteger(reaper.pid), JSON.stringify(reaper));
+  await waitFor(() => !isAlive(reaper.pid), 15000, 'the helper to end');
+});
+
 // A crew session of mission demo that stays alive until stopped.
 async function launchCrew(dir, number) {
   const crew = await fake.launch({

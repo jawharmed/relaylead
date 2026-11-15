@@ -229,7 +229,8 @@ async function endMission(mission) {
 }
 
 // Runs `relaylead _reap <mission>` on its own: it outlives this command and the lead's turn.
-// No shell, so a path with spaces or quotes is passed as it is.
+// No shell, so a path with spaces or quotes is passed as it is. Its pid is recorded in reaper.json,
+// so one can check that it has ended.
 async function spawnReaper(name) {
   const child = spawn(process.execPath, [BIN, '_reap', name], {
     detached: true,
@@ -242,6 +243,7 @@ async function spawnReaper(name) {
     child.once('error', reject);
   });
   child.unref();
+  writeJson(missionFile(name, 'reaper.json'), { pid: child.pid, startedAt: now() });
 }
 
 // The helper: waits until the lead is no longer working (10 min at most), then stops it. A failing
