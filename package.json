@@ -6,6 +6,16 @@
   "bin": {
     "relaylead": "bin/relaylead.js"
   },
+  "files": [
+    "bin",
+    "core",
+    "adapters",
+    "deliveries",
+    "sources",
+    "catalog",
+    "LICENSE",
+    "README.md"
+  ],
   "engines": {
     "node": ">=18"
   },
