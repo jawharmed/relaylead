@@ -28,17 +28,21 @@ function parseList(value) {
   return inner.split(',').map((item) => item.trim()).filter((item) => item !== '');
 }
 
-function parseTask(id, file, text) {
+// Splits a Markdown file into its "key: value" front matter fields and its body.
+// Without front matter, fields is empty and body is the whole text.
+function parseFrontMatter(text) {
   const match = matchFrontMatter(text);
   const fields = {};
-  let body = text;
-  if (match) {
-    for (const line of match.header.split(/\r?\n/)) {
-      const colon = line.indexOf(':');
-      if (colon > 0) fields[line.slice(0, colon).trim()] = line.slice(colon + 1).trim();
-    }
-    body = text.slice(match.end).replace(/\r\n/g, '\n').replace(/^\n/, '');
+  if (!match) return { fields, body: text };
+  for (const line of match.header.split(/\r?\n/)) {
+    const colon = line.indexOf(':');
+    if (colon > 0) fields[line.slice(0, colon).trim()] = line.slice(colon + 1).trim();
   }
+  return { fields, body: text.slice(match.end).replace(/\r\n/g, '\n').replace(/^\n/, '') };
+}
+
+function parseTask(id, file, text) {
+  const { fields, body } = parseFrontMatter(text);
   return {
     id,
     file,
@@ -108,4 +112,4 @@ function markDone(root, dir, id) {
   fs.renameSync(temp, file);
 }
 
-module.exports = { list, ready, checkDependencies, markDone };
+module.exports = { list, ready, checkDependencies, markDone, parseFrontMatter, parseList };

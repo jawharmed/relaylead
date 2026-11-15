@@ -1,0 +1,7 @@
+[
+  {"id":"0f0b2950","sessionId":"0f0b2950-1111-4222-8333-444455556666","name":"demo/lead/1","state":"working","status":"busy","pid":4242,"cwd":"/work/demo","startedAt":"2026-11-14T10:00:00.000Z"},
+  {"id":"843f1940","sessionId":"843f1940-1111-4222-8333-444455556666","name":"demo/crew-a/2","state":"blocked","status":"idle","pid":4343,"cwd":"/work/demo","startedAt":"2026-11-14T10:01:00.000Z"},
+  {"id":"7764803b","sessionId":"7764803b-1111-4222-8333-444455556666","name":"demo/crew-b/3","state":"done","status":"idle","pid":4444,"cwd":"/work/demo","startedAt":"2026-11-14T10:02:00.000Z"},
+  {"id":"a1b2c3d4","sessionId":"a1b2c3d4-1111-4222-8333-444455556666","name":"demo/crew-c/4","state":"stopped","status":"idle","cwd":"/work/demo","startedAt":"2026-11-14T10:03:00.000Z"},
+  {"id":"e5f6a7b8","sessionId":"e5f6a7b8-1111-4222-8333-444455556666","name":"demo/crew-d/5","state":"failed","status":"idle","pid":null,"cwd":"/work/demo","startedAt":"2026-11-14T10:04:00.000Z"}
+]
