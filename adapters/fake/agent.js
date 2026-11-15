@@ -3,7 +3,7 @@
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
-const { missionDir } = require('../../core/paths');
+const { missionDir, slug } = require('../../core/paths');
 const { readJson } = require('../../core/store');
 
 const CLI = path.join(__dirname, '..', '..', 'bin', 'relaylead.js');
@@ -59,7 +59,7 @@ function questionsById() {
 function answeredIfAsked(task) {
   if (!task.ask) return true;
   relaylead('question', 'ask', '--key', task.id, '--text', task.ask, '--option', 'yes', '--option', 'no', '--recommended', '1');
-  const question = Object.values(questionsById()).find((candidate) => candidate.key === task.id);
+  const question = questionsById()[`q-${slug(task.id)}`];
   return question.state === 'answered';
 }
 

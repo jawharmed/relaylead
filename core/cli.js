@@ -31,6 +31,7 @@ function parseArgs(args) {
         options[name] = true;
         continue;
       }
+      if (i + 1 >= args.length) throw codedError('missing-value', { name });
       options[name] = args[i + 1];
       (lists[name] = lists[name] || []).push(args[i + 1]);
       i++;
@@ -176,7 +177,8 @@ commands.answer = async (args, io) => {
   if (!mission || !id || choice === undefined) {
     throw codedError('usage', { usage: 'relaylead answer <mission> <id> <choice>' });
   }
-  answerQuestion(mission, id, choice);
+  const chosen = answerQuestion(mission, id, choice);
+  io.out.write(t('questionAnswered', { id, choice: chosen }, language(io)));
   return 0;
 };
 

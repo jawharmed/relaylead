@@ -3,7 +3,7 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const { missionDir, slug } = require('./paths');
-const { writeJson, writeJsonExclusive, readJson } = require('./store');
+const { writeJsonExclusive, readJson } = require('./store');
 const { codedError } = require('./messages');
 
 function questionsDir(mission) {
@@ -34,7 +34,12 @@ function askQuestion(mission, { key, text, context, options, recommended }) {
   if (!Array.isArray(options) || options.length < 2) {
     throw codedError('bad-question', { detail: 'give at least two --option' });
   }
-  const id = `q-${slug(key)}`;
+  let id;
+  try {
+    id = `q-${slug(key)}`;
+  } catch {
+    throw codedError('bad-question', { detail: 'the key needs at least one letter or digit' });
+  }
   const question = {
     id,
     key,
@@ -45,7 +50,11 @@ function askQuestion(mission, { key, text, context, options, recommended }) {
     askedAt: new Date().toISOString(),
   };
   const created = writeJsonExclusive(questionFile(mission, id), question);
-  return { id, existing: !created };
+  if (created) return { id, existing: false };
+  // Different keys can make the same id (A.b and a-b): the existing question is not the one asked.
+  const stored = readJson(questionFile(mission, id));
+  if (stored.key !== key) throw codedError('question-key-clash', { key, id, storedKey: stored.key });
+  return { id, existing: true };
 }
 
 function withAnswer(mission, question) {
@@ -72,14 +81,17 @@ function listQuestions(mission, { state } = {}) {
 function answerQuestion(mission, id, choice) {
   const question = readJson(questionFile(mission, id), null);
   if (!question) throw codedError('question-unknown', { mission, id });
-  const previous = readJson(answerFile(mission, id), null);
-  if (previous) throw codedError('question-answered', { id, choice: previous.choice });
   const text = String(choice).trim();
   const byNumber = /^\d+$/.test(text) ? question.options[Number(text) - 1] : undefined;
   const byText = question.options.find((option) => option.toLowerCase() === text.toLowerCase());
   const chosen = byNumber || byText;
   if (!chosen) throw codedError('bad-choice', { choice: text, options: question.options.join(', ') });
-  writeJson(answerFile(mission, id), { choice: chosen, answeredAt: new Date().toISOString() });
+  const written = writeJsonExclusive(answerFile(mission, id), { choice: chosen, answeredAt: new Date().toISOString() });
+  if (!written) {
+    const previous = readJson(answerFile(mission, id));
+    throw codedError('question-answered', { id, choice: previous.choice });
+  }
+  return chosen;
 }
 
 module.exports = { askQuestion, answerQuestion, listQuestions };

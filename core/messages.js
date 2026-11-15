@@ -65,6 +65,9 @@ const messages = {
     'question-unknown': 'mission "{mission}" has no question "{id}"; see the open ones with: relaylead question list {mission}',
     'question-answered': 'question "{id}" is already answered ("{choice}")',
     'bad-choice': 'answer "{choice}" is not one of the options; use a number or a text from: {options}',
+    'question-key-clash': 'the key "{key}" makes the id "{id}", already used by the question with key "{storedKey}"; choose another key',
+    'missing-value': 'the option --{name} needs a value',
+    questionAnswered: 'question {id} answered: {choice}\n',
     'bad-question': 'cannot ask the question: {detail}',
     'bad-task-id':
       'the task file {file} has a name unusable in a git branch; use letters, digits, ".", "_" and "-", not starting with "." or "-", not ending with "." (and not _integration)',
@@ -134,6 +137,9 @@ const messages = {
     'question-unknown': 'la mission « {mission} » n\'a pas de question « {id} » ; voir les questions ouvertes avec : relaylead question list {mission}',
     'question-answered': 'la question « {id} » a déjà une réponse (« {choice} »)',
     'bad-choice': 'la réponse « {choice} » n\'est pas une des options ; donnez un numéro ou un texte parmi : {options}',
+    'question-key-clash': 'la clé « {key} » donne l\'id « {id} », déjà pris par la question de clé « {storedKey} » ; choisissez une autre clé',
+    'missing-value': 'l\'option --{name} attend une valeur',
+    questionAnswered: 'question {id} répondue : {choice}\n',
     'bad-question': 'impossible de poser la question : {detail}',
     'bad-task-id':
       'le fichier de tâche {file} a un nom inutilisable dans une branche git ; utilisez lettres, chiffres, « . », « _ » et « - », sans commencer par « . » ni « - », sans finir par « . » (et pas _integration)',

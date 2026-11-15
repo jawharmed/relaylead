@@ -7,7 +7,8 @@ const { askQuestion, answerQuestion, listQuestions } = require('../core/question
 const { getState } = require('../core/missions');
 const { listTasks } = require('../core/tasks');
 const { waitForChanges } = require('../core/wait');
-const { makeIo, waitFor } = require('../fixtures/helpers');
+const { writeJsonExclusive, readJson } = require('../core/store');
+const { makeIo, waitFor, tmpDir } = require('../fixtures/helpers');
 const { setupProject, writeMission, missionReport } = require('../fixtures/missions');
 
 function demoMission(t) {
@@ -138,4 +139,43 @@ test('fake mission waits for the answer then finishes', async (t) => {
   await waitFor(() => getState('demo') === 'done', 45000, 'the mission to be done', report);
   assert.deepStrictEqual(listTasks('demo').map((task) => task.state), ['delivered', 'delivered']);
   assert.strictEqual(listQuestions('demo').length, 1);
+});
+
+test('two keys that make the same id are refused, naming the existing question', (t) => {
+  demoMission(t);
+  askQuestion('demo', { ...QUESTION, key: 'A.b' });
+  assert.deepStrictEqual(askQuestion('demo', { ...QUESTION, key: 'A.b' }), { id: 'q-a-b', existing: true });
+  assert.throws(() => askQuestion('demo', { ...QUESTION, key: 'a-b' }), (err) => {
+    assert.strictEqual(err.code, 'question-key-clash');
+    assert.match(err.message, /q-a-b/);
+    return true;
+  });
+  assert.strictEqual(listQuestions('demo').length, 1);
+});
+
+test('a key with no letter or digit is a coded error', (t) => {
+  demoMission(t);
+  assert.throws(() => askQuestion('demo', { ...QUESTION, key: '!!!' }), { code: 'bad-question' });
+});
+
+test('an option without a value is refused, and answer confirms', async (t) => {
+  demoMission(t);
+  const io = makeIo({ env: { RELAYLEAD_MISSION: 'demo' } });
+  assert.strictEqual(await run(['question', 'ask', '--key', 'k', '--text', 'T', '--option', 'a', '--option'], io), 1);
+  assert.match(io.err.text, /--option/);
+  assert.strictEqual(listQuestions('demo').length, 0);
+
+  askQuestion('demo', QUESTION);
+  const answered = makeIo();
+  assert.strictEqual(await run(['answer', 'demo', 'q-db', '2'], answered), 0);
+  assert.match(answered.out.text, /q-db.*postgres/);
+});
+
+test('writeJsonExclusive writes once and leaves no temporary file', (t) => {
+  const dir = tmpDir('relaylead-store-');
+  const file = path.join(dir, 'x.json');
+  assert.strictEqual(writeJsonExclusive(file, { n: 1 }), true);
+  assert.strictEqual(writeJsonExclusive(file, { n: 2 }), false);
+  assert.deepStrictEqual(readJson(file), { n: 1 });
+  assert.deepStrictEqual(fs.readdirSync(dir), ['x.json']);
 });
