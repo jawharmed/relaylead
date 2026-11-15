@@ -2,8 +2,23 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const { sessionSettings, writeSessionSettings } = require('../adapters/claude/settings');
 const { tmpDir } = require('../fixtures/helpers');
+const pkg = require('../package.json');
+
+const PACKAGE_DIR = path.join(__dirname, '..');
+
+// Runs the shim as the session's shell would: directly on POSIX, through cmd.exe on Windows (a .cmd
+// cannot run without it; the quoting is the one Node uses for its own `shell` option).
+function runShim(bin, args) {
+  if (process.platform !== 'win32') return execFileSync(path.join(bin, 'relaylead'), args, { encoding: 'utf8' });
+  const line = `"${path.join(bin, 'relaylead.cmd')}" ${args.join(' ')}`;
+  return execFileSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `"${line}"`], {
+    encoding: 'utf8',
+    windowsVerbatimArguments: true,
+  });
+}
 
 const mission = { name: 'demo', config: { attribution: null } };
 const profile = { name: 'dev', tools: ['Read', 'Edit'] };
@@ -59,4 +74,14 @@ test('the session environment is merged under the fixed keys', () => {
   assert.strictEqual(settings.env.RELAYLEAD_TASK, 'a');
   assert.strictEqual(settings.env.RELAYLEAD_MISSION, 'demo');
   assert.strictEqual(settings.env.BASH_DEFAULT_TIMEOUT_MS, '600000');
+});
+
+test('the session PATH starts with the mission bin folder, whose shim runs this relaylead', () => {
+  process.env.RELAYLEAD_HOME = tmpDir('relaylead home-'); // a space, like many Windows user folders
+  const file = writeSessionSettings({
+    mission, packageDir: PACKAGE_DIR, profile, permissionMode: 'allowlist', sessionName: 'demo/lead/1',
+  });
+  const bin = path.join(process.env.RELAYLEAD_HOME, 'missions', 'demo', 'bin');
+  assert.strictEqual(JSON.parse(fs.readFileSync(file, 'utf8')).env.PATH, bin + path.delimiter + process.env.PATH);
+  assert.strictEqual(runShim(bin, ['--version']).trim(), pkg.version);
 });
