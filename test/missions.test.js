@@ -193,6 +193,35 @@ test('a failure after the lead started stops the lead and leaves nothing behind'
   assert.strictEqual(fs.existsSync(lockFile(fs.realpathSync.native(dir))), false);
 });
 
+test('a failing stop during the launch cleanup still cleans up and reports the first error', async (t) => {
+  freshHome(t);
+  const dir = tmpDir('relaylead-project-');
+  const originalLaunch = fake.launch;
+  const originalStop = fake.stop;
+  let lead;
+  fake.launch = async (spec) => {
+    lead = await originalLaunch(spec);
+    recordSession(spec.mission, { ...lead, sessionId: 'fake-someone-else' });
+    return lead;
+  };
+  fake.stop = async () => {
+    throw new Error('stop failed');
+  };
+  let result;
+  try {
+    result = await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir]);
+  } finally {
+    fake.launch = originalLaunch;
+    fake.stop = originalStop;
+  }
+  t.after(() => fake.stop(lead));
+
+  assert.strictEqual(result.code, 1);
+  assert.match(result.err, /short id/);
+  assert.strictEqual(fs.existsSync(missionDir('demo')), false);
+  assert.strictEqual(fs.existsSync(lockFile(fs.realpathSync.native(dir))), false);
+});
+
 test('stop on a stopped or done mission kills nothing', async (t) => {
   freshHome(t);
   const originalStop = fake.stop;
@@ -207,6 +236,7 @@ test('stop on a stopped or done mission kills nothing', async (t) => {
 
   const stoppedDir = tmpDir('relaylead-project-');
   assert.strictEqual((await cli(['launch', '--agent', 'fake', '--name', 'stopped', '--dir', stoppedDir])).code, 0);
+  await waitUntilWorking('stopped'); // the lead has written its state: nothing more will come from it
   assert.strictEqual((await cli(['stop', 'stopped'])).code, 0);
   assert.strictEqual(stopCalls, 1);
   assert.strictEqual((await cli(['stop', 'stopped'])).code, 0);
@@ -214,6 +244,7 @@ test('stop on a stopped or done mission kills nothing', async (t) => {
 
   const doneDir = tmpDir('relaylead-project-');
   assert.strictEqual((await cli(['launch', '--agent', 'fake', '--name', 'done', '--dir', doneDir])).code, 0);
+  await waitUntilWorking('done');
   assert.strictEqual((await cli(['state', 'set', 'done', '--mission', 'done'])).code, 0);
   assert.strictEqual((await cli(['stop', 'done'])).code, 0);
   assert.strictEqual(stopCalls, 1);

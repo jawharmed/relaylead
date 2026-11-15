@@ -128,7 +128,11 @@ async function createMission({ name, dir, request, team, priority, agent, params
     recordSession(missionName, lead);
     return mission;
   } catch (err) {
-    if (lead) await adapter.stop(lead); // no orphan session
+    try {
+      if (lead) await adapter.stop(lead); // no orphan session
+    } catch {
+      // Keep cleaning up, and report the first error: it says what went wrong.
+    }
     // Retries: the stopped lead may still be finishing a write in the folder.
     if (reserved) fs.rmSync(missionDir(missionName), { recursive: true, force: true, maxRetries: 5 });
     releaseLock(realDir, missionName);
@@ -184,15 +188,22 @@ function listMissions() {
   return missions.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+function writeStopped(name) {
+  writeJson(missionFile(name, 'state.json'), { state: 'stopped', updatedAt: now() });
+}
+
 async function stopMission(name) {
   const mission = readMission(name);
   // A finished mission is left alone: its recorded pids may now belong to unrelated processes.
   if (['stopped', 'done'].includes(readState(name))) return;
   const adapter = getAdapter(mission.agent);
+  // Written first, so a `state set` from a session being stopped is refused instead of erasing the stop.
+  writeStopped(name);
   for (const session of listSessions(name)) {
     await adapter.stop(session);
   }
-  writeJson(missionFile(name, 'state.json'), { state: 'stopped', updatedAt: now() });
+  // Written again: a `state set` that read the state just before the first write may have landed since.
+  writeStopped(name);
   releaseLock(mission.dir, name);
 }
 
