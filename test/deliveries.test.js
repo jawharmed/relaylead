@@ -379,3 +379,75 @@ test('relaylead commits skip the git hooks', async (t) => {
   assert.strictEqual(delivered.code, 0, delivered.err);
   assert.strictEqual(git(dir, 'log', '-1', '--format=%s', 'relaylead/integration'), 'chore(relaylead): a livrée');
 });
+
+test('a launch refused for missing tasks works once they are committed', async (t) => {
+  freshHome(t);
+  const dir = userRepo({});
+  writeMission('demo', dir);
+  assert.throws(() => localMerge.prepareMission(readMission('demo')), { code: 'tasks-not-committed' });
+  assert.strictEqual(git(dir, 'branch', '--list', 'relaylead/*'), '');
+  assert.strictEqual(fs.existsSync(path.join(dir, '.relaylead')), false);
+
+  fs.mkdirSync(path.join(dir, 'tasks'));
+  fs.writeFileSync(path.join(dir, 'tasks', 'a.md'), TASK_A);
+  git(dir, 'add', 'tasks');
+  git(dir, 'commit', '-q', '-m', 'tasks');
+  localMerge.prepareMission(readMission('demo'));
+  assert.deepStrictEqual(listTasks('demo').map((task) => task.id), ['a']);
+});
+
+test('a new mission sees the tasks committed since the integration branch was made', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  preparedMission(dir);
+  fs.writeFileSync(path.join(dir, 'tasks', 'b.md'), TASK_B);
+  git(dir, 'add', 'tasks');
+  git(dir, 'commit', '-q', '-m', 'task b');
+  const before = checkoutState(dir);
+
+  writeMission('two', dir);
+  localMerge.prepareMission(readMission('two'));
+  assert.deepStrictEqual(listTasks('two').map((task) => task.id), ['a', 'b']);
+  const head = git(dir, 'rev-parse', 'relaylead/integration');
+
+  // Already up to date: no new merge commit.
+  localMerge.prepareMission(readMission('two'));
+  assert.strictEqual(git(dir, 'rev-parse', 'relaylead/integration'), head);
+  assert.deepStrictEqual(checkoutState(dir), before);
+});
+
+test('a conflict while updating the integration branch is aborted and refused', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A, 'shared.txt': 'start\n' });
+  preparedMission(dir);
+  fs.writeFileSync(path.join(integrationDir(dir), 'shared.txt'), 'from the integration branch\n');
+  git(integrationDir(dir), 'commit', '-q', '-a', '-m', 'integration change');
+  fs.writeFileSync(path.join(dir, 'shared.txt'), 'from the user\n');
+  git(dir, 'commit', '-q', '-m', 'user change', '--', 'shared.txt');
+
+  writeMission('two', dir);
+  assert.throws(() => localMerge.prepareMission(readMission('two')), { code: 'integration-sync-conflict' });
+  assert.strictEqual(git(integrationDir(dir), 'status', '--porcelain'), '');
+});
+
+test('a replayed delivery keeps work done on the task branch since', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir);
+  finishedTask(mission, 'a');
+  const cwd = taskWorktree(dir, 'a');
+  git(dir, 'worktree', 'lock', cwd);
+  assert.strictEqual((await deliver('a')).code, 0);
+  git(dir, 'worktree', 'unlock', cwd);
+  // Late work after the delivery: committed on the branch, and not committed.
+  fs.writeFileSync(path.join(cwd, 'late.txt'), 'late\n');
+  git(cwd, 'add', 'late.txt');
+  git(cwd, 'commit', '-q', '-m', 'late');
+  fs.writeFileSync(path.join(cwd, 'later.txt'), 'later\n');
+
+  const replayed = await deliver('a');
+  assert.strictEqual(replayed.code, 0, replayed.err);
+  assert.match(replayed.err, /kept/);
+  assert.strictEqual(fs.readFileSync(path.join(cwd, 'later.txt'), 'utf8'), 'later\n');
+  assert.strictEqual(git(dir, 'rev-list', '--count', 'relaylead/integration..relaylead/demo/a'), '1');
+});

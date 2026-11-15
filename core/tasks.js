@@ -56,7 +56,7 @@ function taskState(sourceTask, record, result) {
 // The id goes into a git branch name (relaylead/<mission>/<id>) and a worktree folder name;
 // _integration is the integration worktree's folder.
 function checkTaskId(task) {
-  const usable = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/.test(task.id) && !task.id.includes('..') && !task.id.endsWith('.lock');
+  const usable = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/.test(task.id) && !task.id.includes('..') && !task.id.endsWith('.') && !task.id.endsWith('.lock');
   if (!usable || task.id === '_integration') throw codedError('bad-task-id', { file: task.file });
 }
 

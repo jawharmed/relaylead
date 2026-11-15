@@ -37,6 +37,16 @@ function branchExists(dir, branch) {
   }
 }
 
+// Whether `ref` holds the file or folder `file` (path from the repository root, with / separators).
+function refHas(dir, ref, file) {
+  try {
+    execFileSync('git', ['cat-file', '-e', `${ref}:${file}`], { cwd: dir, stdio: 'ignore', windowsHide: true });
+    return true;
+  } catch {
+    return false; // missing path, or a ref without commits
+  }
+}
+
 function currentBranch(cwd) {
   return git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']);
 }
@@ -57,9 +67,13 @@ function taskBranch(mission, task) {
   return `relaylead/${mission.name}/${task.id}`;
 }
 
-// The task's file in the source, with forward slashes, as git pathspecs expect.
+// The task folder and a task's file, with forward slashes, as git paths expect.
+function sourceDir(mission) {
+  return mission.config.source.dir.replace(/\\/g, '/');
+}
+
 function sourceFile(mission, task) {
-  return `${mission.config.source.dir}/${task.id}.md`;
+  return `${sourceDir(mission)}/${task.id}.md`;
 }
 
 // So the worktrees under .relaylead/ never show in the user's `git status`. The common dir is the
@@ -81,11 +95,11 @@ function branchesClash(branch, missionName) {
   return branch === tasksFolder || branch.startsWith(tasksFolder + '/') || tasksFolder.startsWith(branch + '/');
 }
 
-// Checks everything before changing anything, then creates the integration branch from the current
-// branch, and its worktree. A later mission on the same folder reuses them.
+// Checks everything before changing anything. Then creates the integration branch from the user's
+// current branch, with its worktree; or, when a former mission made them, brings the user's commits
+// made since into the integration branch, so this mission sees its new tasks.
 function prepareMission(mission) {
   const { branch } = mission.config.delivery;
-  const sourceDir = mission.config.source.dir;
   if (mission.config.guard.protectedBranches.includes(branch)) {
     throw codedError('protected-branch', { branch });
   }
@@ -96,22 +110,39 @@ function prepareMission(mission) {
     throw codedError('not-a-git-repo', { dir: mission.dir });
   }
   // The crew members work from commits: uncommitted tasks would not reach them.
-  if (git(mission.dir, ['status', '--porcelain', '--', sourceDir]) !== '') {
-    throw codedError('tasks-not-committed', { dir: sourceDir, branch });
+  if (git(mission.dir, ['status', '--porcelain', '--', sourceDir(mission)]) !== '') {
+    throw codedError('tasks-not-committed', { dir: sourceDir(mission), branch });
   }
   const integration = integrationDir(mission);
   if (fs.existsSync(integration) && currentBranch(integration) !== branch) {
     throw codedError('integration-mismatch', { dir: integration, actual: currentBranch(integration), branch });
   }
+  const isNew = !branchExists(mission.dir, branch);
+  if (isNew && !refHas(mission.dir, 'HEAD', sourceDir(mission))) {
+    throw codedError('tasks-not-committed', { dir: sourceDir(mission), branch });
+  }
 
   excludeRelaylead(mission.dir);
-  if (!fs.existsSync(integration)) {
-    // `git branch` does not check the branch out: the user's checkout stays as it is.
-    if (!branchExists(mission.dir, branch)) git(mission.dir, ['branch', branch]);
-    git(mission.dir, ['worktree', 'add', integration, branch]);
+  // `git branch` does not check the branch out: the user's checkout stays as it is.
+  if (isNew) git(mission.dir, ['branch', branch]);
+  if (!fs.existsSync(integration)) git(mission.dir, ['worktree', 'add', integration, branch]);
+  if (!isNew) {
+    updateIntegration(mission);
+    if (!refHas(mission.dir, branch, sourceDir(mission))) {
+      throw codedError('tasks-not-committed', { dir: sourceDir(mission), branch });
+    }
   }
-  if (!fs.existsSync(path.join(integration, sourceDir))) {
-    throw codedError('tasks-not-committed', { dir: sourceDir, branch });
+}
+
+// Merges the user's current commit into the integration branch, unless it is there already.
+function updateIntegration(mission) {
+  const { branch } = mission.config.delivery;
+  const userCommit = git(mission.dir, ['rev-parse', 'HEAD']);
+  if (git(mission.dir, ['rev-list', '--count', `${branch}..${userCommit}`]) === '0') return;
+  const userBranch = currentBranch(mission.dir); // 'HEAD' when detached
+  const message = `Merge ${userBranch === 'HEAD' ? userCommit : userBranch} into ${branch}`;
+  if (!mergeOrAbort(integrationDir(mission), ['-m', message, userCommit])) {
+    throw codedError('integration-sync-conflict', { branch, dir: integrationDir(mission) });
   }
 }
 
@@ -155,16 +186,17 @@ function mergeInProgress(cwd) {
   return fs.existsSync(path.resolve(cwd, git(cwd, ['rev-parse', '--git-path', 'MERGE_HEAD'])));
 }
 
-// Relaylead's own commits skip the project's hooks (--no-verify): they hold only the crew's
-// already committed work and a state line.
-function mergeTask(mission, task, branch) {
-  const integration = integrationDir(mission);
+// Merges in the integration worktree; on a conflict, cancels the merge and returns false.
+// Relaylead's own commits skip the project's hooks (--no-verify): they hold only work already
+// committed and state lines.
+function mergeOrAbort(integration, args) {
   try {
-    git(integration, ['merge', '--no-ff', '--no-edit', '--no-verify', branch]);
+    git(integration, ['merge', '--no-ff', '--no-edit', '--no-verify', ...args]);
+    return true;
   } catch (err) {
     if (!mergeInProgress(integration)) throw err; // not a conflict, e.g. no git user configured
     git(integration, ['merge', '--abort']);
-    throw codedError('merge-conflict', { id: task.id, branch });
+    return false;
   }
 }
 
@@ -197,15 +229,27 @@ function deliver(mission, task) {
   if (!branchExists(mission.dir, branch)) throw codedError('task-branch-missing', { id: task.id, branch });
   const work = branchWork(mission, branch);
   if (work === 'empty') throw codedError('task-empty', { id: task.id, branch });
-  if (work === 'new') mergeTask(mission, task, branch);
+  if (work === 'new' && !mergeOrAbort(integrationDir(mission), [branch])) {
+    throw codedError('merge-conflict', { id: task.id, branch });
+  }
 
   tasksDirSource.markDone(integrationDir(mission), mission.config.source.dir, task.id);
   return finish(mission, task);
 }
 
+// Work done after the delivery, which removing the worktree and branch would lose.
+function hasLateWork(mission, task) {
+  const cwd = taskDir(mission, task);
+  const branch = taskBranch(mission, task);
+  if (fs.existsSync(cwd) && currentBranch(cwd) === branch && git(cwd, ['status', '--porcelain']) !== '') return true;
+  if (!branchExists(mission.dir, branch)) return false;
+  return git(mission.dir, ['rev-list', '--count', `${mission.config.delivery.branch}..${branch}`]) !== '0';
+}
+
 // The end of a delivery, also run again for a task already delivered: an interrupted delivery is
-// finished. Commits the task's state line if needed, then removes its worktree and branch. The task
-// is delivered once committed: a failed removal is returned as a warning, retried at the next deliver.
+// finished. Commits the task's state line if needed, then removes its worktree and branch, unless
+// they hold work done since. The task is delivered once committed: a failed or skipped removal is
+// returned as a warning, and the next deliver tries again.
 function finish(mission, task) {
   const integration = integrationDir(mission);
   const file = sourceFile(mission, task);
@@ -215,6 +259,7 @@ function finish(mission, task) {
 
   const cwd = taskDir(mission, task);
   const branch = taskBranch(mission, task);
+  if (hasLateWork(mission, task)) return [codedError('task-late-work', { id: task.id, branch, dir: cwd })];
   try {
     // A folder on another branch is not this task's worktree: it is left alone.
     if (fs.existsSync(cwd) && currentBranch(cwd) === branch) removeWorktree(mission, cwd);

@@ -47,6 +47,10 @@ const messages = {
     'empty-output': 'task "{id}" delivered nothing: its output folder {dir} is empty',
     'cleanup-failed':
       'task "{id}" is delivered, but its worktree or branch could not be cleaned up; the next "relaylead task deliver {id}" tries again ({detail})',
+    'task-late-work':
+      'task "{id}" is delivered, but its branch {branch} or its folder {dir} has work done since; they were kept: deliver that work as a new task',
+    'integration-sync-conflict':
+      'your current branch conflicts with the integration branch "{branch}"; the update was cancelled. Merge your branch into it by hand in {dir}, then launch again',
     'task-uncommitted': 'task "{id}" has work not committed in {dir}; commit it on its branch, then deliver again',
     'task-empty': 'task "{id}" has no commit on its branch {branch}; nothing to deliver',
     'task-branch-missing': 'cannot deliver task "{id}": its branch {branch} is missing',
@@ -59,7 +63,7 @@ const messages = {
     'tasks-not-committed':
       'the task folder "{dir}" has changes not committed, or is missing from branch {branch}; commit it first: the crew works from commits',
     'bad-task-id':
-      'the task file {file} has a name unusable in a git branch; use letters, digits, ".", "_" and "-", not starting with "." or "-" (and not _integration)',
+      'the task file {file} has a name unusable in a git branch; use letters, digits, ".", "_" and "-", not starting with "." or "-", not ending with "." (and not _integration)',
   },
   fr: {
     help: [
@@ -108,6 +112,10 @@ const messages = {
     'empty-output': 'la tâche « {id} » n\'a rien livré : son dossier de sortie {dir} est vide',
     'cleanup-failed':
       'la tâche « {id} » est livrée, mais son worktree ou sa branche n\'a pas pu être nettoyé ; le prochain « relaylead task deliver {id} » réessaie ({detail})',
+    'task-late-work':
+      'la tâche « {id} » est livrée, mais sa branche {branch} ou son dossier {dir} contient du travail fait depuis ; ils sont conservés : livrez ce travail dans une nouvelle tâche',
+    'integration-sync-conflict':
+      'votre branche courante est en conflit avec la branche d\'intégration « {branch} » ; la mise à jour est annulée. Fusionnez votre branche à la main dans {dir}, puis relancez',
     'task-uncommitted': 'la tâche « {id} » a du travail non commité dans {dir} ; commitez-le sur sa branche, puis livrez de nouveau',
     'task-empty': 'la tâche « {id} » n\'a aucun commit sur sa branche {branch} ; rien à livrer',
     'task-branch-missing': 'impossible de livrer la tâche « {id} » : sa branche {branch} n\'existe plus',
@@ -120,7 +128,7 @@ const messages = {
     'tasks-not-committed':
       'le dossier des tâches « {dir} » a des changements non commités, ou manque dans la branche {branch} ; commitez-le d\'abord : les équipiers travaillent à partir des commits',
     'bad-task-id':
-      'le fichier de tâche {file} a un nom inutilisable dans une branche git ; utilisez lettres, chiffres, « . », « _ » et « - », sans commencer par « . » ni « - » (et pas _integration)',
+      'le fichier de tâche {file} a un nom inutilisable dans une branche git ; utilisez lettres, chiffres, « . », « _ » et « - », sans commencer par « . » ni « - », sans finir par « . » (et pas _integration)',
   },
 };
 

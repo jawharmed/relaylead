@@ -202,7 +202,7 @@ test('a dependency counts once it is delivered', async (t) => {
 });
 
 test('task ids must be usable in branch names', async (t) => {
-  for (const id of ['my task', '_integration', '-a', '.a', 'a..b', 'a.lock']) {
+  for (const id of ['my task', '_integration', '-a', '.a', 'a..b', 'a.lock', 'a.']) {
     const dir = setupProject(t, 'demo');
     writeMission('demo', dir);
     fs.writeFileSync(path.join(dir, 'tasks', `${id}.md`), '---\ntitle: Bad\n---\n');
