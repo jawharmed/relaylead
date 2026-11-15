@@ -23,6 +23,8 @@ const messages = {
     unknownCommand: 'relaylead: unknown command "{command}"\n\n',
     noMissions: 'no missions\n',
     missionStopped: 'mission {mission} stopped\n',
+    taskDelivered: 'task {id} delivered\n',
+    taskAlreadyDelivered: 'task {id} already delivered\n',
     // Errors: the key is the error code (see codedError).
     usage: 'usage: {usage}',
     'dir-busy': 'the folder {dir} is busy with mission "{mission}"; stop it first with: relaylead stop {mission}',
@@ -34,7 +36,34 @@ const messages = {
     'session-exists': 'mission "{mission}" already has another session with the short id {shortId}',
     'task-unknown': 'mission "{mission}" has no task "{id}"; see the tasks with: relaylead task list',
     'task-not-startable': 'task "{id}" is {state}; only a todo task can be started',
-    'start-busy': 'another task of mission "{mission}" has been starting for a minute; try again',
+    'start-busy': 'another task of mission "{mission}" has been starting or delivering for a minute; try again',
+    'task-not-deliverable': 'task "{id}" is {state}; only a done task can be delivered',
+    'protected-branch':
+      'the integration branch "{branch}" is protected; set another delivery.branch in .relaylead.json',
+    'not-a-git-repo':
+      '{dir} is not the root of a git repository; run the mission at the root, or set "delivery": {"type": "files"} in .relaylead.json',
+    'merge-conflict':
+      'task "{id}" conflicts with the integration branch; the merge was cancelled and the task stays done. Resolve it on branch {branch}, then deliver again',
+    'empty-output': 'task "{id}" delivered nothing: its output folder {dir} is empty',
+    'cleanup-failed':
+      'task "{id}" is delivered, but its worktree or branch could not be cleaned up; the next "relaylead task deliver {id}" tries again ({detail})',
+    'task-late-work':
+      'task "{id}" is delivered, but its branch {branch} or its folder {dir} has work done since; they were kept: deliver that work as a new task',
+    'integration-sync-conflict':
+      'your current branch conflicts with the integration branch "{branch}"; the update was cancelled. Merge your branch into it by hand in {dir}, then launch again',
+    'task-uncommitted': 'task "{id}" has work not committed in {dir}; commit it on its branch, then deliver again',
+    'task-empty': 'task "{id}" has no commit on its branch {branch}; nothing to deliver',
+    'task-branch-missing': 'cannot deliver task "{id}": its branch {branch} is missing',
+    'worktree-mismatch':
+      'the folder {dir} is on branch "{actual}", not "{branch}"; it was left by another mission: remove it with: git worktree remove "{dir}"',
+    'branch-clash':
+      'the integration branch "{branch}" clashes with the task branches relaylead/{mission}/<id>; choose another mission name or delivery.branch',
+    'integration-mismatch':
+      'the integration worktree {dir} is on branch "{actual}", not "{branch}"; set delivery.branch back to "{actual}", or remove the worktree with: git worktree remove "{dir}"',
+    'tasks-not-committed':
+      'the task folder "{dir}" has changes not committed, or is missing from branch {branch}; commit it first: the crew works from commits',
+    'bad-task-id':
+      'the task file {file} has a name unusable in a git branch; use letters, digits, ".", "_" and "-", not starting with "." or "-", not ending with "." (and not _integration)',
   },
   fr: {
     help: [
@@ -60,6 +89,8 @@ const messages = {
     unknownCommand: 'relaylead : commande inconnue « {command} »\n\n',
     noMissions: 'aucune mission\n',
     missionStopped: 'mission {mission} arrêtée\n',
+    taskDelivered: 'tâche {id} livrée\n',
+    taskAlreadyDelivered: 'tâche {id} déjà livrée\n',
     usage: 'usage : {usage}',
     'dir-busy': 'le dossier {dir} est occupé par la mission « {mission} » ; arrêtez-la d\'abord avec : relaylead stop {mission}',
     'mission-exists': 'une mission nommée « {mission} » existe déjà ; choisissez un autre nom avec --name',
@@ -70,7 +101,34 @@ const messages = {
     'session-exists': 'la mission « {mission} » a déjà une autre session d\'id court {shortId}',
     'task-unknown': 'la mission « {mission} » n\'a pas de tâche « {id} » ; voir les tâches avec : relaylead task list',
     'task-not-startable': 'la tâche « {id} » est {state} ; seule une tâche todo peut être lancée',
-    'start-busy': 'une autre tâche de la mission « {mission} » est en lancement depuis une minute ; réessayez',
+    'start-busy': 'une autre tâche de la mission « {mission} » est en lancement ou en livraison depuis une minute ; réessayez',
+    'task-not-deliverable': 'la tâche « {id} » est {state} ; seule une tâche done peut être livrée',
+    'protected-branch':
+      'la branche d\'intégration « {branch} » est protégée ; indiquez une autre delivery.branch dans .relaylead.json',
+    'not-a-git-repo':
+      '{dir} n\'est pas la racine d\'un dépôt git ; lancez la mission à la racine, ou mettez "delivery": {"type": "files"} dans .relaylead.json',
+    'merge-conflict':
+      'la tâche « {id} » est en conflit avec la branche d\'intégration ; la fusion est annulée et la tâche reste done. Résolvez-le sur la branche {branch}, puis livrez de nouveau',
+    'empty-output': 'la tâche « {id} » n\'a rien livré : son dossier de sortie {dir} est vide',
+    'cleanup-failed':
+      'la tâche « {id} » est livrée, mais son worktree ou sa branche n\'a pas pu être nettoyé ; le prochain « relaylead task deliver {id} » réessaie ({detail})',
+    'task-late-work':
+      'la tâche « {id} » est livrée, mais sa branche {branch} ou son dossier {dir} contient du travail fait depuis ; ils sont conservés : livrez ce travail dans une nouvelle tâche',
+    'integration-sync-conflict':
+      'votre branche courante est en conflit avec la branche d\'intégration « {branch} » ; la mise à jour est annulée. Fusionnez votre branche à la main dans {dir}, puis relancez',
+    'task-uncommitted': 'la tâche « {id} » a du travail non commité dans {dir} ; commitez-le sur sa branche, puis livrez de nouveau',
+    'task-empty': 'la tâche « {id} » n\'a aucun commit sur sa branche {branch} ; rien à livrer',
+    'task-branch-missing': 'impossible de livrer la tâche « {id} » : sa branche {branch} n\'existe plus',
+    'worktree-mismatch':
+      'le dossier {dir} est sur la branche « {actual} », pas « {branch} » ; il vient d\'une autre mission : supprimez-le avec : git worktree remove "{dir}"',
+    'branch-clash':
+      'la branche d\'intégration « {branch} » entre en conflit avec les branches des tâches relaylead/{mission}/<id> ; choisissez un autre nom de mission ou une autre delivery.branch',
+    'integration-mismatch':
+      'le worktree d\'intégration {dir} est sur la branche « {actual} », pas « {branch} » ; remettez delivery.branch à « {actual} », ou supprimez le worktree avec : git worktree remove "{dir}"',
+    'tasks-not-committed':
+      'le dossier des tâches « {dir} » a des changements non commités, ou manque dans la branche {branch} ; commitez-le d\'abord : les équipiers travaillent à partir des commits',
+    'bad-task-id':
+      'le fichier de tâche {file} a un nom inutilisable dans une branche git ; utilisez lettres, chiffres, « . », « _ » et « - », sans commencer par « . » ni « - », sans finir par « . » (et pas _integration)',
   },
 };
 

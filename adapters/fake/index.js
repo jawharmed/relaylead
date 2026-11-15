@@ -11,9 +11,11 @@ const AGENT = path.join(__dirname, 'agent.js');
 async function launch(spec) {
   const hex = crypto.randomBytes(8).toString('hex');
   const sessionId = 'fake-' + hex;
+  // Where the agent writes its failures, so a test that times out can show them.
+  const log = path.join(missionDir(spec.mission), `fake-${spec.role}-${hex.slice(0, 8)}.log`);
   const child = spawn(process.execPath, [AGENT, spec.role], {
     cwd: spec.cwd,
-    env: { ...process.env, ...spec.env },
+    env: { ...process.env, ...spec.env, RELAYLEAD_FAKE_LOG: log },
     detached: true,
     stdio: 'ignore',
     windowsHide: true,

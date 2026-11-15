@@ -21,11 +21,12 @@ function makeIo(overrides) {
   return { out: capture(), err: capture(), env: {}, cwd: process.cwd(), ...overrides };
 }
 
-// Calls `check` every 50 ms until it returns true; fails after `ms` milliseconds.
-async function waitFor(check, ms, what) {
+// Calls `check` every 50 ms until it returns true; fails after `ms` milliseconds. On a timeout, the
+// error also carries `explain()`, so a failure on a CI runner says what happened.
+async function waitFor(check, ms, what, explain) {
   const end = Date.now() + ms;
   while (!(await check())) {
-    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}` + (explain ? '\n' + explain() : ''));
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 }

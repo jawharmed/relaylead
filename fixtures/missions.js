@@ -12,9 +12,11 @@ const TASK_A = '---\ntitle: First task\n---\n\nWrite the first file.\n';
 const TASK_B = '---\ntitle: Second task\ndepends: [a]\n---\n\nWrite the second file.\n';
 
 // Fresh RELAYLEAD_HOME and project folder; every session of `mission` is stopped after the test.
+// The folder is not a git repository: its crew members deliver files (machine config).
 function setupProject(t, mission) {
   const home = tmpDir('relaylead-home-');
   process.env.RELAYLEAD_HOME = home;
+  writeJson(path.join(home, 'config.json'), { delivery: { type: 'files' } });
   const dir = fs.realpathSync.native(tmpDir('relaylead-project-'));
   fs.mkdirSync(path.join(dir, 'tasks'));
   fs.writeFileSync(path.join(dir, 'tasks', 'a.md'), TASK_A);
@@ -37,4 +39,23 @@ function writeMission(name, dir) {
   });
 }
 
-module.exports = { setupProject, writeMission };
+// Every file of a mission folder (state, tasks, results, sessions, fake agent logs), for a test
+// failure message.
+function missionReport(name) {
+  const lines = [`--- mission ${name}`];
+  const walk = (folder) => {
+    for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
+      const file = path.join(folder, entry.name);
+      if (entry.isDirectory()) walk(file);
+      else lines.push(`--- ${path.relative(missionDir(name), file)}`, fs.readFileSync(file, 'utf8'));
+    }
+  };
+  try {
+    walk(missionDir(name));
+  } catch (err) {
+    lines.push(String(err));
+  }
+  return lines.join('\n');
+}
+
+module.exports = { setupProject, writeMission, missionReport };

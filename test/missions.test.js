@@ -14,9 +14,11 @@ const { tmpDir, makeIo, waitFor } = require('../fixtures/helpers');
 const BIN = path.join(__dirname, '..', 'bin', 'relaylead.js');
 
 // Each test gets a fresh RELAYLEAD_HOME, and every session it started is killed afterwards.
+// The project folders are not git repositories: missions deliver files (machine config).
 function freshHome(t) {
   const home = tmpDir('relaylead-home-');
   process.env.RELAYLEAD_HOME = home;
+  writeJson(path.join(home, 'config.json'), { delivery: { type: 'files' } });
   // Kill every recorded session directly: stopMission leaves a finished mission alone.
   t.after(async () => {
     process.env.RELAYLEAD_HOME = home;
