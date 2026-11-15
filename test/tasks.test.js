@@ -214,8 +214,8 @@ test('task ids must be usable in branch names', async (t) => {
 test('fake mission runs two dependent tasks to done', async (t) => {
   const dir = setupProject(t, 'demo');
 
-  const launched = await run(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir], makeIo());
-  assert.strictEqual(launched, 0);
+  const io = makeIo();
+  assert.strictEqual(await run(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir], io), 0, io.err.text);
   await waitFor(() => getState('demo') === 'done', 45000, 'the mission to be done', () => missionReport('demo'));
 
   assert.deepStrictEqual(

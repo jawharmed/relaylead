@@ -10,8 +10,28 @@ const tasksDirSource = require('../sources/tasks-dir');
 // Git refuses to start when another git command holds a lock file (index.lock, a ref's .lock),
 // for instance a crew member committing, or git's background maintenance. Its message names the
 // file, in every language: "Unable to create '.../index.lock': File exists".
-const LOCK_FILE = /\.lock['"]/;
+// On Windows, an antivirus or the search indexer may hold a file for a moment: git then fails
+// with "unable to unlink", "Permission denied", "Device or resource busy", "Invalid argument" or
+// "being used by another process". The same command a moment later works.
+const LOCK_FILE = /\.lock['"]|unable to unlink|unable to create|permission denied|resource busy|invalid argument|used by another process/i;
 const LOCK_ATTEMPTS = 10; // about 5 s in all
+
+// Whether the message of a failed git command is worth trying again.
+function isTransientGitError(detail) {
+  return LOCK_FILE.test(detail);
+}
+
+// Writing a file, or renaming one over another, fails the same way on Windows for a moment.
+function retryFileWrite(action) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return action();
+    } catch (err) {
+      if (!['EPERM', 'EBUSY', 'EACCES'].includes(err.code) || attempt >= LOCK_ATTEMPTS) throw err;
+      sleep(100 * attempt);
+    }
+  }
+}
 
 function sleep(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -30,7 +50,7 @@ function git(cwd, args) {
       }).trim();
     } catch (err) {
       const detail = String(err.stderr || err.stdout || err.message).trim();
-      if (LOCK_FILE.test(detail) && attempt < LOCK_ATTEMPTS) {
+      if (isTransientGitError(detail) && attempt < LOCK_ATTEMPTS) {
         sleep(100 * attempt);
         continue;
       }
@@ -255,7 +275,7 @@ function deliver(mission, task) {
     throw codedError('merge-conflict', { id: task.id, branch });
   }
 
-  tasksDirSource.markDone(integrationDir(mission), mission.config.source.dir, task.id);
+  retryFileWrite(() => tasksDirSource.markDone(integrationDir(mission), mission.config.source.dir, task.id));
   return finish(mission, task);
 }
 
@@ -275,14 +295,15 @@ function hasLateWork(mission, task) {
 function finish(mission, task) {
   const integration = integrationDir(mission);
   const file = sourceFile(mission, task);
-  if (git(integration, ['status', '--porcelain', '--', file]) !== '') {
-    git(integration, ['commit', '--no-verify', '-m', `chore(relaylead): ${task.id} livrée`, '--', file]);
-  }
-
   const cwd = taskDir(mission, task);
   const branch = taskBranch(mission, task);
-  if (hasLateWork(mission, task)) return [codedError('task-late-work', { id: task.id, branch, dir: cwd })];
+  // The work is merged by now: nothing from here on may fail the delivery. The state line stays
+  // uncommitted if git keeps refusing, and the next deliver commits it.
   try {
+    if (git(integration, ['status', '--porcelain', '--', file]) !== '') {
+      git(integration, ['commit', '--no-verify', '-m', `chore(relaylead): ${task.id} livrée`, '--', file]);
+    }
+    if (hasLateWork(mission, task)) return [codedError('task-late-work', { id: task.id, branch, dir: cwd })];
     // A folder on another branch is not this task's worktree: it is left alone.
     if (fs.existsSync(cwd) && currentBranch(cwd) === branch) removeWorktree(mission, cwd);
     if (branchExists(mission.dir, branch)) git(mission.dir, ['branch', '-D', branch]);
@@ -292,4 +313,4 @@ function finish(mission, task) {
   return [];
 }
 
-module.exports = { prepareMission, prepareTask, deliver, finish };
+module.exports = { prepareMission, prepareTask, deliver, finish, isTransientGitError };

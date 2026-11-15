@@ -82,7 +82,7 @@ test('answering an unknown question fails clearly', async (t) => {
     return true;
   });
   const io = makeIo();
-  assert.strictEqual(await run(['answer', 'demo', 'q-nope', '1'], io), 1);
+  assert.strictEqual(await run(['answer', 'demo', 'q-nope', '1'], io), 1, io.err.text);
   assert.match(io.err.text, /q-nope/);
 });
 
@@ -97,11 +97,12 @@ test('the question and answer commands ask, list and answer', async (t) => {
   assert.strictEqual(io.out.text.trim(), 'q-db');
 
   const listed = makeIo();
-  assert.strictEqual(await run(['question', 'list', 'demo'], listed), 0);
+  assert.strictEqual(await run(['question', 'list', 'demo'], listed), 0, listed.err.text);
   // The recommended option comes first, so the numbers a person sees are the numbers answer takes.
   assert.deepStrictEqual(JSON.parse(listed.out.text)[0].options, ['postgres', 'sqlite']);
 
-  assert.strictEqual(await run(['answer', 'demo', 'q-db', '1'], makeIo()), 0);
+  const answeredFirst = makeIo();
+  assert.strictEqual(await run(['answer', 'demo', 'q-db', '1'], answeredFirst), 0, answeredFirst.err.text);
   const open = makeIo();
   await run(['question', 'list', 'demo'], open);
   assert.deepStrictEqual(JSON.parse(open.out.text), []);
@@ -126,7 +127,8 @@ test('fake mission waits for the answer then finishes', async (t) => {
   const dir = setupProject(t, 'demo');
   fs.writeFileSync(path.join(dir, 'tasks', 'a.md'), '---\ntitle: First task\nask: Start the first task?\n---\n\nWrite it.\n');
 
-  assert.strictEqual(await run(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir], makeIo()), 0);
+  const launched = makeIo();
+  assert.strictEqual(await run(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir], launched), 0, launched.err.text);
   const report = () => missionReport('demo');
   await waitFor(() => listQuestions('demo').length === 1, 30000, 'the question to be asked', report);
   assert.strictEqual(listQuestions('demo')[0].key, 'a');
@@ -135,7 +137,8 @@ test('fake mission waits for the answer then finishes', async (t) => {
   assert.strictEqual(listTasks('demo').find((task) => task.id === 'a').state, 'todo');
   assert.notStrictEqual(getState('demo'), 'done');
 
-  assert.strictEqual(await run(['answer', 'demo', 'q-a', 'yes'], makeIo()), 0);
+  const answered = makeIo();
+  assert.strictEqual(await run(['answer', 'demo', 'q-a', 'yes'], answered), 0, answered.err.text);
   await waitFor(() => getState('demo') === 'done', 45000, 'the mission to be done', report);
   assert.deepStrictEqual(listTasks('demo').map((task) => task.state), ['delivered', 'delivered']);
   assert.strictEqual(listQuestions('demo').length, 1);
@@ -161,13 +164,13 @@ test('a key with no letter or digit is a coded error', (t) => {
 test('an option without a value is refused, and answer confirms', async (t) => {
   demoMission(t);
   const io = makeIo({ env: { RELAYLEAD_MISSION: 'demo' } });
-  assert.strictEqual(await run(['question', 'ask', '--key', 'k', '--text', 'T', '--option', 'a', '--option'], io), 1);
+  assert.strictEqual(await run(['question', 'ask', '--key', 'k', '--text', 'T', '--option', 'a', '--option'], io), 1, io.err.text);
   assert.match(io.err.text, /--option/);
   assert.strictEqual(listQuestions('demo').length, 0);
 
   askQuestion('demo', QUESTION);
   const answered = makeIo();
-  assert.strictEqual(await run(['answer', 'demo', 'q-db', '2'], answered), 0);
+  assert.strictEqual(await run(['answer', 'demo', 'q-db', '2'], answered), 0, answered.err.text);
   assert.match(answered.out.text, /q-db.*postgres/);
 });
 

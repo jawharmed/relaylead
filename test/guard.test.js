@@ -392,7 +392,8 @@ test('braces are expanded before judging', () => {
   const dir = repoOn('relaylead/x');
   assertDenied(bash('cat .e{nv,xample}', dir), 'access to secret file .env');
   assertDenied(bash('git push origin {main,x}', dir), 'push to a branch that cannot be judged');
-  assert.deepStrictEqual(bash('ls src/{a,b}.js && find . -name x -exec cat {} \;', dir), ALLOW);
+  assert.deepStrictEqual(bash('ls src/{a,b}.js && find . -name x -exec cat {} \\;', dir), ALLOW);
+  assertDenied(bash('cat {,}{,}{,}{,}{,}{,}{,}.e{nv,x}', dir), 'a brace expansion that cannot be judged');
 });
 
 test('the mission guard decides the protected branches and the secrets', () => {

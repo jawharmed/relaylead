@@ -358,7 +358,7 @@ function inStateFolder(word, dir, stateDir) {
 }
 
 // Brace expansion, as the shell does it: `a{b,c}` gives `ab` and `ac`. A range such as `{1..3}`
-// stays as it is, and so does a word that gives more than 64 names.
+// stays as it is. A word that would give more than 64 names is not expanded: null, it cannot be judged.
 function expandBraces(word) {
   const group = /\{([^{}]*,[^{}]*)\}/;
   let words = [word];
@@ -370,12 +370,14 @@ function expandBraces(word) {
       return match[1].split(',').map((choice) => before + choice + after);
     });
   }
-  return words;
+  return words.some((w) => group.test(w)) ? null : words;
 }
 
 // Reason to refuse a file named in a Bash word, or null. `--env-file=.env` names .env too.
 function checkFileWord(word, dir, guard, stateDir) {
-  for (const part of expandBraces(word.replace(/^[<>&]+/, '')).flatMap((name) => name.split('='))) {
+  const names = expandBraces(word.replace(/^[<>&]+/, ''));
+  if (names === null) return 'a brace expansion that cannot be judged';
+  for (const part of names.flatMap((name) => name.split('='))) {
     if (inStateFolder(part, dir, stateDir)) return 'access to the mission state folder';
     const name = path.posix.basename(part);
     if (name && isSecretName(name, guard)) return `access to secret file ${name}`;
