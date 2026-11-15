@@ -1,0 +1,132 @@
+// A whole mission through the real CLI, with the fake agent, on a copy of fixtures/toy-repo.
+const test = require('node:test');
+const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
+const { spawn } = require('node:child_process');
+const { listSessions, isAlive } = require('../../core/sessions');
+const { readJson } = require('../../core/store');
+const { missionDir } = require('../../core/paths');
+const fake = require('../../adapters/fake');
+const { tmpDir, waitFor } = require('../../fixtures/helpers');
+const { git, gitRepo } = require('../../fixtures/git');
+const { missionReport } = require('../../fixtures/missions');
+
+const BIN = path.join(__dirname, '..', '..', 'bin', 'relaylead.js');
+const TOY_REPO = path.join(__dirname, '..', '..', 'fixtures', 'toy-repo');
+// Windows runners are slow: a whole mission may take a while there.
+const MISSION_MS = 60 * 1000;
+
+// Runs `relaylead <args>` in its own process, like a person in a terminal. No shell.
+function relaylead(args, cwd) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [BIN, ...args], { cwd, env: process.env, windowsHide: true });
+    let out = '';
+    let err = '';
+    child.stdout.on('data', (chunk) => (out += chunk));
+    child.stderr.on('data', (chunk) => (err += chunk));
+    child.on('error', reject);
+    child.on('close', (code) => resolve({ code, out, err }));
+  });
+}
+
+// Every file under `folder` ({relative path with / separators: text}), leaving out `skip` folders.
+function readFiles(folder, skip = []) {
+  const files = {};
+  const walk = (current) => {
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const file = path.join(current, entry.name);
+      const name = path.relative(folder, file).split(path.sep).join('/');
+      if (entry.isDirectory()) {
+        if (!skip.includes(name)) walk(file);
+      } else {
+        files[name] = fs.readFileSync(file, 'utf8');
+      }
+    }
+  };
+  walk(folder);
+  return files;
+}
+
+// Everything the user sees in their checkout.
+function checkoutState(dir) {
+  return {
+    branch: git(dir, 'rev-parse', '--abbrev-ref', 'HEAD'),
+    head: git(dir, 'rev-parse', 'HEAD'),
+    status: git(dir, 'status', '--porcelain', '--untracked-files=all'),
+    files: readFiles(dir, ['.git', '.relaylead']),
+  };
+}
+
+// The folders of `git worktree list`, spelled like fs.realpathSync.native spells them.
+function worktrees(dir) {
+  return git(dir, 'worktree', 'list', '--porcelain')
+    .split('\n')
+    .filter((line) => line.startsWith('worktree '))
+    .map((line) => fs.realpathSync.native(line.slice('worktree '.length)));
+}
+
+test('fake mission delivers two tasks with one answered question', { timeout: 3 * MISSION_MS }, async (t) => {
+  process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
+  const dir = gitRepo(readFiles(TOY_REPO));
+  const before = checkoutState(dir);
+  let mission = null;
+  t.after(async () => {
+    if (mission) for (const session of listSessions(mission)) await fake.stop(session);
+  });
+  const report = () => missionReport(mission);
+
+  const launched = await relaylead(['launch', '--agent', 'fake', '--request', 'Do the tasks'], dir);
+  assert.strictEqual(launched.code, 0, launched.err);
+  mission = launched.out.trim();
+
+  let question = null;
+  await waitFor(
+    async () => {
+      const listed = await relaylead(['question', 'list', mission], dir);
+      [question] = JSON.parse(listed.out || '[]');
+      return Boolean(question);
+    },
+    MISSION_MS,
+    'the question of task b',
+    report,
+  );
+  assert.strictEqual(question.text, 'Should greet also accept an optional language (en or fr)?');
+  const answered = await relaylead(['answer', mission, question.id, '1'], dir);
+  assert.strictEqual(answered.code, 0, answered.err);
+
+  await waitFor(
+    async () => (await relaylead(['state', 'get', '--mission', mission], dir)).out.trim() === 'done',
+    MISSION_MS,
+    'the mission to be done',
+    report,
+  );
+
+  const [settled] = JSON.parse((await relaylead(['question', 'list', mission, '--all'], dir)).out);
+  assert.deepStrictEqual([settled.state, settled.answer.choice], ['answered', 'yes']);
+
+  // Both task branches are merged into the integration branch, and the source says done there.
+  const integration = 'relaylead/integration';
+  const merges = git(dir, 'log', '--merges', '--format=%s', integration);
+  for (const id of ['a', 'b']) {
+    assert.match(merges, new RegExp(`Merge branch 'relaylead/${mission}/${id}'`), report());
+    assert.strictEqual(git(dir, 'show', `${integration}:${id}.txt`), `fake work on ${id}`);
+    assert.match(git(dir, 'show', `${integration}:tasks/${id}.md`), /^state: done\r?$/m);
+  }
+
+  // No process of the mission is left: the lead and both crew members have ended, then the helper
+  // that stops the lead after `state set done`.
+  const sessions = listSessions(mission);
+  assert.strictEqual(sessions.length, 3, report());
+  await waitFor(() => sessions.every((session) => !isAlive(session.pid)), 15000, 'every session to end', report);
+  const reaper = readJson(path.join(missionDir(mission), 'reaper.json'));
+  await waitFor(() => !isAlive(reaper.pid), 15000, 'the helper to end', report);
+
+  // Only the user's checkout and the integration worktree are left.
+  const integrationDir = path.join(dir, '.relaylead', 'worktrees', '_integration');
+  assert.deepStrictEqual(worktrees(dir).sort(), [dir, integrationDir].sort());
+
+  assert.deepStrictEqual(checkoutState(dir), before);
+  assert.strictEqual(before.branch, 'main');
+  assert.strictEqual(before.status, '');
+});
