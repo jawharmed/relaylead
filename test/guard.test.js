@@ -234,8 +234,23 @@ test('commands that only mention a secret are allowed', () => {
   assert.deepStrictEqual(bash('grep -n "\\.env" README.md', dir), ALLOW);
   assert.deepStrictEqual(bash('git commit -m .env', dir), ALLOW);
   assert.deepStrictEqual(bash('git commit -am "feat(config): read .env at startup"', dir), ALLOW);
-  const heredoc = 'git commit -m "$(cat <<\'EOF\'\nfeat: config\n\nreads .env at startup, then git push origin main\nEOF\n)"';
+  const heredoc = 'git commit -m "$(cat <<\'EOF\'\nfeat: config\n\nreads .env at startup (see .env.local)\nEOF\n)"';
   assert.deepStrictEqual(bash(heredoc, dir), ALLOW);
+  assert.deepStrictEqual(bash('git commit -F - <<EOF\nfix: read .env\nEOF', dir), ALLOW);
+});
+
+test('every line is judged, even in a commit message', () => {
+  // A safe-side false denial: a commit message that quotes a protected push on its own line.
+  const heredoc = 'git commit -m "$(cat <<\'EOF\'\nfeat: config\n\ngit push origin main stays manual\nEOF\n)"';
+  assertDenied(bash(heredoc, repoOn('relaylead/x')), 'push to protected branch main');
+});
+
+test('a comment is not a command', () => {
+  const dir = repoOn('relaylead/x');
+  assert.deepStrictEqual(bash('git status # then git push origin main', dir), ALLOW);
+  assert.deepStrictEqual(bash('cat README.md # not .env', dir), ALLOW);
+  assert.deepStrictEqual(bash('echo "#" && git status', dir), ALLOW);
+  assertDenied(bash('echo a#b && git push origin main', dir), 'push to protected branch main');
 });
 
 test('a heredoc outside a commit message is judged', () => {
@@ -251,6 +266,11 @@ test('a quoted or unclosed heredoc marker hides nothing', () => {
   assertDenied(bash("git commit -m 'a <<EOF b'\ngit push origin main\nEOF", dir), reason);
   assertDenied(bash('git commit -F - <<EOF\nmessage\ngit push origin main', dir), reason);
   assertDenied(bash('git commit -F - <<EOF\nmessage\nEOF\ngit push origin main', dir), reason);
+  assertDenied(bash('git commit -F - <<EOF.x\nmsg\nEOF.x\ngit push origin main\nEOF', dir), reason);
+  assertDenied(bash('git commit -F - <<EOF"x"\nmsg\nEOFx\ngit push origin main\nEOF', dir), reason);
+  assertDenied(bash('true # "\ngit commit -m "<<EOF"\ngit push origin main\nEOF', dir), reason);
+  assertDenied(bash("git commit -m $'\\'<<EOF'\ngit push origin main\nEOF", dir), reason);
+  assertDenied(bash('git commit -m "${x#"}" -m "<<EOF"\ngit push origin main\nEOF', dir), reason);
 });
 
 test('example env files are not secrets', () => {
@@ -304,8 +324,14 @@ test('the mission state folder is refused under ~, $HOME or $RELAYLEAD_HOME', (t
   if (process.platform === 'win32') {
     assertDenied(atHome('Bash', { command: 'type %USERPROFILE%/.relaylead/missions/demo/mission.json' }), reason);
   }
-  // Another variable may lead there too: refused when the word names the state folders.
+  // Another variable, a glob, braces or ~user may lead there too: refused when the word names the
+  // state folders.
   assertDenied(atHome('Bash', { command: 'cat $DATA/.relaylead/missions/demo/mission.json' }), reason);
+  assertDenied(atHome('Bash', { command: 'cat ~/.relayl*/m*/demo/mission.json' }), reason);
+  assertDenied(atHome('Bash', { command: 'cat ~/.relaylead/missions/dem[o]/mission.json' }), reason);
+  assertDenied(atHome('Bash', { command: 'cat ~/.relaylead/{missions}/demo/mission.json' }), reason);
+  assertDenied(atHome('Bash', { command: 'cat ~someone/.relaylead/missions/demo/mission.json' }), reason);
+  assert.deepStrictEqual(atHome('Bash', { command: 'ls docs/missions ~/Workspace/*.md' }), ALLOW);
   assert.deepStrictEqual(atHome('Bash', { command: 'cat $HOME/notes.txt "$TMPDIR/a.log"' }), ALLOW);
 
   const home = tmpDir('relaylead home-');

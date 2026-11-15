@@ -56,59 +56,6 @@ function shellGlobRegExp(glob) {
 
 // --- Reading a Bash command -------------------------------------------------------------------
 
-// End of the line that closes a heredoc started on the line ending at `lineEnd`, or -1 when no
-// line closes it. A line we take for the closing one too early only makes more lines judged.
-function heredocEnd(text, lineEnd, delimiter) {
-  let start = lineEnd + 1;
-  while (start <= text.length) {
-    const end = text.indexOf('\n', start) === -1 ? text.length : text.indexOf('\n', start);
-    if (text.slice(start, end).replace(/^\t+/, '') === delimiter) return end;
-    start = end + 1;
-  }
-  return -1;
-}
-
-// A heredoc that feeds `git commit` is the commit message: data, not commands, so its body is
-// dropped. Only a real heredoc counts: `<<` outside quotes (a `$( … )` starts afresh, even inside
-// double quotes) and a closing line that exists. Other heredoc bodies stay and are judged line by
-// line, like commands, but they are skipped when looking for quotes: the shell does not read
-// quotes there.
-function dropCommitMessages(command) {
-  let text = command;
-  const open = []; // open quotes and `$(`, innermost last
-  for (let i = 0; i < text.length; i++) {
-    const char = text[i];
-    const inside = open[open.length - 1];
-    if (inside === "'") {
-      if (char === "'") open.pop();
-    } else if (char === '\\') {
-      i++;
-    } else if (char === '$' && text[i + 1] === '(') {
-      open.push('(');
-      i++;
-    } else if (inside === '"') {
-      if (char === '"') open.pop();
-    } else if (char === '"' || char === "'") {
-      open.push(char);
-    } else if (char === ')' && inside === '(') {
-      open.pop();
-    } else if (char === '<' && text[i - 1] !== '<') {
-      const heredoc = /^<<-?\s*(['"]?)\\?([A-Za-z_][\w-]*)\1/.exec(text.slice(i));
-      const lineEnd = text.indexOf('\n', i);
-      const end = heredoc && lineEnd !== -1 ? heredocEnd(text, lineEnd, heredoc[2]) : -1;
-      if (end === -1) continue;
-      const line = text.slice(text.lastIndexOf('\n', i) + 1, lineEnd);
-      if (/\bgit\b.*\bcommit\b/.test(line)) {
-        text = text.slice(0, lineEnd) + text.slice(end);
-        i = lineEnd - 1;
-      } else {
-        i = end - 1;
-      }
-    }
-  }
-  return text;
-}
-
 // `$(…)`, `<(…)`, `>(…)` and backticks run commands of their own. Each is cut out, innermost
 // first, and replaced by `$_`: a word with `$` is computed by the shell. Returns the commands cut
 // out, then the main one.
@@ -124,11 +71,26 @@ function cutSubstitutions(command) {
   return [...inner, text];
 }
 
+// Index of the newline that ends the body of each heredoc started on the line ending at `i`: the
+// body goes up to the line holding its delimiter (tabs before it allowed), or to the end.
+function skipHeredocBodies(text, i, delimiters) {
+  for (const delimiter of delimiters) {
+    while (i < text.length) {
+      const start = i + 1;
+      i = text.indexOf('\n', start) === -1 ? text.length : text.indexOf('\n', start);
+      if (text.slice(start, i).replace(/^\t+/, '') === delimiter) break;
+    }
+  }
+  return i;
+}
+
 // Splits a command into pieces: {words, redirects, end}. Quotes are removed and a backslash
-// escapes the next character, as in the shell. A piece ends at ; & && | || ( ) or a newline outside
-// quotes; `end` keeps which one. A redirection keeps its operator (`>/dev/null`, `<.env`) and goes to
-// `redirects`; the descriptor number of `2>&1` is dropped. Splitting more than the shell does
-// is harmless: it only makes more pieces to judge.
+// escapes the next character, as in the shell; `$'…'` is a quote where `\'` stays inside. A piece
+// ends at ; & && | || ( ) or a newline outside quotes; `end` keeps which one. A redirection keeps its
+// operator (`>/dev/null`, `<.env`) and goes to `redirects`; the descriptor number of `2>&1` is
+// dropped. Comments (`#` starting a word) and heredoc bodies are data: they are skipped here, and
+// checkBash judges every line on its own anyway. Splitting more than the shell does is harmless:
+// it only makes more pieces to judge.
 function splitPieces(text) {
   const pieces = [];
   let words = [];
@@ -136,7 +98,9 @@ function splitPieces(text) {
   let word = null;
   let quote = null;
   let redirecting = false;
+  let heredocs = []; // delimiters of the heredocs started on the current line
   const endWord = () => {
+    if (word !== null && redirecting && /^<<[^<]/.test(word)) heredocs.push(word.replace(/^<<-?/, ''));
     if (word !== null) (redirecting ? redirects : words).push(word);
     word = null;
     redirecting = false;
@@ -153,15 +117,25 @@ function splitPieces(text) {
     if (quote === "'") {
       if (char === "'") quote = null;
       else word += char;
+    } else if (quote === "$'") {
+      if (char === "'") quote = null;
+      else if (char === '\\' && next !== undefined) word += text[++i];
+      else word += char;
     } else if (char === '\\' && next !== undefined && (!quote || '$`"\\\n'.includes(next))) {
       i++;
       if (next !== '\n') word = (word ?? '') + next;
     } else if (quote === '"') {
       if (char === '"') quote = null;
       else word += char;
+    } else if (char === '$' && next === "'") {
+      quote = "$'";
+      word = word ?? '';
+      i++;
     } else if (char === '"' || char === "'") {
       quote = char;
       word = word ?? '';
+    } else if (char === '#' && word === null) {
+      while (text[i + 1] !== undefined && text[i + 1] !== '\n') i++;
     } else if (char === '<' || char === '>' || (char === '&' && next === '>')) {
       if (word !== null && /^\d+$/.test(word)) word = null;
       endWord();
@@ -175,6 +149,8 @@ function splitPieces(text) {
       endPiece(double ? char + char : char);
     } else if (';()\r\n'.includes(char)) {
       endPiece(char === '\r' ? '\n' : char);
+      if (char === '\n' && heredocs.length) i = skipHeredocBodies(text, i, heredocs) - 1;
+      if (char === '\n') heredocs = [];
     } else if (/\s/.test(char)) {
       endWord();
     } else {
@@ -187,7 +163,7 @@ function splitPieces(text) {
 
 // Every command of a Bash call, each as a list of pieces: the substitutions, then the main one.
 function bashCommands(command) {
-  return cutSubstitutions(dropCommitMessages(String(command))).map(splitPieces);
+  return cutSubstitutions(String(command)).map(splitPieces);
 }
 
 // Index of the command word, after shell keywords such as `if`, `then`, `{` or `!`.
@@ -342,13 +318,24 @@ function isSecretName(name, guard) {
   });
 }
 
-// True when `file` is in the state folder. A path through another variable cannot be resolved:
-// it counts as inside when it names the state folders (`.relaylead` or `missions`).
+// True when a glob path may name something inside the state folder: each of its first segments
+// matches the state folder's (in the shell, `*` does not cross a `/`).
+function globMayReach(file, dir, stateDir) {
+  const parts = path.resolve(dir, file).split(path.sep);
+  const folder = path.resolve(stateDir).split(path.sep);
+  return parts.length >= folder.length && folder.every((segment, i) => shellGlobRegExp(parts[i]).test(segment));
+}
+
+// True when `file` is in the state folder. A path through another variable, a glob, braces or
+// `~user` cannot be resolved: it counts as inside when it names the state folders.
 function inStateFolder(word, dir, stateDir) {
   if (!stateDir || !word) return false;
   const file = expandHome(word);
-  if (/[$`]/.test(file)) return /\.relaylead|missions/i.test(file);
+  const unresolved = /[$`*?[{]/.test(file) || /^~[^\\/]/.test(file);
+  if (unresolved && /\.relaylead|missions/i.test(file)) return true;
   if (dir === null && !path.isAbsolute(file)) return false;
+  if (/[*?[]/.test(file) && globMayReach(file, dir || '', stateDir)) return true;
+  if (unresolved) return false;
   const normalize = (p) => (CASE_INSENSITIVE ? p.toLowerCase() : p);
   const full = normalize(path.resolve(dir || '', file));
   const folder = normalize(path.resolve(stateDir));
@@ -398,7 +385,7 @@ function cdTargets(words, dirs) {
 // chain to x; once the chain ends, the cd may have failed, so the former folders are possible
 // again. After `cd x;` or `cd x ||` both folders are possible. A cd in a pipe, in the background
 // or inside `( … )` does not move the pieces after it.
-function checkBash(command, cwd, guard, stateDir) {
+function checkCommand(command, cwd, guard, stateDir) {
   for (const pieces of bashCommands(command)) {
     let dirs = [cwd];
     let beforeChain = null; // the folders before a `cd … &&` chain
@@ -431,6 +418,19 @@ function checkBash(command, cwd, guard, stateDir) {
   return null;
 }
 
+// The whole command is judged, then each of its lines on its own. The line pass has no secret
+// list: commit messages and heredoc bodies may mention a secret, but every line is judged for
+// pushes, commits and the state folder, so a quote the reader gets wrong never hides one.
+function checkBash(command, cwd, guard, stateDir) {
+  const lines = command.includes('\n') ? command.split('\n') : [];
+  const noSecrets = { ...guard, secrets: [] };
+  for (const [text, rules] of [[command, guard], ...lines.map((line) => [line, noSecrets])]) {
+    const reason = checkCommand(text, cwd, rules, stateDir);
+    if (reason) return reason;
+  }
+  return null;
+}
+
 function checkFile(file, dir, guard, stateDir) {
   if (inStateFolder(file, dir, stateDir)) return 'access to the mission state folder';
   const name = path.basename(file);
@@ -442,7 +442,7 @@ function checkToolUse({ tool_name, tool_input, cwd }, guard, stateDir = null) {
   const input = tool_input || {};
   const dir = cwd || process.cwd();
   let reason = null;
-  if (tool_name === 'Bash') reason = checkBash(input.command || '', dir, guard, stateDir);
+  if (tool_name === 'Bash') reason = checkBash(String(input.command || ''), dir, guard, stateDir);
   const field = FILE_TOOLS.get(tool_name);
   if (field && input[field]) reason = checkFile(String(input[field]), dir, guard, stateDir);
   return reason ? { decision: 'deny', reason } : { decision: 'allow' };
