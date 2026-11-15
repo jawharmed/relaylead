@@ -64,16 +64,22 @@ function list(root, dir) {
     });
 }
 
-// Tasks that are todo and whose dependencies are all done.
-function ready(tasks) {
-  const byId = new Map(tasks.map((task) => [task.id, task]));
+// Throws when a task depends on a task that does not exist.
+function checkDependencies(tasks) {
+  const ids = new Set(tasks.map((task) => task.id));
   for (const task of tasks) {
     for (const dep of task.depends) {
-      if (!byId.has(dep)) {
+      if (!ids.has(dep)) {
         throw new Error(`${task.file} depends on unknown task "${dep}"`);
       }
     }
   }
+}
+
+// Tasks that are todo and whose dependencies are all done.
+function ready(tasks) {
+  checkDependencies(tasks);
+  const byId = new Map(tasks.map((task) => [task.id, task]));
   return tasks.filter(
     (task) => task.state === 'todo' && task.depends.every((dep) => byId.get(dep).state === 'done'),
   );
@@ -102,4 +108,4 @@ function markDone(root, dir, id) {
   fs.renameSync(temp, file);
 }
 
-module.exports = { list, ready, markDone };
+module.exports = { list, ready, checkDependencies, markDone };

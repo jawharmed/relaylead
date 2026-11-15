@@ -2,6 +2,8 @@ const path = require('node:path');
 const { t, codedError } = require('./messages');
 const { loadConfig } = require('./config');
 const { createMission, listMissions, stopMission, getState, setState } = require('./missions');
+const { listTasks, startTask, finishTask } = require('./tasks');
+const { waitForChanges } = require('./wait');
 const pkg = require('../package.json');
 
 // A sub-command not delivered yet.
@@ -73,19 +75,57 @@ commands.stop = async (args, io) => {
   return 0;
 };
 
+// Sessions find their mission in RELAYLEAD_MISSION; a person passes --mission.
+function missionName(options, io) {
+  const mission = options.mission || io.env.RELAYLEAD_MISSION;
+  if (!mission) throw codedError('no-mission', {});
+  return mission;
+}
+
 commands.state = async (args, io) => {
   const { positional, options } = parseArgs(args);
   const [action, state] = positional;
   if (action !== 'get' && !(action === 'set' && state)) {
     throw codedError('usage', { usage: 'relaylead state get|set <state> [--note text] [--mission name]' });
   }
-  const mission = options.mission || io.env.RELAYLEAD_MISSION;
-  if (!mission) throw codedError('no-mission', {});
+  const mission = missionName(options, io);
   if (action === 'get') {
     io.out.write(getState(mission) + '\n');
   } else {
     setState(mission, state, options.note);
   }
+  return 0;
+};
+
+commands.task = async (args, io) => {
+  const { positional, options } = parseArgs(args);
+  const [action, id] = positional;
+  if (!(action === 'list' || (['start', 'done', 'fail'].includes(action) && id))) {
+    throw codedError('usage', {
+      usage: 'relaylead task list | start <id> [--profile p] | done <id> | fail <id> [--summary text] [--mission name]',
+    });
+  }
+  const mission = missionName(options, io);
+  if (action === 'list') {
+    io.out.write(JSON.stringify(listTasks(mission), null, 2) + '\n');
+  } else if (action === 'start') {
+    const record = await startTask(mission, { id, profile: options.profile });
+    io.out.write(JSON.stringify(record, null, 2) + '\n');
+  } else {
+    finishTask(mission, id, { state: action === 'done' ? 'done' : 'failed', summary: options.summary });
+  }
+  return 0;
+};
+
+commands.wait = async (args, io) => {
+  const { options } = parseArgs(args);
+  const timeout = options.timeout === undefined ? undefined : Number(options.timeout);
+  if (timeout !== undefined && !(timeout >= 0)) {
+    throw codedError('usage', { usage: 'relaylead wait [--timeout seconds] [--mission name]' });
+  }
+  await waitForChanges(missionName(options, io), timeout, (changes) => {
+    io.out.write(JSON.stringify({ changes }, null, 2) + '\n');
+  });
   return 0;
 };
 
