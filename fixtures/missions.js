@@ -5,6 +5,7 @@ const { missionDir } = require('../core/paths');
 const { writeJson } = require('../core/store');
 const { loadConfig } = require('../core/config');
 const { listSessions } = require('../core/sessions');
+const { listMissions } = require('../core/missions');
 const fake = require('../adapters/fake');
 const { tmpDir } = require('./helpers');
 
@@ -26,6 +27,21 @@ function setupProject(t, mission) {
     for (const session of listSessions(mission)) await fake.stop(session);
   });
   return dir;
+}
+
+// Fresh RELAYLEAD_HOME for a test that launches missions; every session they started is killed
+// afterwards. The project folders are not git repositories: missions deliver files (machine config).
+function freshHome(t) {
+  const home = tmpDir('relaylead-home-');
+  process.env.RELAYLEAD_HOME = home;
+  writeJson(path.join(home, 'config.json'), { delivery: { type: 'files' } });
+  // Kill every recorded session directly: stopMission leaves a finished mission alone.
+  t.after(async () => {
+    process.env.RELAYLEAD_HOME = home;
+    for (const mission of listMissions()) {
+      for (const session of listSessions(mission.name)) await fake.stop(session);
+    }
+  });
 }
 
 // mission.json as createMission writes it, but no lead is started: the test plays the lead.
@@ -58,4 +74,4 @@ function missionReport(name) {
   return lines.join('\n');
 }
 
-module.exports = { setupProject, writeMission, missionReport };
+module.exports = { freshHome, setupProject, writeMission, missionReport };

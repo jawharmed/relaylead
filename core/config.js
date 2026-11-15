@@ -6,6 +6,7 @@ const { readJson } = require('./store');
 const DEFAULTS = {
   language: 'en',
   agent: 'claude',
+  method: 'code',
   permissionMode: 'allowlist',
   parallel: 4,
   priority: 'normal',

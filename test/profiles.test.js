@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { loadProfile } = require('../core/profiles');
+const { loadProfile, loadMethod } = require('../core/profiles');
 const { tmpDir } = require('../fixtures/helpers');
 
 function put(folder, name, text) {
@@ -38,4 +38,17 @@ test('profile lookup prefers the project, then the user, then the catalog', () =
     assert.ok(err.message.includes(projectFolder) && err.message.includes(homeFolder) && err.message.includes(catalogDir));
     return true;
   });
+});
+
+test('method lookup follows the same order as profiles', () => {
+  const project = tmpDir('rl-project-');
+  process.env.RELAYLEAD_HOME = tmpDir('rl-home-');
+  const catalogDir = tmpDir('rl-catalog-');
+  put(catalogDir, 'code', '---\ndescription: catalog\n---\nCatalog loop.\n');
+  put(path.join(project, '.relaylead', 'methods'), 'code', 'Project loop.\n');
+
+  assert.deepStrictEqual(loadMethod('code', { dir: project, catalogDir }), { name: 'code', instructions: 'Project loop.\n' });
+  fs.rmSync(path.join(project, '.relaylead', 'methods', 'code.md'));
+  assert.strictEqual(loadMethod('code', { dir: project, catalogDir }).instructions, 'Catalog loop.\n');
+  assert.throws(() => loadMethod('ghost', { dir: project, catalogDir }), { code: 'unknown-method' });
 });

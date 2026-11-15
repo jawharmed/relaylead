@@ -6,6 +6,7 @@ const { spawnSync } = require('node:child_process');
 const { run } = require('../core/cli');
 const { listTasks, startTask, finishTask, deliverTask } = require('../core/tasks');
 const { getState, stopMission } = require('../core/missions');
+const { loadProfile } = require('../core/profiles');
 const { listSessions, isAlive } = require('../core/sessions');
 const { readJson } = require('../core/store');
 const { missionDir } = require('../core/paths');
@@ -52,7 +53,7 @@ test('startTask launches a crew member and records the task', async (t) => {
   const [spec] = specs;
   assert.strictEqual(spec.env.RELAYLEAD_TASK, 'a');
   assert.strictEqual(spec.env.RELAYLEAD_MISSION, 'demo');
-  assert.deepStrictEqual(spec.profile, { name: 'developer' });
+  assert.deepStrictEqual(spec.profile, loadProfile('developer', { dir }));
   assert.match(spec.prompt, /First task/);
   assert.match(spec.prompt, /Write the first file\./);
   assert.strictEqual(spec.cwd, path.join(dir, 'out', 'a'));
@@ -66,6 +67,18 @@ test('startTask launches a crew member and records the task', async (t) => {
       ['b', 'todo', false],
     ],
   );
+});
+
+test('a task with an unknown profile is refused before anything is launched', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  const specs = spyLaunches(t);
+
+  await assert.rejects(startTask('demo', { id: 'a', profile: 'ghost' }), { code: 'unknown-profile' });
+
+  assert.strictEqual(specs.length, 0);
+  assert.strictEqual(fs.existsSync(path.join(missionDir('demo'), 'tasks', 'a.json')), false);
+  assert.strictEqual(fs.existsSync(path.join(dir, 'out', 'a')), false);
 });
 
 test('startTask twice does not launch twice', async (t) => {

@@ -10,23 +10,9 @@ const { readJson, writeJson } = require('../core/store');
 const { missionDir } = require('../core/paths');
 const fake = require('../adapters/fake');
 const { tmpDir, makeIo, waitFor } = require('../fixtures/helpers');
+const { freshHome } = require('../fixtures/missions');
 
 const BIN = path.join(__dirname, '..', 'bin', 'relaylead.js');
-
-// Each test gets a fresh RELAYLEAD_HOME, and every session it started is killed afterwards.
-// The project folders are not git repositories: missions deliver files (machine config).
-function freshHome(t) {
-  const home = tmpDir('relaylead-home-');
-  process.env.RELAYLEAD_HOME = home;
-  writeJson(path.join(home, 'config.json'), { delivery: { type: 'files' } });
-  // Kill every recorded session directly: stopMission leaves a finished mission alone.
-  t.after(async () => {
-    process.env.RELAYLEAD_HOME = home;
-    for (const mission of listMissions()) {
-      for (const session of listSessions(mission.name)) await fake.stop(session);
-    }
-  });
-}
 
 async function cli(args, ioOverrides) {
   const io = makeIo(ioOverrides);
@@ -251,4 +237,81 @@ test('stop on a stopped or done mission kills nothing', async (t) => {
   assert.strictEqual((await cli(['stop', 'done'])).code, 0);
   assert.strictEqual(stopCalls, 1);
   assert.strictEqual((await cli(['state', 'get', '--mission', 'done'])).out.trim(), 'done');
+});
+
+test('an unknown method is refused before anything is launched', async (t) => {
+  freshHome(t);
+  const dir = tmpDir('relaylead-project-');
+  writeJson(path.join(dir, '.relaylead.json'), { method: 'ghost' });
+  const originalLaunch = fake.launch;
+  let launches = 0;
+  fake.launch = async (spec) => {
+    launches++;
+    return originalLaunch(spec);
+  };
+  t.after(() => {
+    fake.launch = originalLaunch;
+  });
+
+  const result = await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir]);
+
+  assert.strictEqual(result.code, 1);
+  assert.match(result.err, /method "ghost" not found/);
+  assert.strictEqual(launches, 0);
+  assert.strictEqual(fs.existsSync(missionDir('demo')), false);
+  assert.strictEqual(fs.existsSync(lockFile(fs.realpathSync.native(dir))), false);
+});
+
+test('done stops the remaining crew, then a helper stops the lead', async (t) => {
+  freshHome(t);
+  const dir = tmpDir('relaylead-project-');
+  assert.strictEqual((await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir])).code, 0);
+  await waitUntilWorking('demo');
+  const crew = await fake.launch({
+    mission: 'demo',
+    name: 'demo/developer/1',
+    role: 'crew',
+    profile: null,
+    prompt: '',
+    cwd: dir,
+    env: { RELAYLEAD_MISSION: 'demo' },
+    permissionMode: 'allowlist',
+  });
+  recordSession('demo', crew);
+  const lead = readJson(path.join(missionDir('demo'), 'lead.json'));
+  const [leadPid] = listSessions('demo').filter((s) => s.shortId === lead.shortId).map((s) => s.pid);
+  const originalStop = fake.stop;
+  const stopped = [];
+  fake.stop = async (session) => {
+    stopped.push(session.shortId);
+    return originalStop(session);
+  };
+  // The fake lead never stops working by itself: the helper gives up waiting after 200 ms.
+  process.env.RELAYLEAD_REAP_MAX_MS = '200';
+  t.after(() => {
+    fake.stop = originalStop;
+    delete process.env.RELAYLEAD_REAP_MAX_MS;
+  });
+
+  const done = await cli(['state', 'set', 'done', '--mission', 'demo']);
+
+  assert.strictEqual(done.code, 0, done.err);
+  assert.deepStrictEqual(stopped, [crew.shortId]);
+  await waitFor(() => !isAlive(crew.pid), 30000, 'the crew member to end');
+  await waitFor(() => !isAlive(leadPid), 30000, 'the helper to stop the lead');
+});
+
+test('the helper exits at once when the lead is no longer working', { timeout: 20000 }, async (t) => {
+  freshHome(t);
+  const dir = tmpDir('relaylead-project-');
+  assert.strictEqual((await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir])).code, 0);
+  await waitUntilWorking('demo');
+  const [lead] = listSessions('demo');
+  await fake.stop(lead); // like a fake lead that exits after `state set done`
+  await waitFor(() => !isAlive(lead.pid), 30000, 'the lead to end');
+  assert.strictEqual((await cli(['state', 'set', 'done', '--mission', 'demo'])).code, 0);
+
+  const reaped = await cliProcess(['_reap', 'demo']);
+
+  assert.deepStrictEqual([reaped.code, reaped.err], [0, '']);
 });

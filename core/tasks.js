@@ -7,6 +7,7 @@ const { writeJson, readJson } = require('./store');
 const { codedError } = require('./messages');
 const { readMission, getState } = require('./missions');
 const { recordSession, listSessions, isAlive } = require('./sessions');
+const { loadProfile } = require('./profiles');
 const { getAdapter } = require('../adapters');
 const { getDelivery } = require('../deliveries');
 const tasksDirSource = require('../sources/tasks-dir');
@@ -193,6 +194,8 @@ async function launchCrew(mission, id, profile) {
   const task = findTask(name, id);
   if (task.state === 'running') return readJson(taskFile(name, id));
   if (task.state !== 'todo') throw codedError('task-not-startable', { id, state: task.state });
+  // Read before the task's folder or branch is made: an unknown profile leaves nothing behind.
+  const crewProfile = loadProfile(profile, { dir: mission.dir });
 
   const { cwd, branch } = getDelivery(mission.config.delivery.type).prepareTask(mission, task);
   const number = listSessions(name).filter((s) => s.name.startsWith(`${name}/${profile}/`)).length + 1;
@@ -201,7 +204,7 @@ async function launchCrew(mission, id, profile) {
     mission: name,
     name: `${name}/${profile}/${number}`,
     role: 'crew',
-    profile: { name: profile },
+    profile: crewProfile,
     prompt: crewPrompt(task, cwd, branch),
     cwd,
     env: { RELAYLEAD_MISSION: name, RELAYLEAD_HOME: home(), RELAYLEAD_TASK: id },
