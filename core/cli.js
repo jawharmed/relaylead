@@ -4,6 +4,7 @@ const { loadConfig } = require('./config');
 const { createMission, listMissions, stopMission, getState, setState } = require('./missions');
 const { listTasks, startTask, deliverTask, finishTask } = require('./tasks');
 const { waitForChanges } = require('./wait');
+const { askQuestion, answerQuestion, listQuestions } = require('./questions');
 const pkg = require('../package.json');
 
 // A sub-command not delivered yet.
@@ -14,19 +15,31 @@ function notImplemented(name) {
   };
 }
 
+// Options that take no value.
+const FLAGS = ['all'];
+
 // Splits arguments into positional values and `--name value` options.
+// A repeated option (--option a --option b) is also kept in full in `lists`.
 function parseArgs(args) {
   const positional = [];
   const options = {};
+  const lists = {};
   for (let i = 0; i < args.length; i++) {
     if (args[i].startsWith('--')) {
-      options[args[i].slice(2)] = args[i + 1];
+      const name = args[i].slice(2);
+      if (FLAGS.includes(name)) {
+        options[name] = true;
+        continue;
+      }
+      if (i + 1 >= args.length) throw codedError('missing-value', { name });
+      options[name] = args[i + 1];
+      (lists[name] = lists[name] || []).push(args[i + 1]);
       i++;
     } else {
       positional.push(args[i]);
     }
   }
-  return { positional, options };
+  return { positional, options, lists };
 }
 
 function language(io) {
@@ -131,6 +144,41 @@ commands.wait = async (args, io) => {
   await waitForChanges(missionName(options, io), timeout, (changes) => {
     io.out.write(JSON.stringify({ changes }, null, 2) + '\n');
   });
+  return 0;
+};
+
+commands.question = async (args, io) => {
+  const { positional, options, lists } = parseArgs(args);
+  const [action, mission] = positional;
+  if (action === 'ask') {
+    const { id } = askQuestion(missionName(options, io), {
+      key: options.key,
+      text: options.text,
+      context: options.context,
+      options: lists.option,
+      recommended: options.recommended === undefined ? undefined : Number(options.recommended),
+    });
+    io.out.write(id + '\n');
+  } else if (action === 'list') {
+    const name = mission || missionName(options, io);
+    const questions = listQuestions(name, options.all ? {} : { state: 'open' });
+    io.out.write(JSON.stringify(questions, null, 2) + '\n');
+  } else {
+    throw codedError('usage', {
+      usage:
+        'relaylead question ask --key k --text t [--context c] --option o --option o [--recommended n] | list [<mission>] [--all]',
+    });
+  }
+  return 0;
+};
+
+commands.answer = async (args, io) => {
+  const [mission, id, choice] = parseArgs(args).positional;
+  if (!mission || !id || choice === undefined) {
+    throw codedError('usage', { usage: 'relaylead answer <mission> <id> <choice>' });
+  }
+  const chosen = answerQuestion(mission, id, choice);
+  io.out.write(t('questionAnswered', { id, choice: chosen }, language(io)));
   return 0;
 };
 

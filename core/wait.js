@@ -6,6 +6,7 @@ const { writeJson, readJson } = require('./store');
 const { readMission, getState } = require('./missions');
 const { codedError } = require('./messages');
 const { listTasks, markFailed } = require('./tasks');
+const { listQuestions } = require('./questions');
 const { getAdapter } = require('../adapters');
 
 const DEFAULT_TIMEOUT_S = 100;
@@ -62,7 +63,7 @@ async function look(name, adapter, previousLostSince) {
     sessions,
     view: {
       tasks: Object.fromEntries(tasks.map((task) => [task.id, task.state])),
-      questions: {}, // Task 7
+      questions: Object.fromEntries(listQuestions(name).map((question) => [question.id, question.state])),
       sessions: Object.fromEntries(sessions.map((session) => [session.shortId, session.state])),
       lostSince,
     },
