@@ -1,6 +1,6 @@
 // Lance une session d'essai en arrière-plan dans le bac à sable, isolée de la configuration de l'utilisateur.
 // node spike/launch.js --name <nom> [--settings <fichier>] [--model haiku] [--mode isolated|user|bypass|manual]
-//                      [--session-id auto|none] [--agents <json>] [--agent <nom>] [--env K=V]... -- "<consigne>"
+//                      [--resume <sessionId>] [--session-id auto|none] [--agents <json>] [--agent <nom>] [--env K=V]... -- "<consigne>"
 const { spawnSync } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -49,6 +49,7 @@ function main() {
   if (wanted) args.push('--session-id', wanted);
   if (o.agents) args.push('--agents', o.agents);
   if (o.agent) args.push('--agent', o.agent);
+  if (o.resume) args.push('--resume', o.resume);
   args.push(o.prompt);
   const r = spawnSync('claude', args, { cwd: SANDBOX, encoding: 'utf8' });
   const text = `${r.stdout}${r.stderr}`;
