@@ -53,3 +53,10 @@ test('writeSessionSettings stores the file under the mission settings folder', (
   assert.strictEqual(file, path.join(process.env.RELAYLEAD_HOME, 'missions', 'demo', 'settings', 'demo-crew-2.json'));
   assert.strictEqual(JSON.parse(fs.readFileSync(file, 'utf8')).env.RELAYLEAD_MISSION, 'demo');
 });
+
+test('the session environment is merged under the fixed keys', () => {
+  const settings = settingsFor({ env: { RELAYLEAD_TASK: 'a', RELAYLEAD_MISSION: 'other', BASH_DEFAULT_TIMEOUT_MS: '1' } });
+  assert.strictEqual(settings.env.RELAYLEAD_TASK, 'a');
+  assert.strictEqual(settings.env.RELAYLEAD_MISSION, 'demo');
+  assert.strictEqual(settings.env.BASH_DEFAULT_TIMEOUT_MS, '600000');
+});
