@@ -10,7 +10,7 @@ const pkg = require('../package.json');
 // Options that take no value.
 const FLAGS = ['all'];
 
-// Splits arguments into positional values and `--name value` options.
+// Splits arguments into positional values and `--name value` (or `--name=value`) options.
 // A repeated option (--option a --option b) is also kept in full in `lists`.
 function parseArgs(args) {
   const positional = [];
@@ -18,15 +18,22 @@ function parseArgs(args) {
   const lists = {};
   for (let i = 0; i < args.length; i++) {
     if (args[i].startsWith('--')) {
-      const name = args[i].slice(2);
+      const equals = args[i].indexOf('=');
+      const name = equals === -1 ? args[i].slice(2) : args[i].slice(2, equals);
       if (FLAGS.includes(name)) {
         options[name] = true;
         continue;
       }
-      if (i + 1 >= args.length) throw codedError('missing-value', { name });
-      options[name] = args[i + 1];
-      (lists[name] = lists[name] || []).push(args[i + 1]);
-      i++;
+      let value;
+      if (equals !== -1) {
+        value = args[i].slice(equals + 1);
+      } else {
+        if (i + 1 >= args.length) throw codedError('missing-value', { name });
+        value = args[i + 1];
+        i++;
+      }
+      options[name] = value;
+      (lists[name] = lists[name] || []).push(value);
     } else {
       positional.push(args[i]);
     }
@@ -205,7 +212,7 @@ async function run(argv, io) {
     io.out.write(pkg.version + '\n');
     return 0;
   }
-  if (first === undefined || first === '--help' || first === '-h') {
+  if (first === undefined || [first, ...args].some((arg) => arg === '--help' || arg === '-h')) {
     io.out.write(t('help'));
     return 0;
   }

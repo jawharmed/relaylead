@@ -64,3 +64,17 @@ test('a crew member finishes only its own task and drives no task', async () => 
   // Its own task goes on to the mission, which does not exist here.
   await assert.rejects(commands.task(['done', 'a'], makeIo(env)), { code: 'mission-unknown' });
 });
+
+test('--help after a command prints the help', async () => {
+  const io = makeIo();
+  assert.strictEqual(await run(['stop', '--help'], io), 0);
+  assert.match(io.out.text, /^Usage: relaylead/);
+  assert.match(io.out.text, /stop +stop a mission\n/);
+});
+
+test('an option may be written --name=value', async () => {
+  process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
+  const io = makeIo();
+  assert.strictEqual(await run(['task', 'list', '--mission=ghost'], io), 1);
+  assert.match(io.err.text, /no mission named "ghost"/);
+});

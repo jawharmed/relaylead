@@ -10,7 +10,7 @@ const { readJson, writeJson } = require('../core/store');
 const { missionDir } = require('../core/paths');
 const fake = require('../adapters/fake');
 const { tmpDir, makeIo, waitFor, userEnv } = require('../fixtures/helpers');
-const { freshHome } = require('../fixtures/missions');
+const { freshHome, writeMission } = require('../fixtures/missions');
 
 const BIN = path.join(__dirname, '..', 'bin', 'relaylead.js');
 
@@ -481,4 +481,18 @@ test('done stops the crew sessions of the registry when the adapter list fails',
   assert.deepStrictEqual(stopped, [crew.shortId]);
   assert.ok(!stopped.includes(lead.shortId));
   await waitFor(() => !isAlive(crew.pid), 30000, 'the crew member to end');
+});
+
+test('once done, the lead can no longer declare another state', async (t) => {
+  freshHome(t);
+  writeMission('demo', tmpDir('relaylead-project-')); // no lead: the test plays it
+  const set = (state) => cli(['state', 'set', state, '--mission', 'demo']);
+  assert.strictEqual((await set('done')).code, 0);
+
+  for (const state of ['working', 'waiting']) {
+    const refused = await set(state);
+    assert.strictEqual(refused.code, 1);
+    assert.match(refused.err, /mission "demo" is done/);
+  }
+  assert.strictEqual((await cli(['state', 'get', '--mission', 'demo'])).out.trim(), 'done');
 });

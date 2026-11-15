@@ -193,8 +193,11 @@ function getState(name) {
 async function setState(name, state, note) {
   const mission = readMission(name);
   if (!STATES.includes(state)) throw codedError('bad-state', { state, states: STATES.join(', ') });
-  // A lead restarted after a stop must not erase the stop.
-  if (readState(name) === 'stopped') throw codedError('mission-stopped', { mission: name });
+  // A lead restarted after a stop must not erase the stop. Once done, only `done` again is taken:
+  // it retries the stops of a done that failed.
+  const current = readState(name);
+  if (current === 'stopped') throw codedError('mission-stopped', { mission: name });
+  if (current === 'done' && state !== 'done') throw codedError('mission-finished', { mission: name });
   writeJson(missionFile(name, 'state.json'), { state, note, updatedAt: now() });
   if (state === 'done') {
     // The lock is released last: until the crew is stopped, the folder is still in use.

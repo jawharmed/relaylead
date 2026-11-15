@@ -338,6 +338,7 @@ test('the mission state folder is refused', () => {
   const reason = 'access to the mission state folder';
   assertDenied(use('Write', { file_path: path.join(stateDir, 'mission.json') }), reason);
   assertDenied(use('Grep', { pattern: 'x', path: stateDir }), reason);
+  assertDenied(use('Glob', { pattern: '**/*.json', path: stateDir }), reason);
   assertDenied(use('Bash', { command: `cat "${path.join(stateDir, 'state.json')}"` }), reason);
   assertDenied(use('Bash', { command: `cd "${stateDir}" && ls` }), reason);
   assert.deepStrictEqual(use('Write', { file_path: path.join(stateDir + '-other', 'mission.json') }), ALLOW);
