@@ -1,10 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const { run } = require('../core/cli');
 const { listTasks, startTask } = require('../core/tasks');
-const { getState } = require('../core/missions');
-const { listSessions } = require('../core/sessions');
+const { getState, stopMission } = require('../core/missions');
+const { listSessions, isAlive } = require('../core/sessions');
 const { readJson } = require('../core/store');
 const { missionDir } = require('../core/paths');
 const fake = require('../adapters/fake');
@@ -100,6 +102,76 @@ test('concurrent starts of two tasks give distinct session names', async (t) => 
     listSessions('demo').map((session) => session.name).sort(),
     ['demo/developer/1', 'demo/developer/2'],
   );
+});
+
+test('a stop during a launch stops the crew member', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  const original = fake.launch;
+  let crew;
+  fake.launch = async (spec) => {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    crew = await original(spec);
+    return crew;
+  };
+  t.after(() => {
+    fake.launch = original;
+  });
+
+  const starting = startTask('demo', { id: 'a' });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  await stopMission('demo'); // the crew member is not in the registry yet
+
+  await assert.rejects(starting, { code: 'mission-stopped' });
+  await waitFor(() => !isAlive(crew.pid), 5000, 'the crew member to be stopped');
+  assert.strictEqual(fs.existsSync(path.join(missionDir('demo'), 'tasks', 'a.json')), false);
+});
+
+function startLock() {
+  return path.join(missionDir('demo'), 'start.lock');
+}
+
+test('a start lock left by a dead process is taken over', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  fs.writeFileSync(startLock(), String(spawnSync(process.execPath, ['-e', '']).pid));
+
+  await Promise.all([startTask('demo', { id: 'a' }), startTask('demo', { id: 'b' })]);
+
+  assert.deepStrictEqual(
+    listSessions('demo').map((session) => session.name).sort(),
+    ['demo/developer/1', 'demo/developer/2'],
+  );
+  assert.strictEqual(fs.existsSync(startLock()), false);
+});
+
+test('an empty start lock older than 10 s is taken over', { timeout: 5000 }, async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  fs.writeFileSync(startLock(), ''); // its holder crashed before writing its pid
+  const old = new Date(Date.now() - 11 * 1000);
+  fs.utimesSync(startLock(), old, old);
+
+  const record = await startTask('demo', { id: 'a' });
+  assert.strictEqual(record.state, 'running');
+});
+
+test('a start lock that cannot be removed does not fail the start', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  // Like Windows when another process is reading the file.
+  const originalRm = fs.rmSync;
+  fs.rmSync = (file, options) => {
+    if (String(file).endsWith('start.lock')) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+    return originalRm(file, options);
+  };
+  t.after(() => {
+    fs.rmSync = originalRm;
+  });
+
+  const record = await startTask('demo', { id: 'a' });
+  assert.strictEqual(record.state, 'running');
+  assert.deepStrictEqual(readJson(path.join(missionDir('demo'), 'tasks', 'a.json')), record);
 });
 
 test('fake mission runs two dependent tasks to done', async (t) => {

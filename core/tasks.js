@@ -12,6 +12,7 @@ const tasksDirSource = require('../sources/tasks-dir');
 
 // Long enough for a slow agent launch held by another start.
 const START_LOCK_WAIT_MS = 60 * 1000;
+const EMPTY_LOCK_STALE_MS = 10 * 1000;
 
 function now() {
   return new Date().toISOString();
@@ -104,33 +105,66 @@ function tryCreateLock(file) {
   }
 }
 
-// 0 when the lock is gone or its holder is still writing it.
-function lockHolder(file) {
+// Stale: its holder process is dead, or no holder could be read from it for 10 s (a holder that
+// crashed between creating the file and writing its pid). A lock that is gone is not stale.
+function isStaleLock(file) {
+  let text;
+  let modifiedAt;
   try {
-    return Number(fs.readFileSync(file, 'utf8'));
+    text = fs.readFileSync(file, 'utf8');
+    modifiedAt = fs.statSync(file).mtimeMs;
   } catch {
-    return 0;
+    return false;
+  }
+  const holder = Number(text);
+  if (holder) return !isAlive(holder);
+  return Date.now() - modifiedAt > EMPTY_LOCK_STALE_MS;
+}
+
+// Never throws: on Windows, a file another process is reading cannot always be removed at once.
+// A lock left behind this way is taken over once its holder process has ended.
+async function removeQuietly(file) {
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      fs.rmSync(file, { force: true });
+      return true;
+    } catch {
+      await sleep(20 * attempt);
+    }
+  }
+  return false;
+}
+
+// Only the holder of the .takeover file may delete a stale lock, after checking again that it is
+// stale. Otherwise two takers could both delete it, the second one deleting the lock the first
+// one has just created.
+async function takeOverStaleLock(file) {
+  const guard = file + '.takeover';
+  if (!tryCreateLock(guard)) {
+    if (isStaleLock(guard)) await removeQuietly(guard);
+    return false;
+  }
+  try {
+    return isStaleLock(file) && (await removeQuietly(file));
+  } finally {
+    await removeQuietly(guard);
   }
 }
 
 // One start at a time per mission: the lead may start tasks in parallel, and each start must see
-// the sessions and task records written by the previous one. A lock left by a dead process is taken over.
+// the sessions and task records written by the previous one.
 async function withStartLock(name, action) {
   const file = path.join(missionDir(name), 'start.lock');
   const giveUpAt = Date.now() + START_LOCK_WAIT_MS;
   while (!tryCreateLock(file)) {
-    const holder = lockHolder(file);
-    if (holder && !isAlive(holder)) {
-      fs.rmSync(file, { force: true });
-      continue;
-    }
+    if (isStaleLock(file) && (await takeOverStaleLock(file))) continue;
     if (Date.now() > giveUpAt) throw codedError('start-busy', { mission: name });
     await sleep(50);
   }
   try {
     return await action();
   } finally {
-    fs.rmSync(file, { force: true });
+    await removeQuietly(file);
   }
 }
 
@@ -164,6 +198,8 @@ async function launchCrew(mission, id, profile) {
   const record = { id, profile, state: 'running', session: session.shortId, cwd, branch, startedAt: now() };
   try {
     recordSession(name, session);
+    // Checked once the session is recorded: a stop either finds it in the registry or is seen here.
+    if (getState(name) === 'stopped') throw codedError('mission-stopped', { mission: name });
     writeJson(taskFile(name, id), record);
   } catch (err) {
     await adapter.stop(session); // no orphan session
