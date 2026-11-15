@@ -43,7 +43,9 @@ async function list(mission) {
   }));
 }
 
+// Only a live process is killed: a dead one's pid may already belong to another process.
 async function stop(session) {
+  if (!isAlive(session.pid)) return;
   try {
     process.kill(session.pid);
   } catch (err) {

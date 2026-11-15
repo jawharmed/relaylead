@@ -32,6 +32,8 @@ const messages = {
     'bad-state': 'unknown state "{state}"; use one of: {states}',
     'no-mission': 'no mission given; use --mission <name> or set RELAYLEAD_MISSION',
     'session-exists': 'mission "{mission}" already has another session with the short id {shortId}',
+    'task-unknown': 'mission "{mission}" has no task "{id}"; see the tasks with: relaylead task list',
+    'task-not-startable': 'task "{id}" is {state}; only a todo task can be started',
   },
   fr: {
     help: [
@@ -65,6 +67,8 @@ const messages = {
     'bad-state': 'état inconnu « {state} » ; utilisez l\'un de : {states}',
     'no-mission': 'aucune mission indiquée ; utilisez --mission <nom> ou RELAYLEAD_MISSION',
     'session-exists': 'la mission « {mission} » a déjà une autre session d\'id court {shortId}',
+    'task-unknown': 'la mission « {mission} » n\'a pas de tâche « {id} » ; voir les tâches avec : relaylead task list',
+    'task-not-startable': 'la tâche « {id} » est {state} ; seule une tâche todo peut être lancée',
   },
 };
 

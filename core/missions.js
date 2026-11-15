@@ -207,4 +207,4 @@ async function stopMission(name) {
   releaseLock(mission.dir, name);
 }
 
-module.exports = { createMission, listMissions, stopMission, getState, setState, lockFile };
+module.exports = { createMission, listMissions, stopMission, readMission, getState, setState, lockFile };
