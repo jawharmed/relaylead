@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { missionDir } = require('./paths');
+const { home, missionDir } = require('./paths');
 const { readJson } = require('./store');
 const { DEFAULTS } = require('./config');
 
@@ -19,7 +19,7 @@ const COMPUTED = '$computed';
 const SHELL_KEYWORDS = ['{', '}', '!', 'if', 'then', 'else', 'elif', 'do', 'while', 'until', 'time'];
 
 // Git options placed before the subcommand that take the next word as their value.
-const GIT_OPTIONS_WITH_VALUE = ['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--config-env'];
+const GIT_OPTIONS_WITH_VALUE = ['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--config-env', '--attr-source'];
 
 // Push options that take the next word as their value (besides -o).
 const PUSH_OPTIONS_WITH_VALUE = ['--push-option', '--repo', '--receive-pack', '--exec'];
@@ -56,20 +56,57 @@ function shellGlobRegExp(glob) {
 
 // --- Reading a Bash command -------------------------------------------------------------------
 
+// End of the line that closes a heredoc started on the line ending at `lineEnd`, or -1 when no
+// line closes it. A line we take for the closing one too early only makes more lines judged.
+function heredocEnd(text, lineEnd, delimiter) {
+  let start = lineEnd + 1;
+  while (start <= text.length) {
+    const end = text.indexOf('\n', start) === -1 ? text.length : text.indexOf('\n', start);
+    if (text.slice(start, end).replace(/^\t+/, '') === delimiter) return end;
+    start = end + 1;
+  }
+  return -1;
+}
+
 // A heredoc that feeds `git commit` is the commit message: data, not commands, so its body is
-// dropped. Other heredoc bodies stay and are judged line by line, like commands.
+// dropped. Only a real heredoc counts: `<<` outside quotes (a `$( … )` starts afresh, even inside
+// double quotes) and a closing line that exists. Other heredoc bodies stay and are judged line by
+// line, like commands, but they are skipped when looking for quotes: the shell does not read
+// quotes there.
 function dropCommitMessages(command) {
-  const lines = command.split('\n');
-  const kept = [];
-  for (let i = 0; i < lines.length; i++) {
-    kept.push(lines[i]);
-    const heredoc = /(^|[^<])<<-?\s*(['"]?)([A-Za-z_][\w-]*)\2/.exec(lines[i]);
-    if (heredoc && /\bgit\b.*\bcommit\b/.test(lines[i])) {
-      while (i + 1 < lines.length && lines[i + 1].trim() !== heredoc[3]) i++;
-      i++; // the closing delimiter
+  let text = command;
+  const open = []; // open quotes and `$(`, innermost last
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const inside = open[open.length - 1];
+    if (inside === "'") {
+      if (char === "'") open.pop();
+    } else if (char === '\\') {
+      i++;
+    } else if (char === '$' && text[i + 1] === '(') {
+      open.push('(');
+      i++;
+    } else if (inside === '"') {
+      if (char === '"') open.pop();
+    } else if (char === '"' || char === "'") {
+      open.push(char);
+    } else if (char === ')' && inside === '(') {
+      open.pop();
+    } else if (char === '<' && text[i - 1] !== '<') {
+      const heredoc = /^<<-?\s*(['"]?)\\?([A-Za-z_][\w-]*)\1/.exec(text.slice(i));
+      const lineEnd = text.indexOf('\n', i);
+      const end = heredoc && lineEnd !== -1 ? heredocEnd(text, lineEnd, heredoc[2]) : -1;
+      if (end === -1) continue;
+      const line = text.slice(text.lastIndexOf('\n', i) + 1, lineEnd);
+      if (/\bgit\b.*\bcommit\b/.test(line)) {
+        text = text.slice(0, lineEnd) + text.slice(end);
+        i = lineEnd - 1;
+      } else {
+        i = end - 1;
+      }
     }
   }
-  return kept.join('\n');
+  return text;
 }
 
 // `$(…)`, `<(…)`, `>(…)` and backticks run commands of their own. Each is cut out, innermost
@@ -162,10 +199,22 @@ function commandStart(words) {
 
 // --- Folders and branches ---------------------------------------------------------------------
 
+// `~`, `$HOME` and `$RELAYLEAD_HOME` (and `%USERPROFILE%` on Windows) replaced by their value.
+function expandHome(file) {
+  // Functions as replacements, so a `$` in the home path is not read as a replacement pattern.
+  let result = file
+    .replace(/^~(?=[\\/]|$)/, () => os.homedir())
+    .replace(/\$(\{HOME\}|HOME\b)/g, () => os.homedir())
+    .replace(/\$(\{RELAYLEAD_HOME\}|RELAYLEAD_HOME\b)/g, () => home());
+  if (process.platform === 'win32') result = result.replace(/%USERPROFILE%/gi, () => os.homedir());
+  return result;
+}
+
 // `target` seen from `dir`; null when only the shell knows it (a variable, `cd -`, an unknown dir).
 function moveTo(dir, target) {
-  if (dir === null || target === '-' || /[$`]/.test(target)) return null;
-  return path.resolve(dir, target.replace(/^~(?=\/|$)/, os.homedir()));
+  const expanded = expandHome(target);
+  if (dir === null || target === '-' || /[$`]/.test(expanded)) return null;
+  return path.resolve(dir, expanded);
 }
 
 // The branch checked out in `dir`: null when there is none (not a repository, detached HEAD),
@@ -187,8 +236,8 @@ function currentBranch(dir) {
 // Reason to refuse `action` ('push to', 'commit on') on `branch`, or null.
 function branchRefusal(action, branch, guard) {
   if (branch === null) return null;
-  // `$BRANCH`, `$(…)`, an unknown folder, or a pattern such as `refs/heads/*`.
-  if (/[$*?[]/.test(branch)) return `${action} a branch that cannot be judged`;
+  // `$BRANCH`, `$(…)`, an unknown folder, a pattern such as `refs/heads/*`, or `{main,x}`.
+  if (/[$*?[{]/.test(branch)) return `${action} a branch that cannot be judged`;
   if (guard.protectedBranches.some((pattern) => globMatch(pattern, branch))) {
     return `${action} protected branch ${branch}`;
   }
@@ -222,10 +271,11 @@ function parseGit(words, dir) {
   return { subcommand: words[i].toLowerCase(), start: i + 1, dir };
 }
 
-// True when `arg` is `full` or an abbreviation git accepts for it (`--forc` for `--force`).
+// True when `arg` is `full` or an abbreviation of it (`--forc` for `--force`, `--m` for `--mirror`).
+// An abbreviation git finds ambiguous fails anyway, so taking it for `full` is harmless.
 function isLongOption(arg, full) {
   const name = arg.split('=')[0];
-  return name.length >= 4 && full.startsWith(name);
+  return name.length >= 3 && full.startsWith(name);
 }
 
 // Branch a refspec writes to: `main`, `HEAD:main`, `src:refs/heads/main`, `:main` (delete) all give main.
@@ -237,18 +287,21 @@ function destination(refspec, dir) {
 
 function checkPush(args, dir, guard) {
   const positional = [];
+  let repoOption = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    if (isLongOption(arg, '--all') || isLongOption(arg, '--mirror')) return 'push of every branch';
+    if (['--all', '--branches', '--mirror'].some((option) => isLongOption(arg, option))) return 'push of every branch';
     // --force, --force-with-lease[=…], and -f alone or grouped with other short options (-uf).
     if (isLongOption(arg, '--force') || isLongOption(arg, '--force-with-lease') || /^-[^-]*f/.test(arg)) {
       return 'force push';
     }
     const takesValue = arg === '-o' || PUSH_OPTIONS_WITH_VALUE.some((o) => !arg.includes('=') && isLongOption(arg, o));
+    if (isLongOption(arg, '--repo')) repoOption = true;
     if (takesValue) i++;
     else if (!arg.startsWith('-')) positional.push(arg);
   }
-  const refspecs = positional.slice(1); // the first one is the remote
+  // The first word is the remote, unless --repo names it: then every word may be a refspec.
+  const refspecs = repoOption ? positional : positional.slice(1);
   if (refspecs.some((refspec) => refspec.startsWith('+'))) return 'force push';
   // Without a refspec, git pushes the current branch.
   const branches = refspecs.length ? refspecs.map((refspec) => destination(refspec, dir)) : [currentBranch(dir)];
@@ -289,8 +342,12 @@ function isSecretName(name, guard) {
   });
 }
 
-function inStateFolder(file, dir, stateDir) {
-  if (!stateDir || !file || /[$`]/.test(file)) return false;
+// True when `file` is in the state folder. A path through another variable cannot be resolved:
+// it counts as inside when it names the state folders (`.relaylead` or `missions`).
+function inStateFolder(word, dir, stateDir) {
+  if (!stateDir || !word) return false;
+  const file = expandHome(word);
+  if (/[$`]/.test(file)) return /\.relaylead|missions/i.test(file);
   if (dir === null && !path.isAbsolute(file)) return false;
   const normalize = (p) => (CASE_INSENSITIVE ? p.toLowerCase() : p);
   const full = normalize(path.resolve(dir || '', file));
@@ -339,7 +396,7 @@ function cdTargets(words, dirs) {
 
 // Each piece is judged in every folder it may run in. `cd x && …` moves the rest of the &&
 // chain to x; once the chain ends, the cd may have failed, so the former folders are possible
-// again. After `cd x;` both folders are possible. A cd in a pipe, in the background, before `||`
+// again. After `cd x;` or `cd x ||` both folders are possible. A cd in a pipe, in the background
 // or inside `( … )` does not move the pieces after it.
 function checkBash(command, cwd, guard, stateDir) {
   for (const pieces of bashCommands(command)) {
@@ -353,7 +410,9 @@ function checkBash(command, cwd, guard, stateDir) {
         if (reason) return reason;
       }
       const moved = cdTargets(piece.words, dirs);
-      const lasts = moved && previousEnd !== '|' && !['|', '&', '||', ')'].includes(piece.end);
+      // Before `||`, a failed cd runs the next piece in the former folder, a successful one may
+      // reach later pieces (`cd x || exit 1; git push`): both folders stay possible, as after `;`.
+      const lasts = moved && previousEnd !== '|' && !['|', '&', ')'].includes(piece.end);
       if (lasts && piece.end === '&&') {
         beforeChain = beforeChain || dirs;
         dirs = moved;

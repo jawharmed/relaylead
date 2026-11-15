@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
+const os = require('node:os');
 const path = require('node:path');
 const { checkToolUse, isAllowed, denyMessage } = require('../core/guard');
 const { DEFAULTS } = require('../core/config');
@@ -64,11 +65,15 @@ test('a computed branch name is refused', () => {
   assertDenied(bash('git push -u origin $(git rev-parse --abbrev-ref HEAD)', dir), reason);
   assertDenied(bash('git push origin $BRANCH', dir), reason);
   assertDenied(bash('git push origin `git branch --show-current`', dir), reason);
+  assertDenied(bash('git push origin {main,x}', dir), reason);
+  assertDenied(bash('git push origin mai{n,}', dir), reason);
 });
 
 test('the value of a push option is not taken for the remote', () => {
   assertDenied(bash('git push -o ci.skip origin', repoOn('main')), 'push to protected branch main');
   assertDenied(bash('git push --repo origin', repoOn('main')), 'push to protected branch main');
+  // With --repo, git takes the first word for the repository, but it may be a refspec: judged as one.
+  assertDenied(bash('git push --repo origin main', repoOn('relaylead/x')), 'push to protected branch main');
   assert.deepStrictEqual(bash('git push -o ci.skip origin', repoOn('relaylead/x')), ALLOW);
 });
 
@@ -92,6 +97,7 @@ test('git push anywhere in a piece is judged', () => {
     'GIT push origin main',
     '/usr/bin/git push origin main',
     'git --no-pager -c color.ui=never push origin main',
+    'git --attr-source HEAD push origin main',
   ]) {
     assertDenied(bash(command, dir), 'push to protected branch main');
   }
@@ -129,6 +135,8 @@ test('a cd that may not have happened keeps the first folder possible', () => {
   assertDenied(bash(`(cd "${crew}"); git commit -m wip`, main), 'commit on protected branch main');
   assertDenied(bash(`cd "${crew}" | true; git commit -m wip`, main), 'commit on protected branch main');
   assertDenied(bash('cd "$DIR" && git push', crew), 'push to a branch that cannot be judged');
+  assertDenied(bash(`cd "${main}" || exit 1; git push`, crew), 'push to protected branch main');
+  assertDenied(bash(`cd "${main}" || exit 1\ngit commit -m x`, crew), 'commit on protected branch main');
 });
 
 test('git -C dir push origin main is refused', () => {
@@ -162,6 +170,9 @@ test('git push --all and --mirror are refused', () => {
   assertDenied(bash('git push --all origin', dir), 'push of every branch');
   assertDenied(bash('git push --mirror origin', dir), 'push of every branch');
   assertDenied(bash('git push --al origin', dir), 'push of every branch');
+  assertDenied(bash('git push --m origin', dir), 'push of every branch');
+  assertDenied(bash('git push --mi origin', dir), 'push of every branch');
+  assertDenied(bash('git push --branches origin', dir), 'push of every branch');
 });
 
 test('git push -f is refused', () => {
@@ -232,6 +243,16 @@ test('a heredoc outside a commit message is judged', () => {
   assertDenied(bash('bash <<EOF\ngit push origin main\nEOF', dir), 'push to protected branch main');
 });
 
+test('a quoted or unclosed heredoc marker hides nothing', () => {
+  const dir = repoOn('relaylead/x');
+  const reason = 'push to protected branch main';
+  assertDenied(bash('git commit -m "doc: <<EOF parsing"\ngit push origin main', dir), reason);
+  assertDenied(bash('echo "<<EOF"; git commit -m x\ngit push origin main', dir), reason);
+  assertDenied(bash("git commit -m 'a <<EOF b'\ngit push origin main\nEOF", dir), reason);
+  assertDenied(bash('git commit -F - <<EOF\nmessage\ngit push origin main', dir), reason);
+  assertDenied(bash('git commit -F - <<EOF\nmessage\nEOF\ngit push origin main', dir), reason);
+});
+
 test('example env files are not secrets', () => {
   const dir = tmpDir();
   assert.deepStrictEqual(bash('cat .env.example .env.sample .env.template', dir), ALLOW);
@@ -268,6 +289,35 @@ test('the mission state folder is refused', () => {
   assertDenied(use('Bash', { command: `cd "${stateDir}" && ls` }), reason);
   assert.deepStrictEqual(use('Write', { file_path: path.join(stateDir + '-other', 'mission.json') }), ALLOW);
   assert.deepStrictEqual(use('Bash', { command: 'relaylead task done a --mission demo' }), ALLOW);
+});
+
+test('the mission state folder is refused under ~, $HOME or $RELAYLEAD_HOME', (t) => {
+  const reason = 'access to the mission state folder';
+  // Only paths are compared: nothing is read or written under the real home folder.
+  const homeState = path.join(os.homedir(), '.relaylead', 'missions', 'demo');
+  const atHome = (tool_name, tool_input) => checkToolUse({ tool_name, tool_input, cwd: tmpDir() }, GUARD, homeState);
+  assertDenied(atHome('Bash', { command: 'cat ~/.relaylead/missions/demo/mission.json' }), reason);
+  assertDenied(atHome('Bash', { command: 'cat $HOME/.relaylead/missions/demo/mission.json' }), reason);
+  assertDenied(atHome('Bash', { command: 'cat "${HOME}/.relaylead/missions/demo/state.json"' }), reason);
+  assertDenied(atHome('Bash', { command: 'cd ~/.relaylead/missions/demo && ls' }), reason);
+  assertDenied(atHome('Read', { file_path: '~/.relaylead/missions/demo/mission.json' }), reason);
+  if (process.platform === 'win32') {
+    assertDenied(atHome('Bash', { command: 'type %USERPROFILE%/.relaylead/missions/demo/mission.json' }), reason);
+  }
+  // Another variable may lead there too: refused when the word names the state folders.
+  assertDenied(atHome('Bash', { command: 'cat $DATA/.relaylead/missions/demo/mission.json' }), reason);
+  assert.deepStrictEqual(atHome('Bash', { command: 'cat $HOME/notes.txt "$TMPDIR/a.log"' }), ALLOW);
+
+  const home = tmpDir('relaylead home-');
+  const previous = process.env.RELAYLEAD_HOME;
+  process.env.RELAYLEAD_HOME = home;
+  t.after(() => {
+    if (previous === undefined) delete process.env.RELAYLEAD_HOME;
+    else process.env.RELAYLEAD_HOME = previous;
+  });
+  const stateDir = path.join(home, 'missions', 'demo');
+  const command = 'cat ${RELAYLEAD_HOME}/missions/demo/mission.json $RELAYLEAD_HOME/x';
+  assertDenied(checkToolUse({ tool_name: 'Bash', tool_input: { command }, cwd: tmpDir() }, GUARD, stateDir), reason);
 });
 
 test('the mission guard decides the protected branches and the secrets', () => {
