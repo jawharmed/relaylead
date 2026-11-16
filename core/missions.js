@@ -334,10 +334,12 @@ async function stopMission(name) {
   if (state !== 'done') writeStopped(name);
   // The sessions are stopped under the mission lock, behind a start or a delivery that is running.
   // When that wait gives up, the state stays stopped and the folder stays locked: stop can be run again.
+  // A stuck holder (start-stuck) is not turned into stop-pending: running stop again would fail until
+  // that process is ended, and its error says so.
   try {
     await withMissionLock(name, 'stop', () => stopSessions(mission, state));
   } catch (err) {
-    if (err.code === 'start-busy' || err.code === 'start-stuck') {
+    if (err.code === 'start-busy') {
       throw codedError('stop-pending', { mission: name, holder: err.vars.command });
     }
     throw err;

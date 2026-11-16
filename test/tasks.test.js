@@ -389,7 +389,7 @@ test('fake mission runs two dependent tasks to done', async (t) => {
   );
 });
 
-// The lock is held until `release` is called: resolves once it is held.
+// Holds the lock until `release` is called; `finished` resolves once the lock is released.
 function holdMissionLock(name, command) {
   let release;
   const held = new Promise((resolve) => {
@@ -481,5 +481,16 @@ test('a stop that gives up behind a slow holder says to run it again', async (t)
   assert.strictEqual(code, 1);
   assert.match(io.err.text, /run relaylead stop demo again/);
   assert.match(io.err.text, /task deliver a/);
+  assert.strictEqual(getState('demo'), 'stopped');
+});
+
+test('a stop behind a stuck holder keeps the start-stuck error and the stopped state', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  const since = new Date(Date.now() - 16 * 60 * 1000).toISOString();
+  fs.writeFileSync(startLock(), JSON.stringify({ pid: process.pid, command: 'task deliver a', since }));
+
+  await assert.rejects(stopMission('demo'), { code: 'start-stuck' });
+
   assert.strictEqual(getState('demo'), 'stopped');
 });
