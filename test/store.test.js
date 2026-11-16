@@ -34,7 +34,10 @@ test('concurrent writers never leave a truncated file', async () => {
   const failures = [];
   let running = 2;
   for (const label of ['a', 'b']) {
-    const child = spawn(process.execPath, [helper, file, label, '200'], { stdio: ['ignore', 'ignore', 'pipe'] });
+    // The test is about torn files, not about the retry budget: a loaded Windows runner may hold the
+    // file longer than the 2 s default, so the writers get more time.
+    const env = { ...process.env, RELAYLEAD_WRITE_RETRY_MS: '10000' };
+    const child = spawn(process.execPath, [helper, file, label, '200'], { stdio: ['ignore', 'ignore', 'pipe'], env });
     let stderr = '';
     child.stderr.on('data', (chunk) => { stderr += chunk; });
     let finished = false;
