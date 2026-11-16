@@ -4,6 +4,9 @@
   "private": true,
   "description": "A tiny project to try Relaylead missions on",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test && node --test lib/duration.spec.js"
+  },
+  "dependencies": {
+    "ms": "2.1.3"
   }
 }
