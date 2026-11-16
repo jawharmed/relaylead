@@ -33,6 +33,7 @@ const FILE_TOOLS = new Map([
   ['Edit', 'file_path'],
   ['NotebookEdit', 'notebook_path'],
   ['Grep', 'path'],
+  ['Glob', 'path'],
 ]);
 
 // Config patterns: `*` matches any characters; everything else is literal.

@@ -5,9 +5,9 @@ const messages = {
       '',
       'Commands:',
       '  launch    start a mission with a lead and its crew',
-      '  list      list missions and sessions',
+      '  list      list the missions',
       '  show      open the lead session of a mission',
-      '  stop      stop a mission or a session',
+      '  stop      stop a mission',
       '  task      manage the tasks of a mission',
       '  state     read or set the state declared by the lead',
       '  wait      wait for a mission to change',
@@ -22,6 +22,7 @@ const messages = {
     unknownCommand: 'relaylead: unknown command "{command}"\n\n',
     noMissions: 'no missions\n',
     missionStopped: 'mission {mission} stopped\n',
+    missionNothingToStop: 'mission {mission} is already {state}; nothing to do\n',
     taskDelivered: 'task {id} delivered\n',
     taskAlreadyDelivered: 'task {id} already delivered\n',
     // Errors: the key is the error code (see codedError).
@@ -30,6 +31,7 @@ const messages = {
     'mission-exists': 'a mission named "{mission}" already exists; choose another name with --name',
     'mission-unknown': 'no mission named "{mission}"',
     'mission-stopped': 'mission "{mission}" was stopped; its state can no longer change',
+    'mission-finished': 'mission "{mission}" is done; its state can no longer change',
     'bad-state': 'unknown state "{state}"; use one of: {states}',
     'no-mission': 'no mission given; use --mission <name> or set RELAYLEAD_MISSION',
     'no-lead': 'mission "{mission}" has no lead session yet',
@@ -38,6 +40,8 @@ const messages = {
     'task-not-startable': 'task "{id}" is {state}; only a todo task can be started',
     'task-not-answered':
       'task "{id}" asks a question first; ask it with: relaylead question ask --key {id} …, and start the task once it is answered',
+    'task-not-ready': 'task "{id}" depends on tasks not delivered yet ({missing}); deliver them first',
+    'task-skipped': 'task "{id}" was set aside: the user chose "Skip this task"; leave it as it is',
     'mission-done': 'mission "{mission}" is done; no task can start',
     'start-busy': 'another task of mission "{mission}" has been starting or delivering for a minute; try again',
     'task-not-deliverable': 'task "{id}" is {state}; only a done task can be delivered',
@@ -54,8 +58,9 @@ const messages = {
       'task "{id}" is delivered, but its branch {branch} or its folder {dir} has work done since; they were kept: deliver that work as a new task',
     'integration-sync-conflict':
       'your current branch conflicts with the integration branch "{branch}"; the update was cancelled. Merge your branch into it by hand in {dir}, then launch again',
-    'task-uncommitted': 'task "{id}" has work not committed in {dir}; commit it on its branch, then deliver again',
-    'task-empty': 'task "{id}" has no commit on its branch {branch}; nothing to deliver',
+    'task-uncommitted':
+      'task "{id}" has changes not committed in {dir} (see `git status` there); commit them on its branch, or remove what must not be kept, then try again',
+    'task-empty': 'task "{id}" has no commit on its branch {branch}, so nothing to deliver; commit the work on that branch first',
     'task-branch-missing': 'cannot deliver task "{id}": its branch {branch} is missing',
     'worktree-mismatch':
       'the folder {dir} is on branch "{actual}", not "{branch}"; it was left by another mission: remove it with: git worktree remove "{dir}"',
@@ -70,6 +75,9 @@ const messages = {
     'bad-choice': 'answer "{choice}" is not one of the options; use a number or a text from: {options}',
     'question-key-clash': 'the key "{key}" makes the id "{id}", already used by the question with key "{storedKey}"; choose another key',
     'missing-value': 'the option --{name} needs a value',
+    'not-from-a-session': '"relaylead {command}" belongs to the user; a mission session cannot run it',
+    'not-your-task': 'this session works on task "{own}"; it cannot finish task "{id}"',
+    'not-for-crew': 'a crew member cannot start or deliver tasks; finish your own task with: relaylead task done {own}',
     questionAnswered: 'question {id} answered: {choice}\n',
     'bad-question': 'cannot ask the question: {detail}',
     'bad-task-id':
@@ -97,9 +105,9 @@ const messages = {
       '',
       'Commandes :',
       '  launch    lancer une mission avec un lead et son équipe',
-      '  list      lister les missions et les sessions',
+      '  list      lister les missions',
       '  show      ouvrir la session du lead d\'une mission',
-      '  stop      arrêter une mission ou une session',
+      '  stop      arrêter une mission',
       '  task      gérer les tâches d\'une mission',
       '  state     lire ou écrire l\'état déclaré par le lead',
       '  wait      attendre qu\'une mission change',
@@ -114,6 +122,7 @@ const messages = {
     unknownCommand: 'relaylead : commande inconnue « {command} »\n\n',
     noMissions: 'aucune mission\n',
     missionStopped: 'mission {mission} arrêtée\n',
+    missionNothingToStop: 'la mission {mission} est déjà {state} ; rien à faire\n',
     taskDelivered: 'tâche {id} livrée\n',
     taskAlreadyDelivered: 'tâche {id} déjà livrée\n',
     usage: 'usage : {usage}',
@@ -121,6 +130,7 @@ const messages = {
     'mission-exists': 'une mission nommée « {mission} » existe déjà ; choisissez un autre nom avec --name',
     'mission-unknown': 'aucune mission nommée « {mission} »',
     'mission-stopped': 'la mission « {mission} » a été arrêtée ; son état ne peut plus changer',
+    'mission-finished': 'la mission « {mission} » est terminée ; son état ne peut plus changer',
     'bad-state': 'état inconnu « {state} » ; utilisez l\'un de : {states}',
     'no-mission': 'aucune mission indiquée ; utilisez --mission <nom> ou RELAYLEAD_MISSION',
     'no-lead': 'la mission « {mission} » n\'a pas encore de session de lead',
@@ -129,6 +139,8 @@ const messages = {
     'task-not-startable': 'la tâche « {id} » est {state} ; seule une tâche todo peut être lancée',
     'task-not-answered':
       'la tâche « {id} » pose d\'abord une question ; posez-la avec : relaylead question ask --key {id} …, puis lancez la tâche une fois la réponse donnée',
+    'task-not-ready': 'la tâche « {id} » dépend de tâches pas encore livrées ({missing}) ; livrez-les d\'abord',
+    'task-skipped': 'la tâche « {id} » est mise de côté : l\'utilisateur a choisi « Skip this task » ; laissez-la telle quelle',
     'mission-done': 'la mission « {mission} » est terminée ; aucune tâche ne peut être lancée',
     'start-busy': 'une autre tâche de la mission « {mission} » est en lancement ou en livraison depuis une minute ; réessayez',
     'task-not-deliverable': 'la tâche « {id} » est {state} ; seule une tâche done peut être livrée',
@@ -145,8 +157,9 @@ const messages = {
       'la tâche « {id} » est livrée, mais sa branche {branch} ou son dossier {dir} contient du travail fait depuis ; ils sont conservés : livrez ce travail dans une nouvelle tâche',
     'integration-sync-conflict':
       'votre branche courante est en conflit avec la branche d\'intégration « {branch} » ; la mise à jour est annulée. Fusionnez votre branche à la main dans {dir}, puis relancez',
-    'task-uncommitted': 'la tâche « {id} » a du travail non commité dans {dir} ; commitez-le sur sa branche, puis livrez de nouveau',
-    'task-empty': 'la tâche « {id} » n\'a aucun commit sur sa branche {branch} ; rien à livrer',
+    'task-uncommitted':
+      'la tâche « {id} » a des changements non commités dans {dir} (voir `git status` dans ce dossier) ; commitez-les sur sa branche, ou supprimez ce qui ne doit pas rester, puis réessayez',
+    'task-empty': 'la tâche « {id} » n\'a aucun commit sur sa branche {branch}, donc rien à livrer ; commitez d\'abord le travail sur cette branche',
     'task-branch-missing': 'impossible de livrer la tâche « {id} » : sa branche {branch} n\'existe plus',
     'worktree-mismatch':
       'le dossier {dir} est sur la branche « {actual} », pas « {branch} » ; il vient d\'une autre mission : supprimez-le avec : git worktree remove "{dir}"',
@@ -161,6 +174,9 @@ const messages = {
     'bad-choice': 'la réponse « {choice} » n\'est pas une des options ; donnez un numéro ou un texte parmi : {options}',
     'question-key-clash': 'la clé « {key} » donne l\'id « {id} », déjà pris par la question de clé « {storedKey} » ; choisissez une autre clé',
     'missing-value': 'l\'option --{name} attend une valeur',
+    'not-from-a-session': '« relaylead {command} » appartient à l\'utilisateur ; une session de mission ne peut pas le lancer',
+    'not-your-task': 'cette session travaille sur la tâche « {own} » ; elle ne peut pas terminer la tâche « {id} »',
+    'not-for-crew': 'un équipier ne peut ni lancer ni livrer de tâche ; terminez votre propre tâche avec : relaylead task done {own}',
     questionAnswered: 'question {id} répondue : {choice}\n',
     'bad-question': 'impossible de poser la question : {detail}',
     'bad-task-id':

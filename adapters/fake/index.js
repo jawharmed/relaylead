@@ -15,7 +15,8 @@ async function launch(spec) {
   const log = path.join(missionDir(spec.mission), `fake-${spec.role}-${hex.slice(0, 8)}.log`);
   const child = spawn(process.execPath, [AGENT, spec.role], {
     cwd: spec.cwd,
-    env: { ...process.env, ...spec.env, RELAYLEAD_FAKE_LOG: log },
+    // Like a real session, it gets no task from the process that launched it, only from spec.env.
+    env: { ...process.env, RELAYLEAD_TASK: undefined, ...spec.env, RELAYLEAD_FAKE_LOG: log },
     detached: true,
     stdio: 'ignore',
     windowsHide: true,

@@ -57,14 +57,15 @@ test('catalog profiles parse with the expected fields', () => {
   }
 });
 
-test('lead tools only allow relaylead and read-only git', () => {
+test('lead tools only allow its relaylead commands and read-only git', () => {
   process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
   const { tools } = loadProfile('lead', { dir: tmpDir('relaylead-project-') });
 
-  assert.deepStrictEqual(tools, ['Bash(relaylead *)', 'Bash(git status)', 'Bash(git log *)', 'Read', 'Glob', 'Grep']);
-  const shell = tools.filter((tool) => tool.startsWith('Bash'));
-  assert.ok(shell.every((tool) => ['Bash(relaylead *)', 'Bash(git status)', 'Bash(git log *)'].includes(tool)));
-  assert.ok(tools.filter((tool) => !tool.startsWith('Bash')).every((tool) => ['Read', 'Glob', 'Grep'].includes(tool)));
+  const shell = [
+    'Bash(relaylead task *)', 'Bash(relaylead wait*)', 'Bash(relaylead question *)', 'Bash(relaylead state *)',
+    'Bash(git status)', 'Bash(git log *)',
+  ];
+  assert.deepStrictEqual(tools, [...shell, 'Read', 'Glob', 'Grep']);
 });
 
 test('lead prompt contains the method and the request', async (t) => {

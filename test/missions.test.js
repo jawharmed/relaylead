@@ -9,8 +9,8 @@ const { listSessions, recordSession, isAlive } = require('../core/sessions');
 const { readJson, writeJson } = require('../core/store');
 const { missionDir } = require('../core/paths');
 const fake = require('../adapters/fake');
-const { tmpDir, makeIo, waitFor } = require('../fixtures/helpers');
-const { freshHome } = require('../fixtures/missions');
+const { tmpDir, makeIo, waitFor, userEnv } = require('../fixtures/helpers');
+const { freshHome, writeMission } = require('../fixtures/missions');
 
 const BIN = path.join(__dirname, '..', 'bin', 'relaylead.js');
 
@@ -23,7 +23,7 @@ async function cli(args, ioOverrides) {
 // Runs bin/relaylead.js in its own process.
 function cliProcess(args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [BIN, ...args], { env: process.env, windowsHide: true });
+    const child = spawn(process.execPath, [BIN, ...args], { env: userEnv(), windowsHide: true });
     let out = '';
     let err = '';
     child.stdout.on('data', (chunk) => (out += chunk));
@@ -426,4 +426,73 @@ test('the helper writes to the journal when it cannot stop the lead', async (t) 
 
   const journal = fs.readFileSync(path.join(missionDir('demo'), 'journal.log'), 'utf8');
   assert.match(journal, new RegExp(`could not stop the lead ${lead.shortId}: stop failed`));
+});
+
+test('stop runs again for an adapter that stops by id, and says when it had nothing to do', async (t) => {
+  freshHome(t);
+  const dir = tmpDir('relaylead-project-');
+  assert.strictEqual((await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir])).code, 0);
+  await waitUntilWorking('demo');
+  let stopCalls = 0;
+  stub(t, 'stop', (original) => async (session) => {
+    stopCalls++;
+    return original(session);
+  });
+  fake.stopById = true; // like the claude adapter: stopping a session again is harmless
+  t.after(() => {
+    delete fake.stopById;
+  });
+
+  const first = await cli(['stop', 'demo']);
+  assert.deepStrictEqual([first.code, first.out, stopCalls], [0, 'mission demo stopped\n', 1]);
+  const again = await cli(['stop', 'demo']);
+  assert.deepStrictEqual([again.code, again.out, stopCalls], [0, 'mission demo stopped\n', 2]);
+  assert.strictEqual((await cli(['state', 'get', '--mission', 'demo'])).out.trim(), 'stopped');
+
+  // The fake adapter stops by pid, which may belong to another process by now: nothing is done.
+  delete fake.stopById;
+  const refused = await cli(['stop', 'demo']);
+  assert.deepStrictEqual([refused.code, refused.out, stopCalls], [0, 'mission demo is already stopped; nothing to do\n', 2]);
+});
+
+test('done stops the crew sessions of the registry when the adapter list fails', async (t) => {
+  freshHome(t);
+  const dir = tmpDir('relaylead-project-');
+  assert.strictEqual((await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir])).code, 0);
+  await waitUntilWorking('demo');
+  const crew = await launchCrew(dir, 1);
+  const lead = readJson(path.join(missionDir('demo'), 'lead.json'));
+  stub(t, 'list', () => async () => {
+    throw new Error('list failed');
+  });
+  const stopped = [];
+  stub(t, 'stop', (original) => async (session) => {
+    stopped.push(session.shortId);
+    return original(session);
+  });
+  process.env.RELAYLEAD_REAP_MAX_MS = '200'; // the helper, in its own process, stops the lead soon
+  t.after(() => {
+    delete process.env.RELAYLEAD_REAP_MAX_MS;
+  });
+
+  const done = await cli(['state', 'set', 'done', '--mission', 'demo']);
+
+  assert.strictEqual(done.code, 0, done.err);
+  assert.deepStrictEqual(stopped, [crew.shortId]);
+  assert.ok(!stopped.includes(lead.shortId));
+  await waitFor(() => !isAlive(crew.pid), 30000, 'the crew member to end');
+});
+
+test('once done, the lead can no longer declare another state', async (t) => {
+  freshHome(t);
+  writeMission('demo', tmpDir('relaylead-project-')); // no lead: the test plays it
+  const set = (state) => cli(['state', 'set', state, '--mission', 'demo']);
+  assert.strictEqual((await set('done')).code, 0);
+
+  for (const state of ['working', 'waiting']) {
+    const refused = await set(state);
+    assert.strictEqual(refused.code, 1);
+    assert.match(refused.err, /mission "demo" is done/);
+  }
+  assert.strictEqual((await cli(['state', 'get', '--mission', 'demo'])).out.trim(), 'done');
 });

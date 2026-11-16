@@ -100,6 +100,34 @@ test('a task that asks first starts once answered, and its crew member gets the 
   assert.ok(specs[0].prompt.includes('Answer from the user: Green'), specs[0].prompt);
 });
 
+test('a task whose dependencies are not delivered is refused, naming them', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  const specs = spyLaunches(t);
+  await startTask('demo', { id: 'a' });
+
+  // a is running, then done: neither is delivered.
+  await assert.rejects(startTask('demo', { id: 'b' }), { code: 'task-not-ready', vars: { id: 'b', missing: 'a' } });
+  finishTask('demo', 'a', { state: 'done' });
+  await assert.rejects(startTask('demo', { id: 'b' }), { code: 'task-not-ready' });
+
+  assert.strictEqual(specs.length, 1);
+  assert.strictEqual(fs.existsSync(path.join(missionDir('demo'), 'tasks', 'b.json')), false);
+  assert.strictEqual(fs.existsSync(path.join(dir, 'out', 'b')), false);
+});
+
+test('a task the user chose to skip is refused', async (t) => {
+  const dir = setupProject(t, 'demo');
+  fs.writeFileSync(path.join(dir, 'tasks', 'c.md'), '---\ntitle: Theme\nask: Add a theme?\n---\n\nAdd the theme.\n');
+  writeMission('demo', dir);
+  const specs = spyLaunches(t);
+  askQuestion('demo', { key: 'c', text: 'Add a theme?', options: ['Yes, do it', 'Skip this task'] });
+  answerQuestion('demo', 'q-c', '2');
+
+  await assert.rejects(startTask('demo', { id: 'c' }), { code: 'task-skipped', vars: { id: 'c' } });
+  assert.strictEqual(specs.length, 0);
+});
+
 test('no task starts once the mission is done', async (t) => {
   const dir = setupProject(t, 'demo');
   writeMission('demo', dir);
@@ -135,11 +163,17 @@ test('concurrent starts of one task launch one crew member', async (t) => {
   assert.strictEqual(listSessions('demo').length, 1);
 });
 
+// A third task, c, that depends on nothing: a and c can start together.
+function addIndependentTask(dir) {
+  fs.writeFileSync(path.join(dir, 'tasks', 'c.md'), '---\ntitle: Third task\n---\n\nWrite the third file.\n');
+}
+
 test('concurrent starts of two tasks give distinct session names', async (t) => {
   const dir = setupProject(t, 'demo');
+  addIndependentTask(dir);
   writeMission('demo', dir);
 
-  await Promise.all([startTask('demo', { id: 'a' }), startTask('demo', { id: 'b' })]);
+  await Promise.all([startTask('demo', { id: 'a' }), startTask('demo', { id: 'c' })]);
 
   assert.deepStrictEqual(
     listSessions('demo').map((session) => session.name).sort(),
@@ -177,9 +211,10 @@ function startLock() {
 test('a start lock left by a dead process is taken over', async (t) => {
   const dir = setupProject(t, 'demo');
   writeMission('demo', dir);
+  addIndependentTask(dir);
   fs.writeFileSync(startLock(), String(spawnSync(process.execPath, ['-e', '']).pid));
 
-  await Promise.all([startTask('demo', { id: 'a' }), startTask('demo', { id: 'b' })]);
+  await Promise.all([startTask('demo', { id: 'a' }), startTask('demo', { id: 'c' })]);
 
   assert.deepStrictEqual(
     listSessions('demo').map((session) => session.name).sort(),

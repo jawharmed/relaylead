@@ -8,7 +8,7 @@ const { listSessions, isAlive } = require('../../core/sessions');
 const { readJson } = require('../../core/store');
 const { missionDir } = require('../../core/paths');
 const fake = require('../../adapters/fake');
-const { tmpDir, waitFor } = require('../../fixtures/helpers');
+const { tmpDir, waitFor, userEnv } = require('../../fixtures/helpers');
 const { git, gitRepo } = require('../../fixtures/git');
 const { missionReport } = require('../../fixtures/missions');
 
@@ -20,7 +20,7 @@ const MISSION_MS = 60 * 1000;
 // Runs `relaylead <args>` in its own process, like a person in a terminal. No shell.
 function relaylead(args, cwd) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [BIN, ...args], { cwd, env: process.env, windowsHide: true });
+    const child = spawn(process.execPath, [BIN, ...args], { cwd, env: userEnv(), windowsHide: true });
     let out = '';
     let err = '';
     child.stdout.on('data', (chunk) => (out += chunk));

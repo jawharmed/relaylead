@@ -202,3 +202,47 @@ test('a session missing from the adapter list gets the same grace', async (t) =>
   await wait(0);
   assert.strictEqual(listTasks('demo')[0].state, 'failed');
 });
+
+test('a crew session waiting without a result gets 60 s, then its task fails and it is stopped', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  const crew = await startedTaskWithoutCrew();
+  // A Claude session "blocked": its turn ended with a question nobody answers, or it is rate-limited.
+  stubList(t, () => [{ ...crew, state: 'waiting' }]);
+  const originalStop = fake.stop;
+  const stopped = [];
+  fake.stop = async (session) => {
+    stopped.push(session.shortId);
+  };
+  t.after(() => {
+    fake.stop = originalStop;
+  });
+
+  writeJson(snapshotFile(), { lostSince: { [crew.shortId]: secondsAgo(1) } });
+  await wait(0);
+  assert.strictEqual(listTasks('demo')[0].state, 'running');
+  assert.deepStrictEqual(stopped, []);
+
+  writeJson(snapshotFile(), { lostSince: { [crew.shortId]: secondsAgo(61) } });
+  await wait(0);
+  assert.strictEqual(listTasks('demo')[0].state, 'failed');
+  assert.deepStrictEqual(stopped, [crew.shortId]);
+});
+
+test('wait reads the task files often but asks the adapter at most every 2.5 s', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  await wait(0); // the first wait reports everything: from now on nothing changes
+  const original = fake.list;
+  let listCalls = 0;
+  fake.list = async (mission) => {
+    listCalls++;
+    return original(mission);
+  };
+  t.after(() => {
+    fake.list = original;
+  });
+
+  assert.deepStrictEqual(await wait(3), []);
+  assert.ok(listCalls >= 1 && listCalls <= 2, `${listCalls} calls to list in 3 s`);
+});

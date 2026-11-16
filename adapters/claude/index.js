@@ -258,6 +258,8 @@ async function wokenSession(session) {
 module.exports = {
   name: 'claude',
   capabilities: ['launch', 'list', 'stop', 'attach', 'wake'],
+  // `claude stop <id>` is harmless on a session already stopped: `relaylead stop` may run again.
+  stopById: true,
   launch,
   list,
   stop,
