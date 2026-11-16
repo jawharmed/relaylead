@@ -811,3 +811,74 @@ test('done cleans the task worktrees and notes the kept ones in the journal', as
   const journal = fs.readFileSync(path.join(missionDir('demo'), 'journal.log'), 'utf8');
   assert.match(journal, /worktrees[\\/]a\b/);
 });
+
+test('a skipped stop keeps the worktree of a session whose recorded process still runs', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir);
+  await crewIn(taskWithWork(mission, 'a', { committed: true }), 1); // a live process, as far as the pid tells
+  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  writeJson(path.join(missionDir('demo'), 'state.json'), { state: 'stopped', stopping: true, updatedAt: twoHoursAgo });
+
+  const stopped = await cli(['stop', 'demo']);
+
+  assert.strictEqual(stopped.code, 0, stopped.err);
+  assert.match(stopped.out, /were not stopped again/);
+  assert.match(stopped.err, /relaylead stop: .*worktrees[\\/]a\b.*may still be running/);
+  assert.strictEqual(fs.existsSync(taskWorktree(dir, 'a')), true);
+});
+
+test('cleanMission keeps untracked work even when git status hides untracked files', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  git(dir, 'config', 'status.showUntrackedFiles', 'no');
+  const mission = preparedMission(dir);
+  taskWithWork(mission, 'a', { committed: true, extra: { 'new-work.txt': 'not added yet\n' } });
+
+  const warnings = localMerge.cleanMission(mission, {});
+
+  assert.deepStrictEqual(warnings.map((warning) => warning.code), ['worktree-kept']);
+  assert.strictEqual(fs.existsSync(path.join(taskWorktree(dir, 'a'), 'new-work.txt')), true);
+});
+
+test('cleanMission never removes the integration worktree, whatever its branch', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  writeMission('demo', dir);
+  const mission = readMission('demo');
+  // A branch under relaylead/demo/ is refused at launch; this one was made by hand.
+  mission.config.delivery.branch = 'relaylead/demo/x';
+  git(dir, 'branch', 'relaylead/demo/x');
+  git(dir, 'worktree', 'add', '-q', integrationDir(dir), 'relaylead/demo/x');
+
+  const warnings = localMerge.cleanMission(mission, {});
+
+  assert.deepStrictEqual(warnings, []);
+  assert.strictEqual(fs.existsSync(integrationDir(dir)), true);
+});
+
+test('done keeps the worktree of a crew session listed without its folder whose stop failed', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir); // no lead: the test plays it
+  const crew = await crewIn(taskWithWork(mission, 'a', { committed: true }), 1);
+  const originalList = fake.list;
+  const originalStop = fake.stop;
+  // Like a claude row with no cwd.
+  fake.list = async (name) => (await originalList(name)).map(({ cwd, ...row }) => row);
+  fake.stop = async (session) => {
+    if (session.shortId === crew.shortId) throw new Error('stop failed');
+    return originalStop(session);
+  };
+  let done;
+  try {
+    done = await cli(['state', 'set', 'done', '--mission', 'demo']);
+  } finally {
+    fake.list = originalList;
+    fake.stop = originalStop;
+  }
+
+  assert.strictEqual(done.code, 1);
+  assert.match(done.err, /stop failed/);
+  assert.strictEqual(fs.existsSync(taskWorktree(dir, 'a')), true);
+});

@@ -289,8 +289,9 @@ async function endMission(mission) {
 async function stopSessionsAndWait(mission, sessions) {
   const adapter = getAdapter(mission.agent);
   // Taken before the stops: the adapter knows the current process of a session, which may have been
-  // restarted since it was recorded. A session it does not list keeps the pid of the registry.
-  let listed = [];
+  // restarted since it was recorded. A session it does not list has no process: its registry pid may
+  // by now belong to an unrelated process. Only when the list fails is the registry pid used.
+  let listed = null;
   try {
     listed = await adapter.list(mission.name);
   } catch {
@@ -302,8 +303,7 @@ async function stopSessionsAndWait(mission, sessions) {
   for (const session of sessions) {
     try {
       await adapter.stop(session);
-      const row = listed.find((candidate) => candidate.shortId === session.shortId);
-      stopped.push({ session, pid: row ? row.pid : session.pid });
+      stopped.push({ session, pid: listed ? listedPid(listed, session) : session.pid });
     } catch (err) {
       failed.push(session);
       error = error || err;
@@ -316,6 +316,20 @@ async function stopSessionsAndWait(mission, sessions) {
     alive = alive.filter((entry) => isAlive(entry.pid));
   }
   return { failed, alive: alive.map((entry) => entry.session), error };
+}
+
+// The pid the adapter lists for the session; null (no process) when it does not list it.
+function listedPid(listed, session) {
+  const row = listed.find((candidate) => candidate.shortId === session.shortId);
+  return row ? row.pid : null;
+}
+
+// The folders of these sessions. An adapter row may have no folder: the registry has it.
+function sessionDirs(mission, sessions) {
+  const registry = listSessions(mission.name);
+  return sessions
+    .map((session) => session.cwd || (registry.find((recorded) => recorded.shortId === session.shortId) || {}).cwd)
+    .filter(Boolean);
 }
 
 // Removes the task worktrees the delivery can remove, except those where a session may still run.
@@ -424,8 +438,18 @@ function needsStop(mission, record) {
 async function stopAndFree(mission, record, stopAll) {
   const pidsTooOld = record.stopping && Date.now() - Date.parse(record.updatedAt) > PIDS_TRUSTED_MS;
   const skipped = pidsTooOld && !getAdapter(mission.agent).stopById;
-  const { failed, alive, error } = skipped ? { failed: [], alive: [], error: null } : await stopAll();
-  const warnings = cleanMission(mission, [...failed, ...alive].map((session) => session.cwd).filter(Boolean));
+  let failed = [];
+  let alive = [];
+  let error = null;
+  let mayRun; // the sessions whose worktree must be kept
+  if (skipped) {
+    // Not stopped: a recorded pid still alive may be one of its sessions, so its worktree stays.
+    mayRun = listSessions(mission.name).filter((session) => isAlive(session.pid));
+  } else {
+    ({ failed, alive, error } = await stopAll());
+    mayRun = [...failed, ...alive];
+  }
+  const warnings = cleanMission(mission, sessionDirs(mission, mayRun));
   let firstError = error;
   if (!firstError && alive.length > 0) {
     firstError = codedError('session-still-alive', { mission: mission.name, shortId: alive[0].shortId });

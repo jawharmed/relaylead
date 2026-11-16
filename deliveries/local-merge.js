@@ -373,12 +373,17 @@ function cleanMission(mission, { keepDirs = [] } = {}) {
     return [codedError('mission-cleanup-failed', { mission: mission.name, detail: err.message })];
   }
   const busy = keepDirs.map(realPath);
+  const integration = realPath(integrationDir(mission));
   for (const { dir, branch } of worktrees) {
     if (!fs.existsSync(dir)) continue; // a folder removed by hand: `worktree prune` forgets it
+    if (realPath(dir) === integration) continue; // the delivered work: never removed, whatever its branch
     const vars = { mission: mission.name, dir, branch };
     try {
       if (busy.includes(realPath(dir))) warnings.push(codedError('worktree-busy', vars));
-      else if (git(dir, ['status', '--porcelain']) !== '') warnings.push(codedError('worktree-kept', vars));
+      // --untracked-files=all: a user setting status.showUntrackedFiles=no would hide new files.
+      else if (git(dir, ['status', '--porcelain', '--untracked-files=all']) !== '') {
+        warnings.push(codedError('worktree-kept', vars));
+      }
       else removeWorktree(mission, dir);
     } catch (err) {
       warnings.push(codedError('mission-cleanup-failed', { mission: mission.name, detail: err.message }));
