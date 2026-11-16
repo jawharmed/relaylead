@@ -124,6 +124,12 @@ test('fake mission delivers two tasks with one answered question', { timeout: 3 
     assert.match(git(dir, 'show', `${integration}:tasks/${id}.md`), /^state: done\r?$/m);
   }
 
+  // The fake lead logs each command it runs, when it starts and when it ends: a command that never
+  // ends shows in a timeout report.
+  const lead = listSessions(mission).find((session) => session.role === 'lead');
+  const leadLog = fs.readFileSync(path.join(missionDir(mission), `fake-lead-${lead.shortId}.log`), 'utf8');
+  assert.match(leadLog, /start relaylead task deliver a\n.*end relaylead task deliver a\n/, leadLog);
+
   // No process of the mission is left: the lead and both crew members have ended, then the helper
   // that stops the lead after `state set done`.
   const sessions = listSessions(mission);

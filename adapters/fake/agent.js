@@ -11,7 +11,8 @@ const CLI = path.join(__dirname, '..', '..', 'bin', 'relaylead.js');
 // at the next turn of the loop, and the lead stops after this many failures.
 const DELIVERY_ATTEMPTS = 3;
 
-// Appends to the log file given by the adapter, in the mission folder.
+// Appends to the log file given by the adapter, in the mission folder. Every command is logged when
+// it starts and when it ends, so a command that never ends shows in a test's timeout report.
 function log(text) {
   if (!process.env.RELAYLEAD_FAKE_LOG) return;
   try {
@@ -23,20 +24,29 @@ function log(text) {
 
 // The env carries RELAYLEAD_MISSION and RELAYLEAD_HOME; no shell and no PATH lookup.
 function relaylead(...args) {
-  try {
-    return execFileSync(process.execPath, [CLI, ...args], {
+  return logged(`relaylead ${args.join(' ')}`, () =>
+    execFileSync(process.execPath, [CLI, ...args], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
-    });
-  } catch (err) {
-    log(`relaylead ${args.join(' ')} failed (exit ${err.status}): ${String(err.stderr || err.message).trim()}`);
-    throw err;
-  }
+    }),
+  );
 }
 
 function git(...args) {
-  execFileSync('git', args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  logged(`git ${args.join(' ')}`, () => execFileSync('git', args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }));
+}
+
+function logged(command, action) {
+  log(`start ${command}`);
+  try {
+    const result = action();
+    log(`end ${command}`);
+    return result;
+  } catch (err) {
+    log(`${command} failed (exit ${err.status}): ${String(err.stderr || err.message).trim()}`);
+    throw err;
+  }
 }
 
 // Stay alive until stopped, like a real session.
