@@ -573,6 +573,7 @@ module.exports = {
   createMission,
   listMissions,
   stopMission,
+  stopSessionsAndWait,
   removeMission,
   readMission,
   getState,

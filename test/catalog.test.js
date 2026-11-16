@@ -36,7 +36,7 @@ test('catalog profiles parse with the expected fields', () => {
 
   const lead = loadProfile('lead', { dir });
   assert.deepStrictEqual([lead.agent, lead.model, lead.effort], ['claude', 'opus', 'medium']);
-  for (const command of ['relaylead task list', 'relaylead task start', 'relaylead wait', 'relaylead task deliver', 'relaylead question ask', 'relaylead state set done']) {
+  for (const command of ['relaylead task list', 'relaylead task start', 'relaylead wait', 'relaylead task deliver', 'relaylead task retry', 'relaylead question ask', 'relaylead state set done']) {
     assert.ok(lead.instructions.includes(command), `lead instructions should mention ${command}`);
   }
 

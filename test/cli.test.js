@@ -82,3 +82,8 @@ test('an option may be written --name=value', async () => {
 test('remove is refused from inside a session', async () => {
   await assert.rejects(commands.remove(['demo'], makeIo({ RELAYLEAD_MISSION: 'demo' })), { code: 'not-from-a-session' });
 });
+
+test('retry is refused to a crew member', async () => {
+  const env = { RELAYLEAD_MISSION: 'demo', RELAYLEAD_TASK: 'a' };
+  await assert.rejects(commands.task(['retry', 'a'], makeIo(env)), { code: 'not-for-crew' });
+});

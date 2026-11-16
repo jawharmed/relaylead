@@ -22,9 +22,11 @@ const ADAPTER_POLL_MS = 2500;
 const GRACE_MS = 60 * 1000;
 const ENDED_STATES = ['done', 'stopped', 'failed'];
 const NO_RESULT = 'crew session ended without a result';
+const RETRY_INTERRUPTED = 'retry interrupted before its crew started';
 
 // Without a snapshot, everything that exists is reported as new (from: null).
-// lostSince keeps, per session, when it was first seen missing, without a process, or waiting.
+// lostSince keeps, per session, when it was first seen missing, without a process, or waiting; and,
+// under the key task:<id>, when a running task was first seen without a session.
 const EMPTY_SNAPSHOT = { tasks: {}, questions: {}, sessions: {}, lostSince: {} };
 
 function snapshotFile(name) {
@@ -38,8 +40,13 @@ function crewEnded(shortId, session, lostSince, previousLostSince) {
   if (session && ENDED_STATES.includes(session.state)) return true;
   const lost = !session || (session.state === 'working' && !session.pid) || session.state === 'waiting';
   if (!lost) return false;
-  lostSince[shortId] = previousLostSince[shortId] || new Date().toISOString();
-  return Date.now() - Date.parse(lostSince[shortId]) >= GRACE_MS;
+  return graceOver(shortId, lostSince, previousLostSince);
+}
+
+// Notes when `key` was first seen lost; true once it has been lost for the whole grace.
+function graceOver(key, lostSince, previousLostSince) {
+  lostSince[key] = previousLostSince[key] || new Date().toISOString();
+  return Date.now() - Date.parse(lostSince[key]) >= GRACE_MS;
 }
 
 // The current view of the mission, after marking the tasks whose crew ended without a result.
@@ -53,6 +60,15 @@ function look(name, sessions, previousLostSince) {
   const lostSince = {};
   for (const task of tasks) {
     if (task.state !== 'running') continue;
+    // A retry between the change of attempt and its launch, or one a crash interrupted there. The
+    // session stays null once failed: `relaylead task retry` launches the same attempt again.
+    if (task.session === null) {
+      if (graceOver(`task:${task.id}`, lostSince, previousLostSince)) {
+        markFailed(name, task.id, RETRY_INTERRUPTED);
+        task.state = 'failed';
+      }
+      continue;
+    }
     const session = sessions.find((candidate) => candidate.shortId === task.session);
     if (crewEnded(task.session, session, lostSince, previousLostSince)) {
       markFailed(name, task.id, NO_RESULT);

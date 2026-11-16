@@ -4,8 +4,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { run } = require('../core/cli');
-const { listTasks, startTask, finishTask, deliverTask } = require('../core/tasks');
-const { getState, setState, stopMission } = require('../core/missions');
+const { listTasks, startTask, finishTask, deliverTask, retryTask, markFailed } = require('../core/tasks');
+const { waitForChanges } = require('../core/wait');
+const { getState, setState, stopMission, readMission } = require('../core/missions');
 const { withMissionLock } = require('../core/mission-lock');
 const { sleep } = require('../core/timing');
 const { askQuestion, answerQuestion } = require('../core/questions');
@@ -50,6 +51,7 @@ test('startTask launches a crew member and records the task', async (t) => {
     cwd: path.join(dir, 'out', 'a'),
     branch: null,
     startedAt: record.startedAt,
+    attempt: 1,
   });
   assert.ok(!Number.isNaN(Date.parse(record.startedAt)));
   assert.deepStrictEqual(readJson(path.join(missionDir('demo'), 'tasks', 'a.json')), record);
@@ -57,6 +59,7 @@ test('startTask launches a crew member and records the task', async (t) => {
   const [spec] = specs;
   assert.strictEqual(spec.env.RELAYLEAD_TASK, 'a');
   assert.strictEqual(spec.env.RELAYLEAD_MISSION, 'demo');
+  assert.strictEqual(spec.env.RELAYLEAD_ATTEMPT, '1');
   assert.deepStrictEqual(spec.profile, loadProfile('developer', { dir }));
   assert.match(spec.prompt, /First task/);
   assert.match(spec.prompt, /Write the first file\./);
@@ -493,4 +496,228 @@ test('a stop behind a stuck holder keeps the start-stuck error and the stopped s
   await assert.rejects(stopMission('demo'), { code: 'start-stuck' });
 
   assert.strictEqual(getState('demo'), 'stopped');
+});
+
+function tasksPath(...parts) {
+  return path.join(missionDir('demo'), 'tasks', ...parts);
+}
+
+// Stops the crew member of a task record and waits for its process to end: it can no longer report.
+async function stopCrew(record) {
+  const crew = listSessions('demo').find((session) => session.shortId === record.session);
+  await fake.stop(crew);
+  await waitFor(() => !isAlive(crew.pid), 30000, 'the crew process to end');
+}
+
+// Task a started, its crew member stopped, then reported failed with `summary`.
+async function failedTask(summary = 'tests broke') {
+  const record = await startTask('demo', { id: 'a' });
+  await stopCrew(record);
+  finishTask('demo', 'a', { state: 'failed', summary });
+  return record;
+}
+
+test('retry archives the failed result and launches a new crew', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  const first = await failedTask();
+  const oldResult = readJson(tasksPath('a.result.json'));
+  const specs = spyLaunches(t);
+
+  const record = await retryTask('demo', { id: 'a' });
+  await stopCrew(record);
+
+  assert.strictEqual(record.attempt, 2);
+  assert.ok(record.session && record.session !== first.session, 'a new session');
+  assert.deepStrictEqual(readJson(tasksPath('archive', 'a.1.result.json')), oldResult);
+  assert.deepStrictEqual(readJson(tasksPath('archive', 'a.1.json')), first);
+  assert.strictEqual(fs.existsSync(tasksPath('a.result.json')), false);
+  const [a] = listTasks('demo');
+  assert.deepStrictEqual([a.state, a.attempt], ['running', 2]);
+  const [spec] = specs;
+  assert.ok(spec.prompt.includes('Attempt 2'), spec.prompt);
+  assert.ok(spec.prompt.includes('tests broke'), spec.prompt);
+  assert.ok(spec.prompt.includes('git status first'), spec.prompt);
+  assert.strictEqual(spec.env.RELAYLEAD_ATTEMPT, '2');
+});
+
+test('retry works for a task failed by wait, without a result', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  await stopCrew(await startTask('demo', { id: 'a' }));
+  markFailed('demo', 'a', 'crew session ended without a result');
+  const failed = readJson(tasksPath('a.json'));
+
+  const record = await retryTask('demo', { id: 'a' });
+  await stopCrew(record);
+
+  assert.strictEqual(record.attempt, 2);
+  assert.deepStrictEqual(fs.readdirSync(tasksPath('archive')), ['a.1.json']);
+  assert.deepStrictEqual(readJson(tasksPath('archive', 'a.1.json')), failed);
+});
+
+test('retry refuses a task that has not failed, and replays a running one', async (t) => {
+  const dir = setupProject(t, 'demo');
+  addIndependentTask(dir);
+  writeMission('demo', dir);
+  const specs = spyLaunches(t);
+
+  await assert.rejects(retryTask('demo', { id: 'b' }), { code: 'task-not-retryable', vars: { id: 'b', state: 'todo' } });
+  finishTask('demo', 'a', { state: 'done' });
+  fs.mkdirSync(path.join(dir, 'out', 'a'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'out', 'a', 'a.txt'), 'a\n');
+  await deliverTask('demo', 'a');
+  await assert.rejects(retryTask('demo', { id: 'a' }), { code: 'task-not-retryable', vars: { id: 'a', state: 'delivered' } });
+
+  const started = await startTask('demo', { id: 'c' });
+  await stopCrew(started);
+  finishTask('demo', 'c', { state: 'failed', summary: 'tests broke' });
+  const first = await retryTask('demo', { id: 'c' });
+  const second = await retryTask('demo', { id: 'c' });
+
+  assert.deepStrictEqual(second, first);
+  assert.strictEqual(specs.length, 2, 'one start and one retry');
+});
+
+test('a retry whose launch fails leaves a failed task that can be retried', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  await failedTask();
+  const original = fake.launch;
+  const specs = [];
+  let refuse = true;
+  fake.launch = async (spec) => {
+    if (refuse) {
+      refuse = false;
+      throw new Error('no room left');
+    }
+    specs.push(spec);
+    return original(spec);
+  };
+  t.after(() => {
+    fake.launch = original;
+  });
+
+  await assert.rejects(retryTask('demo', { id: 'a' }), /no room left/);
+  const failed = readJson(tasksPath('a.json'));
+  assert.deepStrictEqual(
+    [failed.state, failed.session, failed.attempt, failed.summary],
+    ['failed', null, 2, 'retry launch failed: no room left'],
+  );
+  const archived = fs.readdirSync(tasksPath('archive')).sort();
+  assert.deepStrictEqual(archived, ['a.1.json', 'a.1.result.json']);
+
+  const record = await retryTask('demo', { id: 'a' }); // the limit is 2: this is the same attempt
+  await stopCrew(record);
+
+  assert.strictEqual(specs.length, 1);
+  assert.strictEqual(specs[0].env.RELAYLEAD_ATTEMPT, '2');
+  assert.strictEqual(record.attempt, 2);
+  assert.deepStrictEqual(fs.readdirSync(tasksPath('archive')).sort(), archived);
+});
+
+test('a retry interrupted before its launch is marked failed after the grace', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  const started = await startTask('demo', { id: 'a' });
+  await stopCrew(started);
+  writeJson(tasksPath('a.json'), { ...started, attempt: 2, state: 'running', session: null });
+  writeJson(path.join(missionDir('demo'), 'wait-snapshot.json'), {
+    tasks: { a: 'running', b: 'todo' },
+    questions: {},
+    sessions: {},
+    lostSince: { 'task:a': new Date(Date.now() - 61 * 1000).toISOString() },
+  });
+  const specs = spyLaunches(t);
+
+  const changes = await waitForChanges('demo', 5);
+
+  assert.deepStrictEqual(
+    changes.filter((change) => change.kind === 'task'),
+    [{ kind: 'task', id: 'a', from: 'running', to: 'failed' }],
+  );
+  const failed = readJson(tasksPath('a.json'));
+  assert.deepStrictEqual([failed.session, failed.summary], [null, 'retry interrupted before its crew started']);
+
+  const record = await retryTask('demo', { id: 'a' });
+  await stopCrew(record);
+  assert.strictEqual(record.attempt, 2);
+  assert.strictEqual(specs[0].env.RELAYLEAD_ATTEMPT, '2');
+});
+
+test('retry stops at maxAttempts', async (t) => {
+  for (const frozenLimit of [true, false]) {
+    const dir = setupProject(t, 'demo');
+    writeMission('demo', dir);
+    if (!frozenLimit) {
+      // A mission launched before attempts were limited has no maxAttempts in its frozen config.
+      const mission = readMission('demo');
+      delete mission.config.maxAttempts;
+      writeJson(path.join(missionDir('demo'), 'mission.json'), mission);
+    } else {
+      assert.strictEqual(readMission('demo').config.maxAttempts, 2);
+    }
+    await failedTask();
+    const second = await retryTask('demo', { id: 'a' });
+    await stopCrew(second);
+    finishTask('demo', 'a', { state: 'failed', summary: 'still broken' });
+
+    await assert.rejects(retryTask('demo', { id: 'a' }), { code: 'task-retry-limit', vars: { id: 'a', max: 2 } });
+  }
+});
+
+test('a result from a superseded attempt is refused', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  await failedTask();
+  await stopCrew(await retryTask('demo', { id: 'a' }));
+
+  assert.throws(() => finishTask('demo', 'a', { state: 'done', summary: 'late', attempt: '1' }), {
+    code: 'attempt-superseded',
+    vars: { id: 'a', attempt: 1, current: 2 },
+  });
+  assert.strictEqual(fs.existsSync(tasksPath('a.result.json')), false);
+});
+
+test('a late result written during the relaunch is ignored', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  await failedTask();
+  const original = fake.launch;
+  fake.launch = async (spec) => {
+    // The first crew member reports done just after the check of finishTask.
+    writeJson(tasksPath('a.result.json'), { id: 'a', state: 'done', summary: 'late', attempt: 1, finishedAt: new Date().toISOString() });
+    return original(spec);
+  };
+  t.after(() => {
+    fake.launch = original;
+  });
+
+  await stopCrew(await retryTask('demo', { id: 'a' }));
+
+  const [a] = listTasks('demo');
+  assert.deepStrictEqual([a.state, a.attempt], ['running', 2]);
+});
+
+test('fake mission retries a failed task and delivers it', async (t) => {
+  const dir = setupProject(t, 'demo');
+  const previous = process.env.RELAYLEAD_FAKE_FAIL_FIRST;
+  process.env.RELAYLEAD_FAKE_FAIL_FIRST = 'a';
+  t.after(() => {
+    if (previous === undefined) delete process.env.RELAYLEAD_FAKE_FAIL_FIRST;
+    else process.env.RELAYLEAD_FAKE_FAIL_FIRST = previous;
+  });
+
+  const io = makeIo();
+  assert.strictEqual(await run(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir], io), 0, io.err.text);
+  await waitFor(() => getState('demo') === 'done', 45000, 'the mission to be done', () => missionReport('demo'));
+
+  assert.deepStrictEqual(
+    listTasks('demo').map((task) => [task.id, task.state, task.attempt]),
+    [
+      ['a', 'delivered', 2],
+      ['b', 'delivered', 1],
+    ],
+  );
+  assert.strictEqual(readJson(tasksPath('archive', 'a.1.result.json')).summary, 'fake failure');
 });
