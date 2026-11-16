@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { spawn } = require('node:child_process');
+const { spawn, execFileSync } = require('node:child_process');
 const { run } = require('../core/cli');
 const { listTasks, finishTask } = require('../core/tasks');
 const { getState, readMission } = require('../core/missions');
@@ -523,6 +523,39 @@ test('a delivery waits for a git lock to be released', async (t) => {
   const delivered = await deliver('a');
   assert.strictEqual(delivered.code, 0, delivered.err);
   assert.strictEqual(git(dir, 'show', 'relaylead/integration:a.txt'), 'a');
+});
+
+// A git command that never ends would hold the start lock forever: here git leaves a process
+// behind that keeps its output open, so a caller reading that output never sees it end.
+test('a git command that does not end fails the delivery in time', { skip: process.platform === 'win32', timeout: 20000 }, async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir);
+  finishedTask(mission, 'a');
+  const bin = tmpDir('relaylead-git-');
+  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  const leftover = path.join(bin, 'leftover.pid');
+  fs.writeFileSync(
+    path.join(bin, 'git'),
+    `#!/bin/sh\nsleep 30 &\necho $! >> '${leftover}'\nexec '${realGit}' "$@"\n`,
+    { mode: 0o755 },
+  );
+  const { PATH } = process.env;
+  process.env.PATH = bin + path.delimiter + PATH;
+  process.env.RELAYLEAD_GIT_TIMEOUT_MS = '1000';
+  t.after(() => {
+    process.env.PATH = PATH;
+    delete process.env.RELAYLEAD_GIT_TIMEOUT_MS;
+    const pids = fs.existsSync(leftover) ? fs.readFileSync(leftover, 'utf8').split('\n').filter(Boolean) : [];
+    for (const pid of pids) if (isAlive(Number(pid))) process.kill(Number(pid));
+  });
+
+  const startedAt = Date.now();
+  const delivered = await deliver('a');
+  assert.notStrictEqual(delivered.code, 0);
+  assert.match(delivered.err, /did not end within 1 s/);
+  assert.ok(Date.now() - startedAt < 10000, `the delivery took ${Date.now() - startedAt} ms`);
+  assert.strictEqual(fs.existsSync(path.join(missionDir('demo'), 'start.lock')), false);
 });
 
 test('git messages that a short wait cures are recognised', () => {

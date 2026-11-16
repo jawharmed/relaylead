@@ -15,6 +15,10 @@ const tasksDirSource = require('../sources/tasks-dir');
 // "being used by another process". The same command a moment later works.
 const LOCK_FILE = /\.lock['"]|unable to unlink|unable to create|permission denied|resource busy|invalid argument|used by another process/i;
 const LOCK_ATTEMPTS = 10; // about 5 s in all
+// A git command that does not end in this time is stopped and fails. Without a bound, a git that
+// hangs, or that leaves a process holding its output open, would block relaylead forever, and with
+// it the start lock that every start and delivery of the mission waits for. Tests shorten it.
+const gitTimeoutMs = () => Number(process.env.RELAYLEAD_GIT_TIMEOUT_MS) || 5 * 60 * 1000;
 
 // Whether the message of a failed git command is worth trying again.
 function isTransientGitError(detail) {
@@ -37,18 +41,34 @@ function sleep(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-// Never through a shell: paths may contain spaces. Git's own output is kept for the error message.
+// Runs git, never through a shell (paths may contain spaces), and stops it after gitTimeoutMs().
+function runGit(cwd, args, stdio) {
+  try {
+    return execFileSync('git', args, {
+      cwd,
+      encoding: 'utf8',
+      stdio,
+      windowsHide: true,
+      timeout: gitTimeoutMs(),
+      killSignal: 'SIGKILL',
+    });
+  } catch (err) {
+    if (err.code === 'ETIMEDOUT') {
+      const seconds = Math.round(gitTimeoutMs() / 1000);
+      throw Object.assign(new Error(`git ${args.join(' ')} did not end within ${seconds} s`), { timedOut: true });
+    }
+    throw err;
+  }
+}
+
+// Git's own output is kept for the error message.
 // A command refused by a lock did nothing yet, so it is safe to run it again.
 function git(cwd, args) {
   for (let attempt = 1; ; attempt++) {
     try {
-      return execFileSync('git', args, {
-        cwd,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-        windowsHide: true,
-      }).trim();
+      return runGit(cwd, args, ['ignore', 'pipe', 'pipe']).trim();
     } catch (err) {
+      if (err.timedOut) throw err;
       const detail = String(err.stderr || err.stdout || err.message).trim();
       if (isTransientGitError(detail) && attempt < LOCK_ATTEMPTS) {
         sleep(100 * attempt);
@@ -62,11 +82,7 @@ function git(cwd, args) {
 // show-ref exits with 1 when the branch does not exist. Unlike `git branch --list`, it reads no pattern.
 function branchExists(dir, branch) {
   try {
-    execFileSync('git', ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], {
-      cwd: dir,
-      stdio: 'ignore',
-      windowsHide: true,
-    });
+    runGit(dir, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], 'ignore');
     return true;
   } catch (err) {
     if (err.status === 1) return false;
@@ -77,9 +93,10 @@ function branchExists(dir, branch) {
 // Whether `ref` holds the file or folder `file` (path from the repository root, with / separators).
 function refHas(dir, ref, file) {
   try {
-    execFileSync('git', ['cat-file', '-e', `${ref}:${file}`], { cwd: dir, stdio: 'ignore', windowsHide: true });
+    runGit(dir, ['cat-file', '-e', `${ref}:${file}`], 'ignore');
     return true;
-  } catch {
+  } catch (err) {
+    if (err.timedOut) throw err;
     return false; // missing path, or a ref without commits
   }
 }
@@ -234,6 +251,7 @@ function mergeOrAbort(integration, args) {
       git(integration, ['merge', '--no-ff', '--no-edit', '--no-verify', ...args]);
       return true;
     } catch (err) {
+      if (err.timedOut) throw err;
       if (!mergeInProgress(integration)) throw err; // stopped before merging, e.g. no git user configured
       const conflicted = git(integration, ['diff', '--name-only', '--diff-filter=U']) !== '';
       git(integration, ['merge', '--abort']);
