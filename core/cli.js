@@ -2,7 +2,7 @@ const path = require('node:path');
 const { t, codedError } = require('./messages');
 const { loadConfig } = require('./config');
 const { createMission, listMissions, stopMission, removeMission, getState, setState, reapLead, attachLead } = require('./missions');
-const { listTasks, startTask, deliverTask, finishTask } = require('./tasks');
+const { listTasks, startTask, retryTask, deliverTask, finishTask } = require('./tasks');
 const { waitForChanges } = require('./wait');
 const { askQuestion, answerQuestion, listQuestions } = require('./questions');
 const pkg = require('../package.json');
@@ -152,15 +152,15 @@ commands.state = async (args, io) => {
 commands.task = async (args, io) => {
   const { positional, options } = parseArgs(args);
   const [action, id] = positional;
-  if (!(action === 'list' || (['start', 'deliver', 'done', 'fail'].includes(action) && id))) {
+  if (!(action === 'list' || (['start', 'retry', 'deliver', 'done', 'fail'].includes(action) && id))) {
     throw codedError('usage', {
       usage:
-        'relaylead task list | start <id> [--profile p] | deliver <id> | done <id> | fail <id> [--summary text] [--mission name]',
+        'relaylead task list | start <id> [--profile p] | retry <id> [--profile p] | deliver <id> | done <id> | fail <id> [--summary text] [--mission name]',
     });
   }
   // A crew member runs with RELAYLEAD_TASK set: it finishes its own task and drives no other.
   const own = io.env.RELAYLEAD_TASK;
-  if (own && ['start', 'deliver'].includes(action)) throw codedError('not-for-crew', { own });
+  if (own && ['start', 'retry', 'deliver'].includes(action)) throw codedError('not-for-crew', { own });
   if (own && ['done', 'fail'].includes(action) && id !== own) throw codedError('not-your-task', { own, id });
   const mission = missionName(options, io);
   if (action === 'list') {
@@ -168,12 +168,17 @@ commands.task = async (args, io) => {
   } else if (action === 'start') {
     const record = await startTask(mission, { id, profile: options.profile });
     io.out.write(JSON.stringify(record, null, 2) + '\n');
+  } else if (action === 'retry') {
+    const record = await retryTask(mission, { id, profile: options.profile });
+    io.out.write(JSON.stringify(record, null, 2) + '\n');
   } else if (action === 'deliver') {
     const { outcome, warnings } = await deliverTask(mission, id);
     for (const warning of warnings) io.err.write(`relaylead task: ${t(warning.code, warning.vars, language(io))}\n`);
     io.out.write(t(outcome === 'delivered' ? 'taskDelivered' : 'taskAlreadyDelivered', { id }, language(io)));
   } else {
-    finishTask(mission, id, { state: action === 'done' ? 'done' : 'failed', summary: options.summary });
+    // RELAYLEAD_ATTEMPT is set for each crew member: a replaced one cannot finish the new attempt.
+    const attempt = io.env.RELAYLEAD_ATTEMPT;
+    finishTask(mission, id, { state: action === 'done' ? 'done' : 'failed', summary: options.summary, attempt });
   }
   return 0;
 };

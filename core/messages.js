@@ -50,7 +50,14 @@ const messages = {
     'no-lead': 'mission "{mission}" has no lead session yet',
     'session-exists': 'mission "{mission}" already has another session with the short id {shortId}',
     'task-unknown': 'mission "{mission}" has no task "{id}"; see the tasks with: relaylead task list',
-    'task-not-startable': 'task "{id}" is {state}; only a todo task can be started',
+    'task-not-startable':
+      'task "{id}" is {state}; only a todo task can be started; a failed task can be tried again with: relaylead task retry {id}',
+    'task-not-retryable': 'task "{id}" is {state}; only a failed task can be retried',
+    'task-retry-limit': 'task "{id}" has used its {max} attempts; it cannot be retried again: report its failure to the user',
+    'crew-still-running':
+      'the earlier crew session {shortId} of task "{id}" could not be stopped; nothing was changed; try again with: relaylead task retry {id}',
+    'attempt-superseded':
+      'task "{id}" was retried: this session ran attempt {attempt}, the task is now on attempt {current}; your result no longer counts, end your turn',
     'task-not-answered':
       'task "{id}" asks a question first; ask it with: relaylead question ask --key {id} …, and start the task once it is answered',
     'task-not-ready': 'task "{id}" depends on tasks not delivered yet ({missing}); deliver them first',
@@ -103,7 +110,7 @@ const messages = {
     'missing-value': 'the option --{name} needs a value',
     'not-from-a-session': '"relaylead {command}" belongs to the user; a mission session cannot run it',
     'not-your-task': 'this session works on task "{own}"; it cannot finish task "{id}"',
-    'not-for-crew': 'a crew member cannot start or deliver tasks; finish your own task with: relaylead task done {own}',
+    'not-for-crew': 'a crew member cannot start, retry or deliver tasks; finish your own task with: relaylead task done {own}',
     questionAnswered: 'question {id} answered: {choice}\n',
     'bad-question': 'cannot ask the question: {detail}',
     'bad-task-id':
@@ -179,7 +186,15 @@ const messages = {
     'no-lead': 'la mission « {mission} » n\'a pas encore de session de lead',
     'session-exists': 'la mission « {mission} » a déjà une autre session d\'id court {shortId}',
     'task-unknown': 'la mission « {mission} » n\'a pas de tâche « {id} » ; voir les tâches avec : relaylead task list',
-    'task-not-startable': 'la tâche « {id} » est {state} ; seule une tâche todo peut être lancée',
+    'task-not-startable':
+      'la tâche « {id} » est {state} ; seule une tâche todo peut être lancée ; une tâche en échec peut être relancée avec : relaylead task retry {id}',
+    'task-not-retryable': 'la tâche « {id} » est {state} ; seule une tâche en échec peut être relancée',
+    'task-retry-limit':
+      'la tâche « {id} » a épuisé ses {max} tentatives ; elle ne peut plus être relancée : signalez son échec à l\'utilisateur',
+    'crew-still-running':
+      'la session {shortId} de l\'équipier précédent de la tâche « {id} » n\'a pas pu être arrêtée ; rien n\'a changé ; réessayez avec : relaylead task retry {id}',
+    'attempt-superseded':
+      'la tâche « {id} » a été relancée : cette session menait la tentative {attempt}, la tâche en est à la tentative {current} ; votre résultat ne compte plus, terminez votre tour',
     'task-not-answered':
       'la tâche « {id} » pose d\'abord une question ; posez-la avec : relaylead question ask --key {id} …, puis lancez la tâche une fois la réponse donnée',
     'task-not-ready': 'la tâche « {id} » dépend de tâches pas encore livrées ({missing}) ; livrez-les d\'abord',
@@ -232,7 +247,7 @@ const messages = {
     'missing-value': 'l\'option --{name} attend une valeur',
     'not-from-a-session': '« relaylead {command} » appartient à l\'utilisateur ; une session de mission ne peut pas le lancer',
     'not-your-task': 'cette session travaille sur la tâche « {own} » ; elle ne peut pas terminer la tâche « {id} »',
-    'not-for-crew': 'un équipier ne peut ni lancer ni livrer de tâche ; terminez votre propre tâche avec : relaylead task done {own}',
+    'not-for-crew': 'un équipier ne peut ni lancer, ni relancer, ni livrer de tâche ; terminez votre propre tâche avec : relaylead task done {own}',
     questionAnswered: 'question {id} répondue : {choice}\n',
     'bad-question': 'impossible de poser la question : {detail}',
     'bad-task-id':

@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { missionDir, slug } = require('../../core/paths');
 const { readJson } = require('../../core/store');
+const { DEFAULTS } = require('../../core/config');
 
 const CLI = path.join(__dirname, '..', '..', 'bin', 'relaylead.js');
 // A delivery may fail for a moment (a git lock, a folder still busy on Windows): it is tried again
@@ -77,11 +78,13 @@ function listTasks() {
   return JSON.parse(relaylead('task', 'list'));
 }
 
-// Scripted lead: deliver the done tasks, start the ready ones (at most `parallel` at a time), wait,
-// again, until every task is delivered or failed.
+// Scripted lead: deliver the done tasks, retry the failed ones and start the ready ones (at most
+// `parallel` running at a time), wait, again, until every task is delivered or failed for good.
 function lead() {
   relaylead('state', 'set', 'working');
   const mission = readMission();
+  const maxAttempts = mission.config.maxAttempts || DEFAULTS.maxAttempts;
+  const retryable = (task) => task.state === 'failed' && task.attempt < maxAttempts;
   const failedDeliveries = {};
   for (;;) {
     let tasks = listTasks();
@@ -101,11 +104,16 @@ function lead() {
       }
     }
     if (done.length > 0) tasks = listTasks(); // delivered tasks make their dependents ready
-    if (tasks.every((task) => ['delivered', 'failed'].includes(task.state))) {
+    if (tasks.every((task) => task.state === 'delivered' || (task.state === 'failed' && !retryable(task)))) {
       relaylead('state', 'set', 'done');
       return;
     }
     let running = tasks.filter((task) => task.state === 'running').length;
+    for (const task of tasks.filter(retryable)) {
+      if (running >= mission.config.parallel) break;
+      relaylead('task', 'retry', task.id);
+      running++;
+    }
     for (const task of tasks.filter((candidate) => candidate.ready)) {
       if (running >= mission.config.parallel) break;
       if (!answeredIfAsked(task)) continue;
@@ -119,10 +127,16 @@ function lead() {
 }
 
 // Scripted crew member: "works" 1 s on its task, writes <id>.txt in its working folder (committed on
-// its branch with local-merge), reports it done, ends.
+// its branch with local-merge), reports it done, ends. A task named in RELAYLEAD_FAKE_FAIL_FIRST
+// (ids separated by commas) is reported failed on its first attempt instead.
 function crew() {
   const id = process.env.RELAYLEAD_TASK;
+  const failFirst = (process.env.RELAYLEAD_FAKE_FAIL_FIRST || '').split(',').includes(id);
   setTimeout(() => {
+    if (failFirst && process.env.RELAYLEAD_ATTEMPT === '1') {
+      relaylead('task', 'fail', id, '--summary', 'fake failure');
+      return;
+    }
     fs.writeFileSync(`${id}.txt`, `fake work on ${id}\n`);
     if (readMission().config.delivery.type === 'local-merge') {
       git('add', `${id}.txt`);

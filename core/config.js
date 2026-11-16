@@ -9,6 +9,7 @@ const DEFAULTS = {
   method: 'code',
   permissionMode: 'allowlist',
   parallel: 4,
+  maxAttempts: 2,
   priority: 'normal',
   questions: { onTimeout: 'wait' },
   source: { type: 'tasks-dir', dir: 'tasks' },
