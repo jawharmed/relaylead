@@ -85,3 +85,15 @@ test('the session PATH starts with the mission bin folder, whose shim runs this 
   assert.strictEqual(JSON.parse(fs.readFileSync(file, 'utf8')).env.PATH, bin + path.delimiter + process.env.PATH);
   assert.strictEqual(runShim(bin, ['--version']).trim(), pkg.version);
 });
+
+test('the session environment passes the write retry budget on', (t) => {
+  const saved = process.env.RELAYLEAD_WRITE_RETRY_MS;
+  t.after(() => {
+    if (saved === undefined) delete process.env.RELAYLEAD_WRITE_RETRY_MS;
+    else process.env.RELAYLEAD_WRITE_RETRY_MS = saved;
+  });
+  process.env.RELAYLEAD_WRITE_RETRY_MS = '4000';
+  assert.strictEqual(settingsFor().env.RELAYLEAD_WRITE_RETRY_MS, '4000');
+  delete process.env.RELAYLEAD_WRITE_RETRY_MS;
+  assert.ok(!('RELAYLEAD_WRITE_RETRY_MS' in settingsFor().env));
+});

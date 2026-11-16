@@ -1,40 +1,54 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { retrySync } = require('./timing');
 
-const RETRY_BUDGET_MS = 2000;
+const DEFAULT_WRITE_RETRY_MS = 2000;
 
-function sleep(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+// The budget of the Windows retries below, in ms. An environment variable, not a configuration key:
+// this file also serves the hooks, which do not read the configuration (the configuration uses it itself).
+function writeRetryMs() {
+  const value = process.env.RELAYLEAD_WRITE_RETRY_MS;
+  return /^\d+$/.test(value || '') ? Number(value) : DEFAULT_WRITE_RETRY_MS;
 }
 
 // On Windows, opening or renaming a file is denied (EPERM, EBUSY, EACCES) while another
 // process has it open or is renaming over it. The denial is short-lived, so retry for up
-// to about 2 s. The delay grows and has a random part so two writers do not retry in lockstep.
-function withWindowsRetry(action) {
-  const start = Date.now();
-  for (let attempt = 1; ; attempt++) {
-    try {
-      return action();
-    } catch (err) {
-      const busy = err.code === 'EPERM' || err.code === 'EBUSY' || err.code === 'EACCES';
-      if (!busy || process.platform !== 'win32' || Date.now() - start >= RETRY_BUDGET_MS) throw err;
-      sleep(Math.min(10 * attempt, 100) + Math.floor(Math.random() * 21));
-    }
+// to the budget (2 s by default). The delay grows and has a random part so two writers do not retry in lockstep.
+function withWindowsRetry(action, budgetMs = writeRetryMs()) {
+  return retrySync(action, {
+    retryIf: (err) => process.platform === 'win32' && ['EPERM', 'EBUSY', 'EACCES'].includes(err.code),
+    budgetMs,
+    delayMs: (attempt) => Math.min(10 * attempt, 100) + Math.floor(Math.random() * 21),
+  });
+}
+
+// A temporary file that cannot be removed must not hide the error that made us remove it.
+function removeQuietly(file) {
+  try {
+    fs.rmSync(file, { force: true });
+  } catch {
+    // ignored on purpose
   }
 }
 
 // Write to a temporary file in the same folder, then rename: readers never see a partial file.
-function writeJson(file, data) {
+// `mode` is applied by chmod: the umask would reduce it if it were given to writeFileSync.
+function writeText(file, text, { mode, retryMs } = {}) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const random = Math.random().toString(36).slice(2, 10);
   const tmp = `${file}.${process.pid}.${random}.tmp`;
   try {
-    fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n');
-    withWindowsRetry(() => fs.renameSync(tmp, file));
+    fs.writeFileSync(tmp, text);
+    if (mode !== undefined) fs.chmodSync(tmp, mode);
+    withWindowsRetry(() => fs.renameSync(tmp, file), retryMs);
   } catch (err) {
-    fs.rmSync(tmp, { force: true });
+    removeQuietly(tmp);
     throw err;
   }
+}
+
+function writeJson(file, data) {
+  writeText(file, JSON.stringify(data, null, 2) + '\n');
 }
 
 // Like writeJson, but only if the file does not exist yet: returns false when someone else wrote it first.
@@ -50,7 +64,7 @@ function writeJsonExclusive(file, data) {
     if (err.code === 'EEXIST') return false;
     throw err;
   } finally {
-    fs.rmSync(tmp, { force: true });
+    removeQuietly(tmp);
   }
 }
 
@@ -69,4 +83,4 @@ function readJson(file, fallback) {
   }
 }
 
-module.exports = { writeJson, writeJsonExclusive, readJson, withWindowsRetry };
+module.exports = { writeText, writeRetryMs, writeJson, writeJsonExclusive, readJson, withWindowsRetry };

@@ -27,17 +27,10 @@ test('lists tasks with their front matter (ask included)', () => {
   assert.deepStrictEqual(tasksDir.list(root, 'missing'), []);
 });
 
-test('ready respects dependencies', () => {
-  const c = '---\ntitle: Third\ndepends: [a, b]\n---\nBody\n';
-  const root = setup({ 'a.md': A, 'b.md': B, 'c.md': c });
-  const ids = tasksDir.ready(tasksDir.list(root, 'tasks')).map((t) => t.id);
-  assert.deepStrictEqual(ids, ['b']);
-});
-
 test('unknown dependency is reported', () => {
   const root = setup({ 'b.md': B });
   assert.throws(
-    () => tasksDir.ready(tasksDir.list(root, 'tasks')),
+    () => tasksDir.checkDependencies(tasksDir.list(root, 'tasks')),
     (err) => err.message.includes(path.join('tasks', 'b.md')) && err.message.includes('"a"'),
   );
 });
@@ -78,4 +71,18 @@ test('a file whose first line is not exactly --- has no front matter', () => {
   assert.strictEqual(task.title, 'g');
   assert.strictEqual(task.body, text);
   assert.throws(() => tasksDir.markDone(root, 'tasks', 'g'), /front matter/);
+});
+
+test('markDone leaves no temporary file when the rename fails', (t) => {
+  const realRename = fs.renameSync;
+  t.after(() => {
+    fs.renameSync = realRename;
+  });
+  const root = setup({ 'b.md': B });
+  fs.renameSync = () => {
+    throw Object.assign(new Error('cross-device'), { code: 'EXDEV' });
+  };
+  assert.throws(() => tasksDir.markDone(root, 'tasks', 'b'));
+  fs.renameSync = realRename;
+  assert.deepStrictEqual(fs.readdirSync(path.join(root, 'tasks')).filter((n) => n.endsWith('.tmp')), []);
 });

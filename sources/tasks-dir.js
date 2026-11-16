@@ -1,6 +1,10 @@
 // Task source: one Markdown file per task, with a small front matter.
 const fs = require('node:fs');
 const path = require('node:path');
+const { writeText, withWindowsRetry } = require('../core/store');
+
+// The task file has just been touched by the merge: an antivirus may hold it longer than a state file.
+const MARK_DONE_RETRY_MS = 5000;
 
 const OPENING_LINE = /^---[ \t]*\r?\n/;
 const CLOSING_LINE = /^---[ \t]*(?:\r?\n|$)/m;
@@ -80,19 +84,10 @@ function checkDependencies(tasks) {
   }
 }
 
-// Tasks that are todo and whose dependencies are all done.
-function ready(tasks) {
-  checkDependencies(tasks);
-  const byId = new Map(tasks.map((task) => [task.id, task]));
-  return tasks.filter(
-    (task) => task.state === 'todo' && task.depends.every((dep) => byId.get(dep).state === 'done'),
-  );
-}
-
 // Rewrites only the "state:" line of the front matter; every other byte stays.
 function markDone(root, dir, id) {
   const file = path.join(root, dir, `${id}.md`);
-  const text = fs.readFileSync(file, 'utf8');
+  const text = withWindowsRetry(() => fs.readFileSync(file, 'utf8'), MARK_DONE_RETRY_MS);
   const match = matchFrontMatter(text);
   if (!match) throw new Error(`${dir}/${id}.md has no front matter`);
 
@@ -107,9 +102,7 @@ function markDone(root, dir, id) {
     updated = text.slice(0, match.closingStart) + `state: done${eol}` + text.slice(match.closingStart);
   }
 
-  const temp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(temp, updated);
-  fs.renameSync(temp, file);
+  writeText(file, updated, { retryMs: MARK_DONE_RETRY_MS });
 }
 
-module.exports = { list, ready, checkDependencies, markDone, parseFrontMatter, parseList };
+module.exports = { list, checkDependencies, markDone, parseFrontMatter, parseList };

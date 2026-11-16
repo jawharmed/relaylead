@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const { writeJson, readJson } = require('../core/store');
+const { writeJson, writeText, readJson, writeRetryMs } = require('../core/store');
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'relaylead-store-'));
@@ -58,4 +58,44 @@ test('concurrent writers never leave a truncated file', async () => {
   }
   assert.deepStrictEqual(failures, []);
   assert.ok(running === 0, 'writers did not finish within 30 s');
+});
+
+test('the Windows write retry budget follows RELAYLEAD_WRITE_RETRY_MS', (t) => {
+  const saved = process.env.RELAYLEAD_WRITE_RETRY_MS;
+  t.after(() => {
+    if (saved === undefined) delete process.env.RELAYLEAD_WRITE_RETRY_MS;
+    else process.env.RELAYLEAD_WRITE_RETRY_MS = saved;
+  });
+  process.env.RELAYLEAD_WRITE_RETRY_MS = '500';
+  assert.strictEqual(writeRetryMs(), 500);
+  process.env.RELAYLEAD_WRITE_RETRY_MS = '0';
+  assert.strictEqual(writeRetryMs(), 0);
+  delete process.env.RELAYLEAD_WRITE_RETRY_MS;
+  assert.strictEqual(writeRetryMs(), 2000);
+  process.env.RELAYLEAD_WRITE_RETRY_MS = 'abc';
+  assert.strictEqual(writeRetryMs(), 2000);
+});
+
+test('a failing temporary file removal does not hide the write error', (t) => {
+  const realRename = fs.renameSync;
+  const realRm = fs.rmSync;
+  t.after(() => {
+    fs.renameSync = realRename;
+    fs.rmSync = realRm;
+  });
+  fs.renameSync = () => {
+    throw Object.assign(new Error('cross-device'), { code: 'EXDEV' });
+  };
+  fs.rmSync = () => {
+    throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+  };
+  assert.throws(() => writeJson(path.join(tmpDir(), 'x.json'), { a: 1 }), (err) => err.code === 'EXDEV');
+});
+
+test('writeText sets the mode despite the umask', { skip: process.platform === 'win32' }, (t) => {
+  const oldMask = process.umask(0o077);
+  t.after(() => process.umask(oldMask));
+  const file = path.join(tmpDir(), 'run.sh');
+  writeText(file, '#!/bin/sh\n', { mode: 0o755 });
+  assert.strictEqual(fs.statSync(file).mode & 0o777, 0o755);
 });

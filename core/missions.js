@@ -12,6 +12,7 @@ const { loadProfile, loadMethod } = require('./profiles');
 const { writeJournal } = require('./guard');
 const { getAdapter } = require('../adapters');
 const { getDelivery } = require('../deliveries');
+const { sleep } = require('./timing');
 
 // States the lead may declare. 'stopped' is written by the core only.
 const STATES = ['starting', 'working', 'waiting', 'done'];
@@ -22,10 +23,6 @@ const reapMaxMs = () => Number(process.env.RELAYLEAD_REAP_MAX_MS) || 10 * 60 * 1
 
 function now() {
   return new Date().toISOString();
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function missionFile(name, file) {
