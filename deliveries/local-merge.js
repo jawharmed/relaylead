@@ -276,14 +276,15 @@ function removeWorktree(mission, cwd) {
   });
 }
 
-// Refuses work that is not committed or empty: it could not be delivered, and `worktree remove
-// --force` would destroy it. Run by `relaylead task done`, while the crew member can still fix it,
-// and again by deliver. Returns branchWork(): 'new' or 'merged'.
+// Refuses work that is not committed (new files included, whatever status.showUntrackedFiles says)
+// or empty: it could not be delivered, and `worktree remove --force` would destroy it. Run by
+// `relaylead task done`, while the crew member can still fix it, and again by deliver.
+// Returns branchWork(): 'new' or 'merged'.
 function checkDone(mission, task) {
   const cwd = taskDir(mission, task);
   const branch = taskBranch(mission, task);
   checkTaskWorktree(mission, task);
-  if (fs.existsSync(cwd) && git(cwd, ['status', '--porcelain']) !== '') {
+  if (fs.existsSync(cwd) && git(cwd, ['status', '--porcelain', '--untracked-files=all']) !== '') {
     throw codedError('task-uncommitted', { id: task.id, dir: cwd });
   }
   if (!branchExists(mission.dir, branch)) throw codedError('task-branch-missing', { id: task.id, branch });
@@ -308,7 +309,10 @@ function deliver(mission, task) {
 function hasLateWork(mission, task) {
   const cwd = taskDir(mission, task);
   const branch = taskBranch(mission, task);
-  if (fs.existsSync(cwd) && currentBranch(cwd) === branch && git(cwd, ['status', '--porcelain']) !== '') return true;
+  // --untracked-files=all: a user setting status.showUntrackedFiles=no would hide new files.
+  if (fs.existsSync(cwd) && currentBranch(cwd) === branch) {
+    if (git(cwd, ['status', '--porcelain', '--untracked-files=all']) !== '') return true;
+  }
   if (!branchExists(mission.dir, branch)) return false;
   return git(mission.dir, ['rev-list', '--count', `${mission.config.delivery.branch}..${branch}`]) !== '0';
 }

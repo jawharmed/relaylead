@@ -882,3 +882,30 @@ test('done keeps the worktree of a crew session listed without its folder whose 
   assert.match(done.err, /stop failed/);
   assert.strictEqual(fs.existsSync(taskWorktree(dir, 'a')), true);
 });
+
+test('task done and a replayed delivery see untracked files even when git status hides them', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A, 'tasks/c.md': TASK_A });
+  git(dir, 'config', 'status.showUntrackedFiles', 'no');
+  const mission = preparedMission(dir);
+
+  // task done refuses a file not added yet.
+  const c = taskWithWork(mission, 'c', { committed: true, extra: { 'new-work.txt': 'not added yet\n' } });
+  const refused = await cli(['task', 'done', 'c', '--mission', 'demo']);
+  assert.strictEqual(refused.code, 1, refused.err);
+  assert.match(refused.err, /not committed/);
+  assert.strictEqual(fs.existsSync(path.join(c, 'new-work.txt')), true);
+
+  // A replayed delivery keeps a worktree with an untracked file written since.
+  finishedTask(mission, 'a');
+  const a = taskWorktree(dir, 'a');
+  git(dir, 'worktree', 'lock', a);
+  const first = await deliver('a');
+  assert.strictEqual(first.code, 0, first.err);
+  git(dir, 'worktree', 'unlock', a);
+  fs.writeFileSync(path.join(a, 'later.txt'), 'later\n');
+  const replayed = await deliver('a');
+  assert.strictEqual(replayed.code, 0, replayed.err);
+  assert.match(replayed.err, /kept/);
+  assert.strictEqual(fs.readFileSync(path.join(a, 'later.txt'), 'utf8'), 'later\n');
+});
