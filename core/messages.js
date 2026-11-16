@@ -38,6 +38,8 @@ const messages = {
     'mission-exists':
       'a mission named "{mission}" already exists; choose another name with --name, or remove the finished one with: relaylead remove {mission}',
     'mission-running': 'mission "{mission}" is {state}; stop it first with: relaylead stop {mission}',
+    'checkout-on-task-branch':
+      'your checkout {dir} is on branch {branch} of this mission; switch to another branch, then remove again',
     'remove-unmerged-work':
       'mission "{mission}" has work not delivered: {items}; remove anyway with: relaylead remove {mission} --force; it deletes these branches and changes',
     'mission-unknown': 'no mission named "{mission}"',
@@ -165,6 +167,8 @@ const messages = {
     'mission-exists':
       'une mission nommée « {mission} » existe déjà ; choisissez un autre nom avec --name, ou supprimez celle qui est finie avec : relaylead remove {mission}',
     'mission-running': 'la mission « {mission} » est {state} ; arrêtez-la d\'abord avec : relaylead stop {mission}',
+    'checkout-on-task-branch':
+      'votre copie de travail {dir} est sur la branche {branch} de cette mission ; passez sur une autre branche, puis relancez la suppression',
     'remove-unmerged-work':
       'la mission « {mission} » a du travail non livré : {items} ; supprimez quand même avec : relaylead remove {mission} --force ; cela supprime ces branches et ces changements',
     'mission-unknown': 'aucune mission nommée « {mission} »',

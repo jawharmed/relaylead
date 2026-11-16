@@ -529,8 +529,9 @@ function launchRunning(name) {
 
 // `relaylead remove`: frees the name and the folder of a finished mission. Its sessions are stopped
 // again by an adapter that stops by id, its task worktrees and branches are removed by the delivery,
-// then its folder under missions/ is deleted. Returns the deleted branches ("<name> <sha>").
-async function removeMission(name, { force = false } = {}) {
+// then its folder under missions/ is deleted. Returns the deleted branches ("<name> <sha>"), each
+// also passed to onBranchDeleted as soon as it is deleted.
+async function removeMission(name, { force = false, onBranchDeleted } = {}) {
   // The name ends up in a recursive removal: no "..", no separator.
   if (!/^[a-z0-9-]+$/.test(name)) throw codedError('usage', { usage: 'relaylead remove <mission> [--force]' });
   const folder = missionDir(name);
@@ -558,7 +559,7 @@ async function removeMission(name, { force = false } = {}) {
     }
     // A project folder deleted since has no worktree or branch left to remove.
     const branches = fs.existsSync(mission.dir)
-      ? getDelivery(mission.config.delivery.type).removeMission(mission, { force })
+      ? getDelivery(mission.config.delivery.type).removeMission(mission, { force, onBranchDeleted })
       : [];
     releaseLock(mission.dir, mission);
     return branches;

@@ -948,7 +948,7 @@ test('remove deletes the task worktrees, branches and mission folder, and keeps 
   const removed = await cli(['remove', 'demo']);
 
   assert.strictEqual(removed.code, 0, removed.err);
-  assert.match(removed.out, /^mission demo removed\n/);
+  assert.match(removed.out, /mission demo removed\n$/);
   assert.strictEqual(fs.existsSync(missionDir('demo')), false);
   assert.strictEqual(demoBranches(dir), '');
   assert.strictEqual(fs.existsSync(taskWorktree(dir, 'b')), false);
@@ -977,7 +977,7 @@ test('remove refuses work not delivered unless --force', async (t) => {
   const forced = await cli(['remove', 'demo', '--force']);
 
   assert.strictEqual(forced.code, 0, forced.err);
-  assert.strictEqual(forced.out, `mission demo removed\ndeleted branch relaylead/demo/b ${sha}\n`);
+  assert.strictEqual(forced.out, `deleted branch relaylead/demo/b ${sha}\nmission demo removed\n`);
   assert.strictEqual(demoBranches(dir), '');
   assert.strictEqual(fs.existsSync(missionDir('demo')), false);
 });
@@ -996,6 +996,7 @@ test('remove refuses a dirty worktree unless --force', async (t) => {
   assert.strictEqual(refused.code, 1);
   assert.match(refused.err, /worktrees[\\/]b\b/);
   assert.strictEqual(fs.existsSync(path.join(b, 'draft.txt')), true);
+  assert.strictEqual(demoBranches(dir), 'relaylead/demo/b');
   assert.strictEqual(fs.existsSync(missionDir('demo')), true);
 
   const forced = await cli(['remove', 'demo', '--force']);
@@ -1024,6 +1025,7 @@ test('a worktree left by another mission names the mission to remove', async (t)
   const mission = preparedMission(dir);
   git(dir, 'worktree', 'add', '-q', '-b', 'relaylead/old/a', taskWorktree(dir, 'a'), 'relaylead/integration');
   git(dir, 'worktree', 'add', '-q', '-b', 'mine', taskWorktree(dir, 'b'), 'relaylead/integration');
+  git(dir, 'worktree', 'add', '-q', '-b', 'relaylead/demo/other', taskWorktree(dir, 'c'), 'relaylead/integration');
 
   assert.throws(() => localMerge.prepareTask(mission, { id: 'a' }), {
     code: 'worktree-mismatch',
@@ -1035,4 +1037,95 @@ test('a worktree left by another mission names the mission to remove', async (t)
     assert.match(err.message, /git worktree remove/);
     return true;
   });
+  // A branch of this very mission: removing the mission would not help.
+  assert.throws(() => localMerge.prepareTask(mission, { id: 'c' }), (err) => {
+    assert.strictEqual(err.code, 'worktree-mismatch');
+    assert.doesNotMatch(err.message, /relaylead remove/);
+    return true;
+  });
+});
+
+test('remove --force prints each deleted branch as soon as it is deleted', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A, 'tasks/b.md': TASK_A });
+  const mission = preparedMission(dir);
+  taskWithWork(mission, 'a', { committed: true });
+  taskWithWork(mission, 'b', { committed: true });
+  stopped('demo');
+  const sha = git(dir, 'rev-parse', 'relaylead/demo/a');
+  // A held ref lock: deleting the second branch fails once git gives up waiting for it.
+  fs.writeFileSync(path.join(dir, '.git', 'refs', 'heads', 'relaylead', 'demo', 'b.lock'), '');
+
+  const forced = await cli(['remove', 'demo', '--force']);
+
+  assert.strictEqual(forced.code, 1);
+  assert.match(forced.err, /relaylead\/demo\/b/);
+  assert.strictEqual(forced.out, `deleted branch relaylead/demo/a ${sha}\n`);
+});
+
+test('remove counts every task branch as not delivered when the integration branch is gone', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/b.md': TASK_A });
+  const mission = preparedMission(dir);
+  taskWithWork(mission, 'b', { committed: true });
+  merge(dir, 'relaylead/demo/b');
+  stopped('demo');
+  // Removed by hand.
+  git(dir, 'worktree', 'remove', '--force', integrationDir(dir));
+  git(dir, 'branch', '-D', 'relaylead/integration');
+
+  const refused = await cli(['remove', 'demo']);
+
+  assert.strictEqual(refused.code, 1);
+  assert.match(refused.err, /has work not delivered: relaylead\/demo\/b;/);
+  assert.strictEqual(demoBranches(dir), 'relaylead/demo/b');
+
+  const forced = await cli(['remove', 'demo', '--force']);
+
+  assert.strictEqual(forced.code, 0, forced.err);
+  assert.strictEqual(demoBranches(dir), '');
+});
+
+test('remove refuses, even with --force, a checkout on a task branch', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir);
+  taskWithWork(mission, 'a', { committed: true });
+  merge(dir, 'relaylead/demo/a');
+  git(dir, 'branch', 'relaylead/demo/b', 'relaylead/integration');
+  git(dir, 'checkout', '-q', 'relaylead/demo/b'); // the user's own checkout
+  stopped('demo');
+
+  const refused = await cli(['remove', 'demo', '--force']);
+
+  assert.strictEqual(refused.code, 1);
+  assert.match(refused.err, /your checkout .* is on branch relaylead\/demo\/b of this mission/);
+  assert.strictEqual(fs.existsSync(taskWorktree(dir, 'a')), true);
+  assert.strictEqual(demoBranches(dir), 'relaylead/demo/a\nrelaylead/demo/b');
+  assert.strictEqual(fs.existsSync(missionDir('demo')), true);
+  // The stop's cleanup leaves the checkout alone too.
+  assert.deepStrictEqual(localMerge.cleanMission(mission, {}), []);
+  assert.strictEqual(fs.existsSync(taskWorktree(dir, 'a')), false);
+});
+
+test('remove keeps a locked task worktree unless --force', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/b.md': TASK_A });
+  const mission = preparedMission(dir);
+  const b = taskWithWork(mission, 'b', { committed: true });
+  merge(dir, 'relaylead/demo/b');
+  git(dir, 'worktree', 'lock', b);
+  stopped('demo');
+
+  const refused = await cli(['remove', 'demo']);
+
+  assert.strictEqual(refused.code, 1);
+  assert.match(refused.err, /worktrees[\\/]b\b/);
+  assert.strictEqual(fs.existsSync(b), true);
+
+  const forced = await cli(['remove', 'demo', '--force']);
+
+  assert.strictEqual(forced.code, 0, forced.err);
+  assert.strictEqual(fs.existsSync(b), false);
+  assert.strictEqual(demoBranches(dir), '');
 });

@@ -118,10 +118,11 @@ commands.remove = async (args, io) => {
   const { positional, options } = parseArgs(args);
   const [name] = positional;
   if (!name) throw codedError('usage', { usage: 'relaylead remove <mission> [--force]' });
-  const deleted = await removeMission(name, { force: options.force === true });
+  // Printed as soon as it is deleted, even if a later step fails: with its last commit, a deleted
+  // branch can be made again (git branch <name> <sha>).
+  const onBranchDeleted = (branch) => io.out.write(t('branchDeleted', { branch }, language(io)));
+  await removeMission(name, { force: options.force === true, onBranchDeleted });
   io.out.write(t('missionRemoved', { mission: name }, language(io)));
-  // With its last commit, a deleted branch can be made again: git branch <name> <sha>.
-  for (const branch of deleted) io.out.write(t('branchDeleted', { branch }, language(io)));
   return 0;
 };
 

@@ -113,7 +113,9 @@ test('fake mission delivers two tasks with one answered question', { timeout: 3 
 
   // The fake lead offers "yes" and "no" whatever the ask text says (a real lead offers the
   // choices of the text): option 1 is "yes".
-  const [settled] = JSON.parse((await relaylead(['question', 'list', mission, '--all'], dir)).out);
+  const questions = JSON.parse((await relaylead(['question', 'list', mission, '--all'], dir)).out);
+  assert.strictEqual(questions.length, 1, report());
+  const [settled] = questions;
   assert.deepStrictEqual([settled.state, settled.answer.choice], ['answered', 'yes']);
 
   // Both task branches are merged into the integration branch, and the source says done there.
