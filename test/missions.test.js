@@ -668,3 +668,38 @@ test('an empty folder lock older than 10 s is taken over', async (t) => {
   assert.strictEqual(result.code, 0, result.err);
   assert.strictEqual(readJson(lock).mission, 'demo');
 });
+
+test('stop of a done mission says it is done', async (t) => {
+  freshHome(t);
+  writeMission('demo', tmpDir('relaylead-project-')); // no lead: the test plays it
+  assert.strictEqual((await cli(['state', 'set', 'done', '--mission', 'demo'])).code, 0);
+  fake.stopById = true; // the done mission's sessions are asked again
+  t.after(() => {
+    delete fake.stopById;
+  });
+
+  const stopped = await cli(['stop', 'demo']);
+
+  assert.deepStrictEqual([stopped.code, stopped.out, stopped.err], [0, 'mission demo is done; its remaining sessions were stopped\n', '']);
+  assert.strictEqual(stateRecord('demo').state, 'done');
+});
+
+test('a session the adapter no longer lists has no process to wait for', async (t) => {
+  freshHome(t);
+  writeMission('demo', tmpDir('relaylead-project-')); // no lead: the test plays it
+  // A registry pid now used by an unrelated process.
+  const unrelated = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  t.after(() => unrelated.kill());
+  recordSession('demo', { sessionId: 'fake-gone', shortId: 'gone0000', name: 'demo/developer/1', role: 'crew', pid: unrelated.pid });
+  stub(t, 'list', () => async () => []); // the adapter lists no session
+  stub(t, 'stop', () => async () => {}); // the session is unknown: nothing to stop
+  process.env.RELAYLEAD_STOP_WAIT_MS = '300';
+  t.after(() => {
+    delete process.env.RELAYLEAD_STOP_WAIT_MS;
+  });
+
+  const stopped = await cli(['stop', 'demo']);
+
+  assert.deepStrictEqual([stopped.code, stopped.out, stopped.err], [0, 'mission demo stopped\n', '']);
+  assert.ok(isAlive(unrelated.pid));
+});

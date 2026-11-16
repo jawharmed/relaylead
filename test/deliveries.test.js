@@ -6,7 +6,7 @@ const { spawn, execFileSync } = require('node:child_process');
 const { run } = require('../core/cli');
 const { listTasks, finishTask } = require('../core/tasks');
 const { getState, readMission } = require('../core/missions');
-const { listSessions, isAlive } = require('../core/sessions');
+const { listSessions, recordSession, isAlive } = require('../core/sessions');
 const { readJson, writeJson } = require('../core/store');
 const { missionDir } = require('../core/paths');
 const fake = require('../adapters/fake');
@@ -630,4 +630,282 @@ test('git messages that a short wait cures are recognised', () => {
   }
   assert.ok(!localMerge.isTransientGitError("fatal: not a git repository"));
   assert.ok(!localMerge.isTransientGitError('CONFLICT (content): Merge conflict in shared.txt'));
+});
+
+// A task worktree: `committed` adds a commit on its branch, `extra` writes files without committing.
+function taskWithWork(mission, id, { committed = false, extra = {} } = {}) {
+  const { cwd } = localMerge.prepareTask(mission, { id });
+  if (committed) {
+    fs.writeFileSync(path.join(cwd, `${id}.txt`), id + '\n');
+    git(cwd, 'add', '-A');
+    git(cwd, 'commit', '-q', '-m', id);
+  }
+  for (const [name, text] of Object.entries(extra)) {
+    fs.mkdirSync(path.dirname(path.join(cwd, name)), { recursive: true });
+    fs.writeFileSync(path.join(cwd, name), text);
+  }
+  return cwd;
+}
+
+test('cleanMission removes the clean task worktrees and keeps their branches', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A, 'tasks/b.md': TASK_A, '.gitignore': 'node_modules/\n' });
+  const mission = preparedMission(dir);
+  taskWithWork(mission, 'a', { committed: true, extra: { 'node_modules/lib/index.js': 'ignored\n' } });
+  taskWithWork(mission, 'b', { extra: { 'draft.txt': 'not committed\n' } });
+
+  const warnings = localMerge.cleanMission(mission, {});
+
+  assert.strictEqual(fs.existsSync(taskWorktree(dir, 'a')), false);
+  assert.strictEqual(git(dir, 'branch', '--list', 'relaylead/demo/a').trim(), 'relaylead/demo/a');
+  assert.strictEqual(fs.existsSync(taskWorktree(dir, 'b')), true);
+  assert.deepStrictEqual(warnings.map((warning) => warning.code), ['worktree-kept']);
+  assert.strictEqual(path.basename(warnings[0].vars.dir), 'b');
+  assert.strictEqual(warnings[0].vars.branch, 'relaylead/demo/b');
+  assert.strictEqual(fs.existsSync(integrationDir(dir)), true);
+});
+
+test('cleanMission keeps a worktree in keepDirs and goes on with the others', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A, 'tasks/b.md': TASK_A });
+  const mission = preparedMission(dir);
+  const busy = taskWithWork(mission, 'a', { committed: true });
+  taskWithWork(mission, 'b', { committed: true });
+
+  const warnings = localMerge.cleanMission(mission, { keepDirs: [busy] });
+
+  assert.deepStrictEqual(warnings.map((warning) => warning.code), ['worktree-busy']);
+  assert.strictEqual(path.basename(warnings[0].vars.dir), 'a');
+  assert.strictEqual(fs.existsSync(taskWorktree(dir, 'a')), true);
+  assert.strictEqual(fs.existsSync(taskWorktree(dir, 'b')), false);
+});
+
+test('cleanMission leaves the worktrees of other missions alone', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir);
+  const other = path.join(dir, '.relaylead', 'worktrees', 'other-a');
+  git(dir, 'worktree', 'add', '-q', '-b', 'relaylead/other/a', other, 'relaylead/integration');
+  taskWithWork(mission, 'a', { committed: true });
+
+  const warnings = localMerge.cleanMission(mission, {});
+
+  assert.deepStrictEqual(warnings, []);
+  assert.strictEqual(fs.existsSync(taskWorktree(dir, 'a')), false);
+  assert.strictEqual(fs.existsSync(other), true);
+  assert.deepStrictEqual(
+    localMerge.missionWorktrees({ ...mission, name: 'other' }).map((worktree) => [path.basename(worktree.dir), worktree.branch]),
+    [['other-a', 'relaylead/other/a']],
+  );
+});
+
+test('stop cleans the task worktrees of its mission', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir);
+  taskWithWork(mission, 'a', { committed: true });
+
+  const stopped = await cli(['stop', 'demo']);
+
+  assert.deepStrictEqual([stopped.code, stopped.out, stopped.err], [0, 'mission demo stopped\n', '']);
+  assert.strictEqual(getState('demo'), 'stopped');
+  assert.strictEqual(fs.existsSync(taskWorktree(dir, 'a')), false);
+  assert.strictEqual(git(dir, 'branch', '--list', 'relaylead/demo/a').trim(), 'relaylead/demo/a');
+});
+
+// A crew session of mission demo working in `cwd`, alive until stopped.
+async function crewIn(cwd, number) {
+  const crew = await fake.launch({
+    mission: 'demo',
+    name: `demo/developer/${number}`,
+    role: 'crew',
+    profile: null,
+    prompt: '',
+    cwd,
+    env: { RELAYLEAD_MISSION: 'demo' },
+    permissionMode: 'allowlist',
+  });
+  recordSession('demo', crew);
+  return crew;
+}
+
+test('stop keeps the worktree of a crew session whose stop failed, and cleans the others', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A, 'tasks/b.md': TASK_A });
+  const mission = preparedMission(dir);
+  const first = await crewIn(taskWithWork(mission, 'a', { committed: true }), 1);
+  const second = await crewIn(taskWithWork(mission, 'b', { committed: true }), 2);
+  const original = fake.stop;
+  fake.stop = async (session) => {
+    if (session.shortId === first.shortId) throw new Error('stop failed');
+    return original(session);
+  };
+  let stopped;
+  try {
+    stopped = await cli(['stop', 'demo']);
+  } finally {
+    fake.stop = original;
+  }
+
+  assert.strictEqual(stopped.code, 1);
+  assert.match(stopped.err, /stop failed/);
+  assert.match(stopped.err, /worktrees[\\/]a\b/);
+  assert.strictEqual(isAlive(second.pid), false);
+  assert.strictEqual(fs.existsSync(taskWorktree(dir, 'a')), true);
+  assert.strictEqual(fs.existsSync(taskWorktree(dir, 'b')), false);
+});
+
+test('a session still alive after the wait keeps the folder', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/.gitkeep': '' }); // no task: the lead idles
+  assert.strictEqual((await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir])).code, 0);
+  await waitFor(() => getState('demo') === 'working', 30000, 'the lead to be working');
+  const crew = await crewIn(taskWithWork(readMission('demo'), 'a', { committed: true }), 1);
+  process.env.RELAYLEAD_STOP_WAIT_MS = '300';
+  const original = fake.stop;
+  fake.stop = async () => {}; // the session is asked to stop, but its process goes on
+  let stopped;
+  try {
+    stopped = await cli(['stop', 'demo']);
+  } finally {
+    fake.stop = original;
+    delete process.env.RELAYLEAD_STOP_WAIT_MS;
+  }
+
+  assert.strictEqual(stopped.code, 1);
+  assert.match(stopped.err, /still running/);
+  assert.match(stopped.err, /relaylead stop: .*worktrees[\\/]a\b/);
+  assert.ok(isAlive(crew.pid));
+  assert.strictEqual(readJson(path.join(missionDir('demo'), 'state.json')).stopping, true);
+  assert.strictEqual(fs.existsSync(taskWorktree(dir, 'a')), true);
+  const refused = await cli(['launch', '--agent', 'fake', '--name', 'two', '--dir', dir]);
+  assert.strictEqual(refused.code, 1);
+  assert.match(refused.err, /busy with mission "demo"/);
+});
+
+test('a stop with nothing to do still cleans', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir);
+  writeJson(path.join(missionDir('demo'), 'state.json'), { state: 'stopped', updatedAt: new Date().toISOString() });
+  taskWithWork(mission, 'a', { committed: true });
+
+  const stopped = await cli(['stop', 'demo']);
+
+  assert.deepStrictEqual([stopped.code, stopped.out], [0, 'mission demo is already stopped; nothing to do\n']);
+  assert.strictEqual(fs.existsSync(taskWorktree(dir, 'a')), false);
+});
+
+test('done cleans the task worktrees and notes the kept ones in the journal', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A, 'tasks/b.md': TASK_A });
+  const mission = preparedMission(dir); // no lead: the test plays it
+  taskWithWork(mission, 'a', { extra: { 'draft.txt': 'not committed\n' } });
+  taskWithWork(mission, 'b', { committed: true });
+
+  const done = await cli(['state', 'set', 'done', '--mission', 'demo']);
+
+  assert.strictEqual(done.code, 0, done.err);
+  assert.strictEqual(fs.existsSync(taskWorktree(dir, 'a')), true);
+  assert.strictEqual(fs.existsSync(taskWorktree(dir, 'b')), false);
+  const journal = fs.readFileSync(path.join(missionDir('demo'), 'journal.log'), 'utf8');
+  assert.match(journal, /worktrees[\\/]a\b/);
+});
+
+test('a skipped stop keeps the worktree of a session whose recorded process still runs', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir);
+  await crewIn(taskWithWork(mission, 'a', { committed: true }), 1); // a live process, as far as the pid tells
+  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  writeJson(path.join(missionDir('demo'), 'state.json'), { state: 'stopped', stopping: true, updatedAt: twoHoursAgo });
+
+  const stopped = await cli(['stop', 'demo']);
+
+  assert.strictEqual(stopped.code, 0, stopped.err);
+  assert.match(stopped.out, /were not stopped again/);
+  assert.match(stopped.err, /relaylead stop: .*worktrees[\\/]a\b.*may still be running/);
+  assert.strictEqual(fs.existsSync(taskWorktree(dir, 'a')), true);
+});
+
+test('cleanMission keeps untracked work even when git status hides untracked files', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  git(dir, 'config', 'status.showUntrackedFiles', 'no');
+  const mission = preparedMission(dir);
+  taskWithWork(mission, 'a', { committed: true, extra: { 'new-work.txt': 'not added yet\n' } });
+
+  const warnings = localMerge.cleanMission(mission, {});
+
+  assert.deepStrictEqual(warnings.map((warning) => warning.code), ['worktree-kept']);
+  assert.strictEqual(fs.existsSync(path.join(taskWorktree(dir, 'a'), 'new-work.txt')), true);
+});
+
+test('cleanMission never removes the integration worktree, whatever its branch', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  writeMission('demo', dir);
+  const mission = readMission('demo');
+  // A branch under relaylead/demo/ is refused at launch; this one was made by hand.
+  mission.config.delivery.branch = 'relaylead/demo/x';
+  git(dir, 'branch', 'relaylead/demo/x');
+  git(dir, 'worktree', 'add', '-q', integrationDir(dir), 'relaylead/demo/x');
+
+  const warnings = localMerge.cleanMission(mission, {});
+
+  assert.deepStrictEqual(warnings, []);
+  assert.strictEqual(fs.existsSync(integrationDir(dir)), true);
+});
+
+test('done keeps the worktree of a crew session listed without its folder whose stop failed', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir); // no lead: the test plays it
+  const crew = await crewIn(taskWithWork(mission, 'a', { committed: true }), 1);
+  const originalList = fake.list;
+  const originalStop = fake.stop;
+  // Like a claude row with no cwd.
+  fake.list = async (name) => (await originalList(name)).map(({ cwd, ...row }) => row);
+  fake.stop = async (session) => {
+    if (session.shortId === crew.shortId) throw new Error('stop failed');
+    return originalStop(session);
+  };
+  let done;
+  try {
+    done = await cli(['state', 'set', 'done', '--mission', 'demo']);
+  } finally {
+    fake.list = originalList;
+    fake.stop = originalStop;
+  }
+
+  assert.strictEqual(done.code, 1);
+  assert.match(done.err, /stop failed/);
+  assert.strictEqual(fs.existsSync(taskWorktree(dir, 'a')), true);
+});
+
+test('task done and a replayed delivery see untracked files even when git status hides them', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A, 'tasks/c.md': TASK_A });
+  git(dir, 'config', 'status.showUntrackedFiles', 'no');
+  const mission = preparedMission(dir);
+
+  // task done refuses a file not added yet.
+  const c = taskWithWork(mission, 'c', { committed: true, extra: { 'new-work.txt': 'not added yet\n' } });
+  const refused = await cli(['task', 'done', 'c', '--mission', 'demo']);
+  assert.strictEqual(refused.code, 1, refused.err);
+  assert.match(refused.err, /not committed/);
+  assert.strictEqual(fs.existsSync(path.join(c, 'new-work.txt')), true);
+
+  // A replayed delivery keeps a worktree with an untracked file written since.
+  finishedTask(mission, 'a');
+  const a = taskWorktree(dir, 'a');
+  git(dir, 'worktree', 'lock', a);
+  const first = await deliver('a');
+  assert.strictEqual(first.code, 0, first.err);
+  git(dir, 'worktree', 'unlock', a);
+  fs.writeFileSync(path.join(a, 'later.txt'), 'later\n');
+  const replayed = await deliver('a');
+  assert.strictEqual(replayed.code, 0, replayed.err);
+  assert.match(replayed.err, /kept/);
+  assert.strictEqual(fs.readFileSync(path.join(a, 'later.txt'), 'utf8'), 'later\n');
 });

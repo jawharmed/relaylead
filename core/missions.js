@@ -27,6 +27,9 @@ const EMPTY_LOCK_STALE_MS = 10 * 1000;
 const PIDS_TRUSTED_MS = 60 * 60 * 1000;
 // How long the helper waits for the lead to end its turn after `state set done`; tests shorten it.
 const reapMaxMs = () => Number(process.env.RELAYLEAD_REAP_MAX_MS) || 10 * 60 * 1000;
+// How long a stop waits for the processes of the stopped sessions to end; tests shorten it.
+const stopWaitMs = () => Number(process.env.RELAYLEAD_STOP_WAIT_MS) || 30 * 1000;
+const STOP_POLL_MS = 250;
 
 function now() {
   return new Date().toISOString();
@@ -254,16 +257,18 @@ async function setState(name, state, note) {
   if (!replay) writeState(name, { state: 'done', note, stopping: true });
   const record = replay ? current : { state: 'done', note };
   // The mission lock keeps a removal or a new launch from crossing the end.
-  return withMissionLock(name, 'state set done', () => stopAndFree(mission, record, () => endMission(mission)));
+  const { outcome } = await withMissionLock(name, 'state set done', () =>
+    stopAndFree(mission, record, () => endMission(mission)),
+  );
+  return outcome;
 }
 
 // Once the mission is done, no session of it may keep running. The crew is stopped now. The lead
 // cannot be: this very command runs inside its turn. A detached helper stops it once its turn is over.
-// A stop that fails does not keep the other sessions running: its error is thrown at the end.
+// Returns what stopSessionsAndWait returns.
 async function endMission(mission) {
   const adapter = getAdapter(mission.agent);
   const lead = readJson(missionFile(mission.name, 'lead.json'), {});
-  let firstError = null;
   try {
     let sessions;
     try {
@@ -271,18 +276,68 @@ async function endMission(mission) {
     } catch {
       sessions = listSessions(mission.name); // `claude agents` may fail for a moment: stop each recorded session
     }
-    for (const session of sessions) {
-      if (session.shortId === lead.shortId || session.state === 'stopped') continue;
-      try {
-        await adapter.stop(session);
-      } catch (err) {
-        firstError = firstError || err;
-      }
-    }
+    const crew = sessions.filter((session) => session.shortId !== lead.shortId && session.state !== 'stopped');
+    return await stopSessionsAndWait(mission, crew);
   } finally {
     await spawnReaper(mission.name);
   }
-  if (firstError) throw firstError;
+}
+
+// Stops each session, then waits for the process of each stopped one to end. A stop that fails does
+// not keep the other sessions running. Returns {failed, alive, error}: the sessions whose stop
+// failed, those whose process still runs after the wait, and the first stop error.
+async function stopSessionsAndWait(mission, sessions) {
+  const adapter = getAdapter(mission.agent);
+  // Taken before the stops: the adapter knows the current process of a session, which may have been
+  // restarted since it was recorded. A session it does not list has no process: its registry pid may
+  // by now belong to an unrelated process. Only when the list fails is the registry pid used.
+  let listed = null;
+  try {
+    listed = await adapter.list(mission.name);
+  } catch {
+    // `claude agents` may fail for a moment: the registry pids will do
+  }
+  const failed = [];
+  const stopped = [];
+  let error = null;
+  for (const session of sessions) {
+    try {
+      await adapter.stop(session);
+      stopped.push({ session, pid: listed ? listedPid(listed, session) : session.pid });
+    } catch (err) {
+      failed.push(session);
+      error = error || err;
+    }
+  }
+  const giveUpAt = Date.now() + stopWaitMs();
+  let alive = stopped.filter((entry) => isAlive(entry.pid));
+  while (alive.length > 0 && Date.now() < giveUpAt) {
+    await sleep(STOP_POLL_MS);
+    alive = alive.filter((entry) => isAlive(entry.pid));
+  }
+  return { failed, alive: alive.map((entry) => entry.session), error };
+}
+
+// The pid the adapter lists for the session; null (no process) when it does not list it.
+function listedPid(listed, session) {
+  const row = listed.find((candidate) => candidate.shortId === session.shortId);
+  return row ? row.pid : null;
+}
+
+// The folders of these sessions. An adapter row may have no folder: the registry has it.
+function sessionDirs(mission, sessions) {
+  const registry = listSessions(mission.name);
+  return sessions
+    .map((session) => session.cwd || (registry.find((recorded) => recorded.shortId === session.shortId) || {}).cwd)
+    .filter(Boolean);
+}
+
+// Removes the task worktrees the delivery can remove, except those where a session may still run.
+// Never throws: each warning is also written to the mission's journal, which outlives the command.
+function cleanMission(mission, keepDirs) {
+  const warnings = getDelivery(mission.config.delivery.type).cleanMission(mission, { keepDirs });
+  for (const warning of warnings) writeJournal(mission.name, 'relaylead', warning.message);
+  return warnings;
 }
 
 // Runs `relaylead _reap <mission>` on its own: it outlives this command and the lead's turn.
@@ -372,27 +427,54 @@ function needsStop(mission, record) {
   return Boolean(getAdapter(mission.agent).stopById);
 }
 
-// Stops the sessions with `stopAll`, which throws the first stop that failed. Once all are stopped,
-// the state is written again without the stopping marker, then the folder is freed. A stop that
-// failed keeps both: the folder may still be in use, and the stop can be run again.
+// Stops the sessions with `stopAll`, which returns {failed, alive, error} (stopSessionsAndWait), then
+// cleans the task worktrees, except those of the sessions that may still run. Once every session is
+// stopped and its process gone, the state is written again without the stopping marker, then the
+// folder is freed. Otherwise both stay: the folder may still be in use, and the stop can be run
+// again; the first error is thrown, with the cleanup warnings in err.warnings.
 // With a marker more than an hour old, an adapter that stops by pid is not called: those pids are no
-// longer safe to stop. The marker is cleared and the folder freed all the same. Returns 'stopped' or 'skipped'.
+// longer safe to stop. The marker is cleared and the folder freed all the same.
+// Returns {outcome: 'stopped' or 'skipped', warnings}.
 async function stopAndFree(mission, record, stopAll) {
   const pidsTooOld = record.stopping && Date.now() - Date.parse(record.updatedAt) > PIDS_TRUSTED_MS;
   const skipped = pidsTooOld && !getAdapter(mission.agent).stopById;
-  if (!skipped) await stopAll();
+  let failed = [];
+  let alive = [];
+  let error = null;
+  let mayRun; // the sessions whose worktree must be kept
+  if (skipped) {
+    // Not stopped: a recorded pid still alive may be one of its sessions, so its worktree stays.
+    mayRun = listSessions(mission.name).filter((session) => isAlive(session.pid));
+  } else {
+    ({ failed, alive, error } = await stopAll());
+    mayRun = [...failed, ...alive];
+  }
+  const warnings = cleanMission(mission, sessionDirs(mission, mayRun));
+  let firstError = error;
+  if (!firstError && alive.length > 0) {
+    firstError = codedError('session-still-alive', { mission: mission.name, shortId: alive[0].shortId });
+  }
+  if (firstError) {
+    firstError.warnings = warnings;
+    throw firstError;
+  }
   writeState(mission.name, { state: record.state, note: record.note });
   releaseLock(mission.dir, mission);
-  return skipped ? 'skipped' : 'stopped';
+  return { outcome: skipped ? 'skipped' : 'stopped', warnings };
 }
 
-// Returns 'stopped', 'skipped' (pids too old to stop again) or 'nothing' (nothing to do). A stop
+// Returns {outcome, warnings}. outcome: 'stopped' (the mission was running, or was stopped and is
+// stopped again), 'already-done' (a done mission whose sessions were stopped again), 'skipped' (pids
+// too old to stop again) or 'nothing' (nothing to stop). In every case the task worktrees are
+// cleaned, so running stop again finishes a cleanup that failed; warnings are its Error[]. A stop
 // that fails does not keep the other sessions running: its error is thrown at the end, and the stop
 // can be run again. A done mission stays done.
 async function stopMission(name) {
   const mission = readMission(name);
   const current = readStateRecord(name);
-  if (!needsStop(mission, current)) return 'nothing';
+  if (!needsStop(mission, current)) {
+    return withMissionLock(name, 'stop', () => ({ outcome: 'nothing', warnings: cleanMission(mission, []) }));
+  }
   // A replay keeps the state as it is, with its date: that date tells how old the pids are.
   const replay = FINISHED.includes(current.state);
   const record = replay ? current : { state: 'stopped' };
@@ -403,9 +485,10 @@ async function stopMission(name) {
   // A stuck holder (start-stuck) is not turned into stop-pending: running stop again would fail until
   // that process is ended, and its error says so.
   try {
-    return await withMissionLock(name, 'stop', () =>
+    const { outcome, warnings } = await withMissionLock(name, 'stop', () =>
       stopAndFree(mission, record, () => stopSessions(mission, !replay)),
     );
+    return { outcome: outcome === 'stopped' && record.state === 'done' ? 'already-done' : outcome, warnings };
   } catch (err) {
     if (err.code === 'start-busy') {
       throw codedError('stop-pending', { mission: name, holder: err.vars.command });
@@ -414,19 +497,12 @@ async function stopMission(name) {
   }
 }
 
+// Returns what stopSessionsAndWait returns.
 async function stopSessions(mission, justStopped) {
-  const name = mission.name;
-  let firstError = null;
-  for (const session of listSessions(name)) {
-    try {
-      await getAdapter(mission.agent).stop(session);
-    } catch (err) {
-      firstError = firstError || err;
-    }
-  }
+  const result = await stopSessionsAndWait(mission, listSessions(mission.name));
   // Written again: a `state set` that read the state just before the first write may have landed since.
-  if (justStopped) writeState(name, { state: 'stopped', stopping: true });
-  if (firstError) throw firstError;
+  if (justStopped) writeState(mission.name, { state: 'stopped', stopping: true });
+  return result;
 }
 
 module.exports = {

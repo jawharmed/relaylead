@@ -39,4 +39,9 @@ function finish() {
   return [];
 }
 
-module.exports = { prepareMission, prepareTask, checkDone, deliver, finish };
+// Nothing to clean at the stop or the end: out/ belongs to the user.
+function cleanMission() {
+  return [];
+}
+
+module.exports = { prepareMission, prepareTask, checkDone, deliver, finish, cleanMission };
