@@ -3,6 +3,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadProfile, loadMethod } = require('../core/profiles');
+const { t } = require('../core/messages');
 const { tmpDir } = require('../fixtures/helpers');
 
 function put(folder, name, text) {
@@ -51,4 +52,16 @@ test('method lookup follows the same order as profiles', () => {
   fs.rmSync(path.join(project, '.relaylead', 'methods', 'code.md'));
   assert.strictEqual(loadMethod('code', { dir: project, catalogDir }).instructions, 'Catalog loop.\n');
   assert.throws(() => loadMethod('ghost', { dir: project, catalogDir }), { code: 'unknown-method' });
+});
+
+// The CLI prints the text of an error, not its code: the lead recognises a refusing hook by its words.
+test('the lead recognises a hook refusing a delivery by the words the CLI prints', () => {
+  const lead = fs.readFileSync(path.join(__dirname, '..', 'catalog', 'profiles', 'lead.md'), 'utf8');
+  for (const [lang, phrase] of [
+    ['en', 'a git hook (or git itself) refused'],
+    ['fr', 'un hook git (ou git lui-même) a refusé'],
+  ]) {
+    assert.ok(t('hook-failed', {}, lang).startsWith(phrase), lang);
+    assert.ok(lead.includes(`"${phrase}"`), `lead.md quotes the ${lang} phrase`);
+  }
 });

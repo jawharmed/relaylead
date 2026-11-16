@@ -217,8 +217,16 @@ function moveTo(dir, target) {
 // `rev-parse` fails on a branch with no commit yet: `symbolic-ref` still names it.
 function currentBranch(dir) {
   if (dir === null) return COMPUTED;
-  const options = { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10000, windowsHide: true };
-  // Like every git command relaylead runs itself: no gc or maintenance left in the background.
+  const options = {
+    cwd: dir,
+    env: { ...process.env, LC_ALL: 'C' },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+    timeout: 10000,
+    windowsHide: true,
+  };
+  // Like every git command relaylead runs itself: no gc or maintenance left in the background, and
+  // messages in English.
   const git = (...args) => execFileSync('git', ['-c', 'gc.auto=0', '-c', 'maintenance.auto=false', ...args], options);
   try {
     const branch = git('rev-parse', '--abbrev-ref', 'HEAD').trim();

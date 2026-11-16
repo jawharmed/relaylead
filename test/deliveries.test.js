@@ -442,6 +442,7 @@ test('a failing hook stops the delivery with its output and the task stays done'
   assert.strictEqual(refused.code, 1, refused.err);
   assert.match(refused.err, /lint failed/);
   assert.match(refused.err, /--no-hooks/);
+  assert.doesNotMatch(refused.err, /\.\. /, 'git\'s last sentence and the text after the output make one period');
   const integration = integrationDir(dir);
   assert.strictEqual(git(integration, 'status', '--porcelain'), '');
   assert.strictEqual(fs.existsSync(path.resolve(integration, git(integration, 'rev-parse', '--git-path', 'MERGE_HEAD'))), false);
@@ -451,6 +452,67 @@ test('a failing hook stops the delivery with its output and the task stays done'
   const delivered = await deliver('a');
   assert.strictEqual(delivered.code, 0, delivered.err);
   assert.strictEqual(git(dir, 'show', 'relaylead/integration:a.txt'), 'a');
+});
+
+// A hook that formats a merged file then refuses: git cannot cancel that merge with merge --abort.
+test('a hook that changes a merged file then refuses leaves the integration worktree clean', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir);
+  finishedTask(mission, 'a');
+  writeHook(dir, 'pre-merge-commit', ['echo formatted >> a.txt', 'echo "format changed a.txt" >&2', 'exit 1']);
+
+  const refused = await deliver('a');
+  assert.strictEqual(refused.code, 1, refused.err);
+  assert.match(refused.err, /a git hook \(or git itself\) refused/);
+  assert.match(refused.err, /format changed a\.txt/);
+  const integration = integrationDir(dir);
+  assert.strictEqual(fs.existsSync(path.resolve(integration, git(integration, 'rev-parse', '--git-path', 'MERGE_HEAD'))), false);
+  assert.strictEqual(git(integration, 'status', '--porcelain', '--untracked-files=no'), '');
+  assert.strictEqual(listTasks('demo')[0].state, 'done');
+
+  removeHook(dir, 'pre-merge-commit');
+  const delivered = await deliver('a');
+  assert.strictEqual(delivered.code, 0, delivered.err);
+  assert.strictEqual(git(dir, 'show', 'relaylead/integration:a.txt'), 'a');
+});
+
+// Changes made before the merge (here a line not committed) must not be lost to a reset.
+test('a merge git cannot cancel over earlier changes is left to the user', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir);
+  finishedTask(mission, 'a');
+  const integration = integrationDir(dir);
+  fs.appendFileSync(path.join(integration, 'README.md'), 'not committed yet\n');
+  writeHook(dir, 'pre-merge-commit', ['echo formatted >> a.txt', 'exit 1']);
+
+  const refused = await deliver('a');
+  assert.strictEqual(refused.code, 1, refused.err);
+  assert.match(refused.err, /left in the middle of a merge that git could not cancel/);
+  assert.match(fs.readFileSync(path.join(integration, 'README.md'), 'utf8'), /not committed yet/);
+  assert.strictEqual(listTasks('demo')[0].state, 'done');
+});
+
+test('a hook refusing the update of the integration branch at launch is reported', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  preparedMission(dir);
+  fs.writeFileSync(path.join(dir, 'tasks', 'b.md'), TASK_B);
+  git(dir, 'add', 'tasks');
+  git(dir, 'commit', '-q', '-m', 'task b');
+  writeHook(dir, 'pre-merge-commit', ['echo "lint failed" >&2', 'exit 1']);
+
+  writeMission('two', dir);
+  assert.throws(() => localMerge.prepareMission(readMission('two')), (err) => {
+    assert.strictEqual(err.code, 'launch-hook-failed');
+    assert.match(err.vars.output, /lint failed/);
+    assert.match(err.message, /"runHooks": false/);
+    return true;
+  });
+  const integration = integrationDir(dir);
+  assert.strictEqual(git(integration, 'status', '--porcelain'), '');
+  assert.strictEqual(fs.existsSync(path.resolve(integration, git(integration, 'rev-parse', '--git-path', 'MERGE_HEAD'))), false);
 });
 
 test('deliver --no-hooks is for the user only and skips the hooks', async (t) => {

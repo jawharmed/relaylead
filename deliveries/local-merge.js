@@ -265,7 +265,26 @@ function runHooks(mission) {
 }
 
 // What a hook (and git) printed is shown in the error, cut so that a long lint report stays readable.
+// Its last period is dropped: the message goes on with its own sentence.
 const MAX_OUTPUT = 2000;
+
+function shownOutput(text) {
+  return String(text).trim().slice(0, MAX_OUTPUT).replace(/\.+$/, '');
+}
+
+// `merge --abort` fails when a hook changed a merged file ("Entry 'a.txt' not uptodate"). With no
+// changes of its own before the merge, the worktree goes back to its last commit: that drops only
+// what the merge and the hook wrote (files the hook created stay). Changes made before the merge, such
+// as a state line not committed yet, would be lost too: the worktree is then left to the user.
+function cancelMerge(integration, changedBefore) {
+  try {
+    git(integration, ['merge', '--abort']);
+  } catch (err) {
+    if (err.timedOut) throw err;
+    if (changedBefore) throw codedError('integration-stuck', { dir: integration, output: shownOutput(err.output || err.message) });
+    git(integration, ['reset', '--hard', 'HEAD']);
+  }
+}
 
 // Merges in the integration worktree; on a conflict, cancels the merge and returns false. Runs the
 // project's hooks unless runHooks is false (--no-verify).
@@ -275,6 +294,7 @@ const MAX_OUTPUT = 2000;
 // git() is not used for the merge: its own retries would meet the merge left going.
 function mergeOrAbort(integration, args, { runHooks: hooks, refusal }) {
   const verify = hooks ? [] : ['--no-verify'];
+  const changedBefore = git(integration, ['status', '--porcelain', '--untracked-files=no']) !== '';
   for (let attempt = 1; ; attempt++) {
     try {
       runGit(integration, ['merge', '--no-ff', '--no-edit', ...verify, ...args], ['ignore', 'pipe', 'pipe']);
@@ -284,14 +304,14 @@ function mergeOrAbort(integration, args, { runHooks: hooks, refusal }) {
       const output = `${err.stdout || ''}${err.stderr || ''}`.trim() || err.message;
       if (mergeInProgress(integration)) {
         const conflicted = git(integration, ['diff', '--name-only', '--diff-filter=U']) !== '';
-        git(integration, ['merge', '--abort']);
+        cancelMerge(integration, changedBefore);
         if (conflicted) return false;
       }
       if (isTransientGitError(output) && attempt < LOCK_ATTEMPTS) {
         sleepSync(100 * attempt);
         continue;
       }
-      if (hooks) throw codedError(refusal.code, { ...refusal.vars, output: output.slice(0, MAX_OUTPUT) });
+      if (hooks) throw codedError(refusal.code, { ...refusal.vars, output: shownOutput(output) });
       throw new Error(`git merge ${args.join(' ')} failed: ${output}`);
     }
   }
@@ -371,7 +391,7 @@ function finish(mission, task, { runHooks: hooks = runHooks(mission) } = {}) {
     }
   } catch (err) {
     if (hooks && !err.timedOut) {
-      const output = String(err.output || err.message).slice(0, MAX_OUTPUT);
+      const output = shownOutput(err.output || err.message);
       return [codedError('state-line-hook-failed', { what: 'state line commit', id: task.id, output })];
     }
     return [codedError('cleanup-failed', { id: task.id, detail: err.message })];

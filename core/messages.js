@@ -84,6 +84,8 @@ const messages = {
       'a git hook (or git itself) refused relaylead\'s {what}: the merge of your current branch into the integration branch {branch}; nothing was merged and the mission was not launched. Output: {output}. Fix the cause and launch again, or let relaylead\'s own commits skip the hooks with "delivery": {"runHooks": false} in .relaylead.json',
     'state-line-hook-failed':
       'task "{id}" is delivered, but a git hook (or git itself) refused relaylead\'s {what}; the line stays uncommitted in the integration worktree, and the next "relaylead task deliver {id}" commits it. Output: {output}',
+    'integration-stuck':
+      'the integration worktree {dir} is left in the middle of a merge that git could not cancel ({output}); there, run git merge --abort or git reset --merge, keep the changes under the task folder, then deliver again',
     'empty-output': 'task "{id}" delivered nothing: its output folder {dir} is empty',
     'cleanup-failed':
       'task "{id}" is delivered, but its worktree or branch could not be cleaned up; the next "relaylead task deliver {id}" tries again ({detail})',
@@ -228,6 +230,8 @@ const messages = {
       'un hook git (ou git lui-même) a refusé la fusion de votre branche courante dans la branche d\'intégration {branch} par relaylead ; rien n\'a été fusionné et la mission n\'est pas lancée. Sortie : {output}. Corrigez la cause et relancez, ou faites passer les commits de relaylead sans hooks avec "delivery": {"runHooks": false} dans .relaylead.json',
     'state-line-hook-failed':
       'la tâche « {id} » est livrée, mais un hook git (ou git lui-même) a refusé le commit de sa ligne d\'état par relaylead ; la ligne reste non commitée dans le worktree d\'intégration, et le prochain « relaylead task deliver {id} » la commite. Sortie : {output}',
+    'integration-stuck':
+      'le worktree d\'intégration {dir} reste au milieu d\'une fusion que git n\'a pas pu annuler ({output}) ; dans ce dossier, lancez git merge --abort ou git reset --merge, gardez les changements du dossier des tâches, puis livrez de nouveau',
     'empty-output': 'la tâche « {id} » n\'a rien livré : son dossier de sortie {dir} est vide',
     'cleanup-failed':
       'la tâche « {id} » est livrée, mais son worktree ou sa branche n\'a pas pu être nettoyé ; le prochain « relaylead task deliver {id} » réessaie ({detail})',

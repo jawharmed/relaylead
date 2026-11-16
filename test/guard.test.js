@@ -3,6 +3,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const { checkToolUse, isAllowed, denyMessage } = require('../core/guard');
 const { DEFAULTS } = require('../core/config');
 const { tmpDir } = require('../fixtures/helpers');
@@ -152,6 +153,28 @@ test('the guard reads the branch without background maintenance', { skip: proces
   assertDenied(bash('git push', dir), 'push to protected branch main');
   assert.ok(calls().length > 0);
   for (const call of calls()) assert.match(call, /^-c gc\.auto=0 -c maintenance\.auto=false /, call);
+});
+
+// Like relaylead's other git calls: messages in English whatever the system's language.
+test('the guard runs git with LC_ALL=C', { skip: process.platform === 'win32' }, (t) => {
+  const dir = repoOn('main');
+  const bin = tmpDir('relaylead-git-');
+  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  const seen = path.join(bin, 'lc_all.log');
+  fs.writeFileSync(path.join(bin, 'git'), `#!/bin/sh\necho "LC_ALL=$LC_ALL" >> '${seen}'\nexec '${realGit}' "$@"\n`, { mode: 0o755 });
+  const { PATH, LC_ALL } = process.env;
+  process.env.PATH = bin + path.delimiter + PATH;
+  process.env.LC_ALL = 'fr_FR.UTF-8';
+  t.after(() => {
+    process.env.PATH = PATH;
+    if (LC_ALL === undefined) delete process.env.LC_ALL;
+    else process.env.LC_ALL = LC_ALL;
+  });
+
+  assertDenied(bash('git push', dir), 'push to protected branch main');
+  const lines = fs.readFileSync(seen, 'utf8').split('\n').filter(Boolean);
+  assert.ok(lines.length > 0);
+  for (const line of lines) assert.strictEqual(line, 'LC_ALL=C');
 });
 
 test('bare git push on main is refused', () => {
