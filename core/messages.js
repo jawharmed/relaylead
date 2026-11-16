@@ -23,6 +23,7 @@ const messages = {
     noMissions: 'no missions\n',
     missionStopped: 'mission {mission} stopped\n',
     missionNothingToStop: 'mission {mission} is already {state}; nothing to do\n',
+    missionDoneSessionsStopped: 'mission {mission} is done; its remaining sessions were stopped\n',
     missionStopSkipped:
       'the sessions of mission {mission} were not stopped again: their process ids are more than an hour old\n',
     taskDelivered: 'task {id} delivered\n',
@@ -62,6 +63,14 @@ const messages = {
     'empty-output': 'task "{id}" delivered nothing: its output folder {dir} is empty',
     'cleanup-failed':
       'task "{id}" is delivered, but its worktree or branch could not be cleaned up; the next "relaylead task deliver {id}" tries again ({detail})',
+    'worktree-kept':
+      'the worktree {dir} (branch {branch}) has changes not committed, so it was kept; commit them on its branch or remove them, then run relaylead stop {mission} to clean up again',
+    'worktree-busy':
+      'the worktree {dir} (branch {branch}) was kept: its session may still be running; once it has ended, run relaylead stop {mission} to clean up again',
+    'mission-cleanup-failed':
+      'the task worktrees of mission "{mission}" could not all be cleaned up; run relaylead stop {mission} to try again ({detail})',
+    'session-still-alive':
+      'the session {shortId} of mission "{mission}" was asked to stop, but its process is still running; run relaylead stop {mission} again',
     'task-late-work':
       'task "{id}" is delivered, but its branch {branch} or its folder {dir} has work done since; they were kept: deliver that work as a new task',
     'integration-sync-conflict':
@@ -131,6 +140,7 @@ const messages = {
     noMissions: 'aucune mission\n',
     missionStopped: 'mission {mission} arrêtée\n',
     missionNothingToStop: 'la mission {mission} est déjà {state} ; rien à faire\n',
+    missionDoneSessionsStopped: 'la mission {mission} est terminée ; ses sessions restantes ont été arrêtées\n',
     missionStopSkipped:
       'les sessions de la mission {mission} n\'ont pas été arrêtées de nouveau : leurs numéros de processus ont plus d\'une heure\n',
     taskDelivered: 'tâche {id} livrée\n',
@@ -169,6 +179,14 @@ const messages = {
     'empty-output': 'la tâche « {id} » n\'a rien livré : son dossier de sortie {dir} est vide',
     'cleanup-failed':
       'la tâche « {id} » est livrée, mais son worktree ou sa branche n\'a pas pu être nettoyé ; le prochain « relaylead task deliver {id} » réessaie ({detail})',
+    'worktree-kept':
+      'le worktree {dir} (branche {branch}) a des changements non commités, il est donc conservé ; commitez-les sur sa branche ou retirez-les, puis lancez relaylead stop {mission} pour refaire le ménage',
+    'worktree-busy':
+      'le worktree {dir} (branche {branch}) est conservé : sa session tourne peut-être encore ; une fois qu\'elle est finie, lancez relaylead stop {mission} pour refaire le ménage',
+    'mission-cleanup-failed':
+      'les worktrees de tâche de la mission « {mission} » n\'ont pas tous pu être retirés ; lancez relaylead stop {mission} pour réessayer ({detail})',
+    'session-still-alive':
+      'la session {shortId} de la mission « {mission} » a reçu l\'ordre de s\'arrêter, mais son processus tourne encore ; relancez relaylead stop {mission}',
     'task-late-work':
       'la tâche « {id} » est livrée, mais sa branche {branch} ou son dossier {dir} contient du travail fait depuis ; ils sont conservés : livrez ce travail dans une nouvelle tâche',
     'integration-sync-conflict':

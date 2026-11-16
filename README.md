@@ -28,6 +28,8 @@ From the root of your repository:
 
 The work lands on the branch `relaylead/integration`; your own checkout is never changed.
 
+Each task works in its own worktree, under `.relaylead/worktrees/`. When a mission is stopped or done, its clean task worktrees are removed, **ignored files included** (`node_modules`, build output); their branches stay, so no commit is lost. A worktree with changes not committed, or whose session is still running, is kept and reported: commit or remove those changes, or wait for the session to end, then run `relaylead stop <mission>` again to clean up.
+
 Design documents are in French for now:
 
 - [Design](docs/specs/2026-11-14-relaylead-design.md)
@@ -67,6 +69,8 @@ Depuis un clone de ce dépôt, lancez `npm link` : la commande `relaylead` est a
 - `relaylead stop <mission>` arrête la mission et toutes ses sessions.
 
 Le travail arrive sur la branche `relaylead/integration` ; votre propre copie de travail ne change jamais.
+
+Chaque tâche travaille dans son propre worktree, sous `.relaylead/worktrees/`. À l'arrêt ou à la fin d'une mission, ses worktrees de tâche propres sont retirés, **fichiers ignorés compris** (`node_modules`, sorties de build) ; leurs branches restent, aucun commit n'est perdu. Un worktree avec des modifications non commitées, ou dont la session tourne encore, est gardé et signalé : committez ou retirez ces modifications, ou attendez la fin de la session, puis relancez `relaylead stop <mission>` pour refaire le ménage.
 
 ## Développer
 

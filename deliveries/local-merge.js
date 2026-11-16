@@ -338,4 +338,68 @@ function finish(mission, task) {
   return [];
 }
 
-module.exports = { prepareMission, prepareTask, checkDone, deliver, finish, isTransientGitError, gitTimeoutMs };
+// The task worktrees of the mission, as git lists them: those on a branch relaylead/<mission>/….
+// The integration worktree and the worktrees of other missions are left out.
+function missionWorktrees(mission) {
+  const prefix = `refs/heads/relaylead/${mission.name}/`;
+  const worktrees = [];
+  let dir = null;
+  for (const line of git(mission.dir, ['worktree', 'list', '--porcelain']).split(/\r?\n/)) {
+    if (line.startsWith('worktree ')) dir = path.resolve(line.slice('worktree '.length));
+    if (line.startsWith('branch ' + prefix)) worktrees.push({ dir, branch: line.slice('branch refs/heads/'.length) });
+  }
+  return worktrees;
+}
+
+// Git and the session registry may spell one folder differently: slashes, letter case, /private on macOS.
+function realPath(dir) {
+  try {
+    return fs.realpathSync.native(dir);
+  } catch {
+    return path.resolve(dir);
+  }
+}
+
+// At the stop or the end of a mission: removes its clean task worktrees, ignored files included
+// (node_modules, build output). Their branches stay, so no commit is lost. A worktree where a
+// session may still run (keepDirs), or with changes not committed, is kept and reported. Never
+// throws: each problem is returned as a warning, and the next `relaylead stop` tries again.
+function cleanMission(mission, { keepDirs = [] } = {}) {
+  const warnings = [];
+  let worktrees;
+  try {
+    worktrees = missionWorktrees(mission);
+  } catch (err) {
+    return [codedError('mission-cleanup-failed', { mission: mission.name, detail: err.message })];
+  }
+  const busy = keepDirs.map(realPath);
+  for (const { dir, branch } of worktrees) {
+    if (!fs.existsSync(dir)) continue; // a folder removed by hand: `worktree prune` forgets it
+    const vars = { mission: mission.name, dir, branch };
+    try {
+      if (busy.includes(realPath(dir))) warnings.push(codedError('worktree-busy', vars));
+      else if (git(dir, ['status', '--porcelain']) !== '') warnings.push(codedError('worktree-kept', vars));
+      else removeWorktree(mission, dir);
+    } catch (err) {
+      warnings.push(codedError('mission-cleanup-failed', { mission: mission.name, detail: err.message }));
+    }
+  }
+  try {
+    git(mission.dir, ['worktree', 'prune']);
+  } catch (err) {
+    warnings.push(codedError('mission-cleanup-failed', { mission: mission.name, detail: err.message }));
+  }
+  return warnings;
+}
+
+module.exports = {
+  prepareMission,
+  prepareTask,
+  checkDone,
+  deliver,
+  finish,
+  missionWorktrees,
+  cleanMission,
+  isTransientGitError,
+  gitTimeoutMs,
+};

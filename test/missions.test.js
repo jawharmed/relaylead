@@ -668,3 +668,18 @@ test('an empty folder lock older than 10 s is taken over', async (t) => {
   assert.strictEqual(result.code, 0, result.err);
   assert.strictEqual(readJson(lock).mission, 'demo');
 });
+
+test('stop of a done mission says it is done', async (t) => {
+  freshHome(t);
+  writeMission('demo', tmpDir('relaylead-project-')); // no lead: the test plays it
+  assert.strictEqual((await cli(['state', 'set', 'done', '--mission', 'demo'])).code, 0);
+  fake.stopById = true; // the done mission's sessions are asked again
+  t.after(() => {
+    delete fake.stopById;
+  });
+
+  const stopped = await cli(['stop', 'demo']);
+
+  assert.deepStrictEqual([stopped.code, stopped.out, stopped.err], [0, 'mission demo is done; its remaining sessions were stopped\n', '']);
+  assert.strictEqual(stateRecord('demo').state, 'done');
+});

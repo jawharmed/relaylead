@@ -93,8 +93,21 @@ commands.stop = async (args, io) => {
   refuseInSession('stop', io);
   const [name] = parseArgs(args).positional;
   if (!name) throw codedError('usage', { usage: 'relaylead stop <mission>' });
-  const outcome = await stopMission(name);
+  // The worktrees kept by the cleanup are reported even when the stop failed.
+  const warn = (warnings) => {
+    for (const warning of warnings || []) io.err.write(`relaylead stop: ${t(warning.code, warning.vars, language(io))}\n`);
+  };
+  let result;
+  try {
+    result = await stopMission(name);
+  } catch (err) {
+    warn(err.warnings);
+    throw err;
+  }
+  warn(result.warnings);
+  const { outcome } = result;
   if (outcome === 'stopped') io.out.write(t('missionStopped', { mission: name }, language(io)));
+  else if (outcome === 'already-done') io.out.write(t('missionDoneSessionsStopped', { mission: name }, language(io)));
   else if (outcome === 'skipped') io.out.write(t('missionStopSkipped', { mission: name }, language(io)));
   else io.out.write(t('missionNothingToStop', { mission: name, state: getState(name) }, language(io)));
   return 0;
