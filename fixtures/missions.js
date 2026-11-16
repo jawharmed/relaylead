@@ -1,10 +1,11 @@
 // A project folder with two tasks (b depends on a), shared by the task and wait tests.
 const fs = require('node:fs');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const { missionDir } = require('../core/paths');
 const { writeJson } = require('../core/store');
 const { loadConfig } = require('../core/config');
-const { listSessions } = require('../core/sessions');
+const { listSessions, isAlive } = require('../core/sessions');
 const { listMissions } = require('../core/missions');
 const fake = require('../adapters/fake');
 const { tmpDir } = require('./helpers');
@@ -58,8 +59,46 @@ function writeMission(name, dir) {
   });
 }
 
-// Every file of a mission folder (state, tasks, results, sessions, fake agent logs), for a test
-// failure message.
+// The pid in start.lock (a JSON holder, or a pid alone), or 0.
+function lockHolder(name) {
+  try {
+    const holder = JSON.parse(fs.readFileSync(path.join(missionDir(name), 'start.lock'), 'utf8'));
+    return Number(typeof holder === 'object' && holder ? holder.pid : holder) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+// The live processes of a mission: its sessions, the holder of start.lock, and their descendants,
+// with how long they have run. A command stuck in a test shows here. Not on Windows (no ps).
+function missionProcesses(name) {
+  if (process.platform === 'win32') return [];
+  const roots = [...listSessions(name).map((session) => session.pid), lockHolder(name)].filter(isAlive);
+  let rows;
+  try {
+    rows = execFileSync('ps', ['-A', '-o', 'pid=,ppid=,etime=,command='], { encoding: 'utf8', timeout: 10000 })
+      .split('\n')
+      .map((line) => line.trim().match(/^(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/))
+      .filter(Boolean)
+      .map(([line, pid, ppid]) => ({ line, pid: Number(pid), ppid: Number(ppid) }));
+  } catch (err) {
+    return [`ps failed: ${err.message}`];
+  }
+  const shown = new Set(roots);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const row of rows) {
+      if (!shown.has(row.pid) && shown.has(row.ppid)) {
+        shown.add(row.pid);
+        grew = true;
+      }
+    }
+  }
+  return rows.filter((row) => shown.has(row.pid)).map((row) => row.line);
+}
+
+// Every file of a mission folder (state, tasks, results, sessions, fake agent logs) and its live
+// processes, for a test failure message.
 function missionReport(name) {
   const lines = [`--- mission ${name}`];
   const walk = (folder) => {
@@ -74,6 +113,7 @@ function missionReport(name) {
   } catch (err) {
     lines.push(String(err));
   }
+  lines.push('--- processes (pid ppid elapsed command)', ...missionProcesses(name));
   return lines.join('\n');
 }
 

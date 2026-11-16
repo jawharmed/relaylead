@@ -6,7 +6,7 @@ const path = require('node:path');
 const { checkToolUse, isAllowed, denyMessage } = require('../core/guard');
 const { DEFAULTS } = require('../core/config');
 const { tmpDir } = require('../fixtures/helpers');
-const { git, gitRepo } = require('../fixtures/git');
+const { git, gitRepo, recordingGit } = require('../fixtures/git');
 
 const GUARD = DEFAULTS.guard;
 // File names that differ only by case are the same file on macOS and Windows.
@@ -144,6 +144,14 @@ test('a cd that may not have happened keeps the first folder possible', () => {
 
 test('git -C dir push origin main is refused', () => {
   assertDenied(bash('git -C ../other push origin main', repoOn('relaylead/x')), 'push to protected branch main');
+});
+
+test('the guard reads the branch without background maintenance', { skip: process.platform === 'win32' }, (t) => {
+  const dir = repoOn('main');
+  const calls = recordingGit(t);
+  assertDenied(bash('git push', dir), 'push to protected branch main');
+  assert.ok(calls().length > 0);
+  for (const call of calls()) assert.match(call, /^-c gc\.auto=0 -c maintenance\.auto=false /, call);
 });
 
 test('bare git push on main is refused', () => {

@@ -11,6 +11,7 @@ const { loadProfile } = require('./profiles');
 const { listQuestions } = require('./questions');
 const { getAdapter } = require('../adapters');
 const { getDelivery } = require('../deliveries');
+const { gitTimeoutMs } = require('../deliveries/local-merge');
 const tasksDirSource = require('../sources/tasks-dir');
 
 // The option the lead adds to the question of a task that asks first (catalog/profiles/lead.md).
@@ -18,6 +19,9 @@ const SKIP_CHOICE = 'Skip this task';
 // Long enough for a slow agent launch held by another start.
 const START_LOCK_WAIT_MS = 60 * 1000;
 const EMPTY_LOCK_STALE_MS = 10 * 1000;
+// A live holder this old is stuck: a delivery runs a few git commands, each stopped after
+// gitTimeoutMs(), so even a slow one ends well before.
+const startLockStuckMs = () => Math.max(15 * 60 * 1000, 3 * gitTimeoutMs());
 
 function now() {
   return new Date().toISOString();
@@ -135,9 +139,10 @@ function crewPrompt(task, cwd, branch, question) {
 
 // Creating the file with 'wx' fails if it exists, so only one caller holds it. On Windows, a lock
 // file being deleted cannot be created again for a moment (EPERM): it counts as still held.
-function tryCreateLock(file) {
+// The file says who holds it, so a lock that is never released shows which command is stuck.
+function tryCreateLock(file, command) {
   try {
-    fs.writeFileSync(file, String(process.pid), { flag: 'wx' });
+    fs.writeFileSync(file, JSON.stringify({ pid: process.pid, command, since: now() }), { flag: 'wx' });
     return true;
   } catch (err) {
     if (err.code === 'EEXIST' || (process.platform === 'win32' && err.code === 'EPERM')) return false;
@@ -145,20 +150,40 @@ function tryCreateLock(file) {
   }
 }
 
-// Stale: its holder process is dead, or no holder could be read from it for 10 s (a holder that
-// crashed between creating the file and writing its pid). A lock that is gone is not stale.
-function isStaleLock(file) {
+// The holder of a lock: {pid, command, since, modifiedAt}, pid 0 while its holder is still writing
+// the file; null once the lock is gone. A lock written by an older relaylead holds only the pid.
+function readLock(file) {
   let text;
   let modifiedAt;
   try {
     text = fs.readFileSync(file, 'utf8');
     modifiedAt = fs.statSync(file).mtimeMs;
   } catch {
-    return false;
+    return null;
   }
-  const holder = Number(text);
-  if (holder) return !isAlive(holder);
-  return Date.now() - modifiedAt > EMPTY_LOCK_STALE_MS;
+  let holder = {};
+  try {
+    holder = JSON.parse(text);
+  } catch {
+    // empty or partly written
+  }
+  if (typeof holder === 'number') holder = { pid: holder };
+  if (!holder || typeof holder !== 'object') holder = {};
+  return {
+    pid: Number(holder.pid) || 0,
+    command: holder.command || '?',
+    since: holder.since || new Date(modifiedAt).toISOString(),
+    modifiedAt,
+  };
+}
+
+// Stale: its holder process is dead, or no holder could be read from it for 10 s (a holder that
+// crashed between creating the file and writing its pid). A lock that is gone is not stale.
+function isStaleLock(file) {
+  const lock = readLock(file);
+  if (!lock) return false;
+  if (lock.pid) return !isAlive(lock.pid);
+  return Date.now() - lock.modifiedAt > EMPTY_LOCK_STALE_MS;
 }
 
 // Never throws: on Windows, a file another process is reading cannot always be removed at once.
@@ -180,7 +205,7 @@ async function removeQuietly(file) {
 // one has just created.
 async function takeOverStaleLock(file) {
   const guard = file + '.takeover';
-  if (!tryCreateLock(guard)) {
+  if (!tryCreateLock(guard, 'takeover')) {
     if (isStaleLock(guard)) await removeQuietly(guard);
     return false;
   }
@@ -193,13 +218,22 @@ async function takeOverStaleLock(file) {
 
 // One start or delivery at a time per mission: the lead may start tasks in parallel, and each start
 // must see the sessions and task records written by the previous one. Deliveries take it too, so
-// two git commands never change the same repository at the same time.
-async function withStartLock(name, action) {
+// two git commands never change the same repository at the same time. `command` names the holder
+// ("task start a") in the lock file and in the errors of those who wait for it.
+// A waiter gives up after a minute, even when it cannot read who holds it; at once if the live
+// holder has held it for too long.
+async function withStartLock(name, command, action) {
   const file = path.join(missionDir(name), 'start.lock');
   const giveUpAt = Date.now() + START_LOCK_WAIT_MS;
-  while (!tryCreateLock(file)) {
+  while (!tryCreateLock(file, command)) {
     if (isStaleLock(file) && (await takeOverStaleLock(file))) continue;
-    if (Date.now() > giveUpAt) throw codedError('start-busy', { mission: name });
+    const lock = readLock(file);
+    const known = lock && lock.pid;
+    const holder = known
+      ? { mission: name, command: lock.command, pid: lock.pid, since: lock.since }
+      : { mission: name, command: '?', pid: '?', since: '?' };
+    if (known && Date.now() - Date.parse(lock.since) > startLockStuckMs()) throw codedError('start-stuck', holder);
+    if (Date.now() > giveUpAt) throw codedError('start-busy', holder);
     await sleep(50);
   }
   try {
@@ -212,7 +246,7 @@ async function withStartLock(name, action) {
 // Idempotent: a running task is returned as it is, so a replayed start launches nobody.
 async function startTask(name, { id, profile = 'developer' }) {
   const mission = readMission(name); // before the lock, which lives in the mission folder
-  return withStartLock(name, () => launchCrew(mission, id, profile));
+  return withStartLock(name, `task start ${id}`, () => launchCrew(mission, id, profile));
 }
 
 async function launchCrew(mission, id, profile) {
@@ -260,7 +294,7 @@ async function launchCrew(mission, id, profile) {
 async function deliverTask(name, id) {
   const mission = readMission(name); // before the lock, which lives in the mission folder
   const delivery = getDelivery(mission.config.delivery.type);
-  return withStartLock(name, () => {
+  return withStartLock(name, `task deliver ${id}`, () => {
     const task = findTask(name, id);
     if (task.state === 'delivered') return { outcome: 'already-delivered', warnings: delivery.finish(mission, task) };
     if (task.state !== 'done') throw codedError('task-not-deliverable', { id, state: task.state });

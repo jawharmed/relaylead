@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { spawn } = require('node:child_process');
+const { spawn, execFileSync } = require('node:child_process');
 const { run } = require('../core/cli');
 const { listTasks, finishTask } = require('../core/tasks');
 const { getState, readMission } = require('../core/missions');
@@ -15,7 +15,7 @@ const files = require('../deliveries/files');
 const tasksDirSource = require('../sources/tasks-dir');
 const { tmpDir, makeIo, waitFor } = require('../fixtures/helpers');
 const { writeMission, missionReport } = require('../fixtures/missions');
-const { git, gitRepo } = require('../fixtures/git');
+const { git, gitRepo, recordingGit } = require('../fixtures/git');
 
 const TASK_A = '---\ntitle: First task\n---\n\nWrite a.\n';
 const TASK_B = '---\ntitle: Second task\ndepends: [a]\n---\n\nWrite b.\n';
@@ -523,6 +523,99 @@ test('a delivery waits for a git lock to be released', async (t) => {
   const delivered = await deliver('a');
   assert.strictEqual(delivered.code, 0, delivered.err);
   assert.strictEqual(git(dir, 'show', 'relaylead/integration:a.txt'), 'a');
+});
+
+// A git command that never ends would hold the start lock forever: here git leaves a process
+// behind that keeps its output open, so a caller reading that output never sees it end.
+test('a git command that does not end fails the delivery in time', { skip: process.platform === 'win32', timeout: 20000 }, async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir);
+  finishedTask(mission, 'a');
+  const bin = tmpDir('relaylead-git-');
+  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  const leftover = path.join(bin, 'leftover.pid');
+  fs.writeFileSync(
+    path.join(bin, 'git'),
+    `#!/bin/sh\nsleep 30 &\necho $! >> '${leftover}'\nexec '${realGit}' "$@"\n`,
+    { mode: 0o755 },
+  );
+  const { PATH } = process.env;
+  process.env.PATH = bin + path.delimiter + PATH;
+  process.env.RELAYLEAD_GIT_TIMEOUT_MS = '1000';
+  t.after(() => {
+    process.env.PATH = PATH;
+    delete process.env.RELAYLEAD_GIT_TIMEOUT_MS;
+    const pids = fs.existsSync(leftover) ? fs.readFileSync(leftover, 'utf8').split('\n').filter(Boolean) : [];
+    for (const pid of pids) if (isAlive(Number(pid))) process.kill(Number(pid));
+  });
+
+  const startedAt = Date.now();
+  const delivered = await deliver('a');
+  assert.notStrictEqual(delivered.code, 0);
+  assert.match(delivered.err, /did not end within 1 s/);
+  assert.ok(Date.now() - startedAt < 10000, `the delivery took ${Date.now() - startedAt} ms`);
+  assert.strictEqual(fs.existsSync(path.join(missionDir('demo'), 'start.lock')), false);
+});
+
+// Killed in the middle of a merge, git leaves the merge going and its index.lock behind: the
+// integration worktree would refuse every later delivery.
+test('a merge that does not end is cancelled', { skip: process.platform === 'win32', timeout: 30000 }, async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir);
+  finishedTask(mission, 'a');
+  const bin = tmpDir('relaylead-git-');
+  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  // The merge stops before its commit, takes the index lock, then hangs.
+  fs.writeFileSync(
+    path.join(bin, 'git'),
+    [
+      '#!/bin/sh',
+      'case "$*" in',
+      `  *" merge --no-ff "*) '${realGit}' "$@" --no-commit; touch "$('${realGit}' rev-parse --git-path index.lock)"; exec sleep 30 ;;`,
+      'esac',
+      `exec '${realGit}' "$@"`,
+      '',
+    ].join('\n'),
+    { mode: 0o755 },
+  );
+  const { PATH } = process.env;
+  process.env.PATH = bin + path.delimiter + PATH;
+  process.env.RELAYLEAD_GIT_TIMEOUT_MS = '1000';
+  t.after(() => {
+    process.env.PATH = PATH;
+    delete process.env.RELAYLEAD_GIT_TIMEOUT_MS;
+  });
+
+  const failed = await deliver('a');
+  assert.notStrictEqual(failed.code, 0);
+  assert.match(failed.err, /did not end within 1 s; the merge was cancelled/);
+  process.env.PATH = PATH;
+  const integration = integrationDir(dir);
+  assert.strictEqual(git(integration, 'status', '--porcelain'), '');
+  assert.strictEqual(fs.existsSync(path.resolve(integration, git(integration, 'rev-parse', '--git-path', 'MERGE_HEAD'))), false);
+
+  const delivered = await deliver('a');
+  assert.strictEqual(delivered.code, 0, delivered.err);
+  assert.strictEqual(git(dir, 'show', 'relaylead/integration:a.txt'), 'a');
+});
+
+// A background gc or maintenance started by git may keep the output pipes open, and holds the
+// repository's locks: relaylead's own git commands never start one.
+test('relaylead runs git without background maintenance', { skip: process.platform === 'win32' }, async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A, 'tasks/b.md': TASK_B });
+  const calls = recordingGit(t);
+  const mission = preparedMission(dir);
+  finishedTask(mission, 'a'); // the crew's own add and commit (fixtures/git) go through it too
+  const delivered = await deliver('a');
+  assert.strictEqual(delivered.code, 0, delivered.err);
+
+  // The crew's commands are its own git, left as they are.
+  const own = calls().filter((call) => !/^(add -A|commit -q -m a)$/.test(call));
+  assert.ok(own.length > 10, own.join('\n'));
+  for (const call of own) assert.match(call, /^-c gc\.auto=0 -c maintenance\.auto=false /, call);
 });
 
 test('git messages that a short wait cures are recognised', () => {
