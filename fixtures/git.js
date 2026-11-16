@@ -3,9 +3,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { tmpDir } = require('./helpers');
+const { runFileSync } = require('../core/run-file');
 
+// Like relaylead's own git calls, it does not wait for a process git leaves behind.
 function git(cwd, ...args) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  return runFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 
 // CI runners have no git user. Set in process.env, so the fake agents spawned by the tests get it too.
