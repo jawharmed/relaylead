@@ -4,7 +4,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { codedError } = require('../core/messages');
+const { t, codedError } = require('../core/messages');
 const { sleepSync, retrySync } = require('../core/timing');
 const tasksDirSource = require('../sources/tasks-dir');
 
@@ -189,12 +189,20 @@ function updateIntegration(mission) {
 }
 
 // A worktree folder that exists must be this task's: it may have been left by an older mission.
+// When that mission is a Relaylead one (branch relaylead/<mission>/<id>), the error says to remove it.
 function checkTaskWorktree(mission, task) {
   const cwd = taskDir(mission, task);
   const branch = taskBranch(mission, task);
-  if (fs.existsSync(cwd) && currentBranch(cwd) !== branch) {
-    throw codedError('worktree-mismatch', { dir: cwd, actual: currentBranch(cwd), branch });
-  }
+  if (!fs.existsSync(cwd)) return;
+  const actual = currentBranch(cwd);
+  if (actual === branch) return;
+  const err = codedError('worktree-mismatch', { dir: cwd, actual, branch });
+  const owner = actual.match(/^relaylead\/([a-z0-9-]+)\/[^/]+$/);
+  err.suffix = owner
+    ? { key: 'worktree-of-mission', vars: { mission: owner[1], dir: cwd } }
+    : { key: 'worktree-not-relaylead', vars: { dir: cwd } };
+  err.message += t(err.suffix.key, err.suffix.vars);
+  throw err;
 }
 
 // The task's branch starts from the integration branch. A worktree left by a failed launch is reused.
@@ -401,6 +409,43 @@ function cleanMission(mission, { keepDirs = [] } = {}) {
   return warnings;
 }
 
+// The task branches of the mission: relaylead/<mission>/<id>.
+function missionBranches(mission) {
+  const output = git(mission.dir, ['for-each-ref', '--format=%(refname:short)', `refs/heads/relaylead/${mission.name}/`]);
+  return output === '' ? [] : output.split(/\r?\n/);
+}
+
+// `relaylead remove`: removes the task worktrees and branches of the mission. The integration
+// worktree and branch stay: they hold the delivered work. Checks everything before changing
+// anything: a worktree with changes not committed, or a branch with commits the integration branch
+// does not have, is refused unless `force`. Returns the deleted branches as "<name> <sha>", so one
+// can be made again with `git branch <name> <sha>`.
+function removeMission(mission, { force = false } = {}) {
+  const integrationBranch = mission.config.delivery.branch;
+  const integration = realPath(integrationDir(mission));
+  // A folder removed by hand has no work left: `worktree prune` forgets it.
+  const worktrees = missionWorktrees(mission).filter(({ dir }) => fs.existsSync(dir) && realPath(dir) !== integration);
+  const branches = missionBranches(mission).filter((branch) => branch !== integrationBranch);
+  // --untracked-files=all: a user setting status.showUntrackedFiles=no would hide new files.
+  const dirty = worktrees
+    .filter(({ dir }) => git(dir, ['status', '--porcelain', '--untracked-files=all']) !== '')
+    .map(({ dir }) => dir);
+  const unmerged = branches.filter(
+    (branch) => git(mission.dir, ['rev-list', '--count', `${integrationBranch}..${branch}`]) !== '0',
+  );
+  const items = [...dirty, ...unmerged];
+  if (items.length > 0 && !force) {
+    throw codedError('remove-unmerged-work', { mission: mission.name, items: items.join(', ') });
+  }
+
+  const deleted = branches.map((branch) => `${branch} ${git(mission.dir, ['rev-parse', branch])}`);
+  for (const { dir } of worktrees) removeWorktree(mission, dir);
+  // Before the branches: git refuses to delete a branch that a worktree, even a missing one, has out.
+  git(mission.dir, ['worktree', 'prune']);
+  for (const branch of branches) git(mission.dir, ['branch', '-D', branch]);
+  return deleted;
+}
+
 module.exports = {
   prepareMission,
   prepareTask,
@@ -409,6 +454,8 @@ module.exports = {
   finish,
   missionWorktrees,
   cleanMission,
+  missionBranches,
+  removeMission,
   isTransientGitError,
   gitTimeoutMs,
 };

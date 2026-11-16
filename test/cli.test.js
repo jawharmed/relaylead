@@ -78,3 +78,7 @@ test('an option may be written --name=value', async () => {
   assert.strictEqual(await run(['task', 'list', '--mission=ghost'], io), 1);
   assert.match(io.err.text, /no mission named "ghost"/);
 });
+
+test('remove is refused from inside a session', async () => {
+  await assert.rejects(commands.remove(['demo'], makeIo({ RELAYLEAD_MISSION: 'demo' })), { code: 'not-from-a-session' });
+});

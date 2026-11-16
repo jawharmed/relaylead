@@ -1,14 +1,14 @@
 const path = require('node:path');
 const { t, codedError } = require('./messages');
 const { loadConfig } = require('./config');
-const { createMission, listMissions, stopMission, getState, setState, reapLead, attachLead } = require('./missions');
+const { createMission, listMissions, stopMission, removeMission, getState, setState, reapLead, attachLead } = require('./missions');
 const { listTasks, startTask, deliverTask, finishTask } = require('./tasks');
 const { waitForChanges } = require('./wait');
 const { askQuestion, answerQuestion, listQuestions } = require('./questions');
 const pkg = require('../package.json');
 
 // Options that take no value.
-const FLAGS = ['all'];
+const FLAGS = ['all', 'force'];
 
 // Splits arguments into positional values and `--name value` (or `--name=value`) options.
 // A repeated option (--option a --option b) is also kept in full in `lists`.
@@ -110,6 +110,18 @@ commands.stop = async (args, io) => {
   else if (outcome === 'already-done') io.out.write(t('missionDoneSessionsStopped', { mission: name }, language(io)));
   else if (outcome === 'skipped') io.out.write(t('missionStopSkipped', { mission: name }, language(io)));
   else io.out.write(t('missionNothingToStop', { mission: name, state: getState(name) }, language(io)));
+  return 0;
+};
+
+commands.remove = async (args, io) => {
+  refuseInSession('remove', io);
+  const { positional, options } = parseArgs(args);
+  const [name] = positional;
+  if (!name) throw codedError('usage', { usage: 'relaylead remove <mission> [--force]' });
+  const deleted = await removeMission(name, { force: options.force === true });
+  io.out.write(t('missionRemoved', { mission: name }, language(io)));
+  // With its last commit, a deleted branch can be made again: git branch <name> <sha>.
+  for (const branch of deleted) io.out.write(t('branchDeleted', { branch }, language(io)));
   return 0;
 };
 

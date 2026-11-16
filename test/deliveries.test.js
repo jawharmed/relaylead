@@ -909,3 +909,130 @@ test('task done and a replayed delivery see untracked files even when git status
   assert.match(replayed.err, /kept/);
   assert.strictEqual(fs.readFileSync(path.join(a, 'later.txt'), 'utf8'), 'later\n');
 });
+
+// The branches of mission demo, as `git branch` lists them.
+function demoBranches(dir) {
+  return git(dir, 'for-each-ref', '--format=%(refname:short)', 'refs/heads/relaylead/demo/');
+}
+
+function stopped(name) {
+  writeJson(path.join(missionDir(name), 'state.json'), { state: 'stopped', updatedAt: new Date().toISOString() });
+}
+
+test('remove is refused while the mission runs', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir);
+  taskWithWork(mission, 'a', { committed: true });
+  writeJson(path.join(missionDir('demo'), 'state.json'), { state: 'working', updatedAt: new Date().toISOString() });
+
+  const refused = await cli(['remove', 'demo']);
+
+  assert.strictEqual(refused.code, 1);
+  assert.match(refused.err, /mission "demo" is working; stop it first with: relaylead stop demo/);
+  assert.strictEqual(fs.existsSync(missionDir('demo')), true);
+  assert.strictEqual(demoBranches(dir), 'relaylead/demo/a');
+  assert.strictEqual(fs.existsSync(taskWorktree(dir, 'a')), true);
+});
+
+test('remove deletes the task worktrees, branches and mission folder, and keeps the integration branch', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A, 'tasks/b.md': TASK_A });
+  const mission = preparedMission(dir);
+  finishedTask(mission, 'a');
+  assert.strictEqual((await deliver('a')).code, 0);
+  taskWithWork(mission, 'b', { committed: true });
+  merge(dir, 'relaylead/demo/b');
+  stopped('demo');
+
+  const removed = await cli(['remove', 'demo']);
+
+  assert.strictEqual(removed.code, 0, removed.err);
+  assert.match(removed.out, /^mission demo removed\n/);
+  assert.strictEqual(fs.existsSync(missionDir('demo')), false);
+  assert.strictEqual(demoBranches(dir), '');
+  assert.strictEqual(fs.existsSync(taskWorktree(dir, 'b')), false);
+  assert.strictEqual(git(integrationDir(dir), 'rev-parse', '--abbrev-ref', 'HEAD'), 'relaylead/integration');
+  const worktrees = git(dir, 'worktree', 'list', '--porcelain').split('\n').filter((line) => line.startsWith('worktree '));
+  assert.strictEqual(worktrees.length, 2, 'only the user checkout and the integration worktree remain');
+});
+
+test('remove refuses work not delivered unless --force', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/b.md': TASK_A });
+  const mission = preparedMission(dir);
+  taskWithWork(mission, 'b', { committed: true });
+  stopped('demo');
+  const sha = git(dir, 'rev-parse', 'relaylead/demo/b');
+
+  const refused = await cli(['remove', 'demo']);
+
+  assert.strictEqual(refused.code, 1);
+  assert.match(refused.err, /relaylead\/demo\/b/);
+  assert.match(refused.err, /relaylead remove demo --force/);
+  assert.strictEqual(fs.existsSync(missionDir('demo')), true);
+  assert.strictEqual(demoBranches(dir), 'relaylead/demo/b');
+  assert.strictEqual(fs.existsSync(taskWorktree(dir, 'b')), true);
+
+  const forced = await cli(['remove', 'demo', '--force']);
+
+  assert.strictEqual(forced.code, 0, forced.err);
+  assert.strictEqual(forced.out, `mission demo removed\ndeleted branch relaylead/demo/b ${sha}\n`);
+  assert.strictEqual(demoBranches(dir), '');
+  assert.strictEqual(fs.existsSync(missionDir('demo')), false);
+});
+
+test('remove refuses a dirty worktree unless --force', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/b.md': TASK_A });
+  git(dir, 'config', 'status.showUntrackedFiles', 'no');
+  const mission = preparedMission(dir);
+  const b = taskWithWork(mission, 'b', { committed: true, extra: { 'draft.txt': 'not committed\n' } });
+  merge(dir, 'relaylead/demo/b');
+  stopped('demo');
+
+  const refused = await cli(['remove', 'demo']);
+
+  assert.strictEqual(refused.code, 1);
+  assert.match(refused.err, /worktrees[\\/]b\b/);
+  assert.strictEqual(fs.existsSync(path.join(b, 'draft.txt')), true);
+  assert.strictEqual(fs.existsSync(missionDir('demo')), true);
+
+  const forced = await cli(['remove', 'demo', '--force']);
+
+  assert.strictEqual(forced.code, 0, forced.err);
+  assert.strictEqual(fs.existsSync(b), false);
+  assert.strictEqual(demoBranches(dir), '');
+});
+
+test('remove skips the delivery cleanup when the project folder is gone', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  preparedMission(dir);
+  stopped('demo');
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+
+  const removed = await cli(['remove', 'demo']);
+
+  assert.strictEqual(removed.code, 0, removed.err);
+  assert.strictEqual(fs.existsSync(missionDir('demo')), false);
+});
+
+test('a worktree left by another mission names the mission to remove', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A, 'tasks/b.md': TASK_A });
+  const mission = preparedMission(dir);
+  git(dir, 'worktree', 'add', '-q', '-b', 'relaylead/old/a', taskWorktree(dir, 'a'), 'relaylead/integration');
+  git(dir, 'worktree', 'add', '-q', '-b', 'mine', taskWorktree(dir, 'b'), 'relaylead/integration');
+
+  assert.throws(() => localMerge.prepareTask(mission, { id: 'a' }), {
+    code: 'worktree-mismatch',
+    message: /relaylead remove old/,
+  });
+  assert.throws(() => localMerge.prepareTask(mission, { id: 'b' }), (err) => {
+    assert.strictEqual(err.code, 'worktree-mismatch');
+    assert.doesNotMatch(err.message, /relaylead remove/);
+    assert.match(err.message, /git worktree remove/);
+    return true;
+  });
+});

@@ -44,4 +44,9 @@ function cleanMission() {
   return [];
 }
 
-module.exports = { prepareMission, prepareTask, checkDone, deliver, finish, cleanMission };
+// Nothing to remove: out/ belongs to the user, and there is no branch.
+function removeMission() {
+  return [];
+}
+
+module.exports = { prepareMission, prepareTask, checkDone, deliver, finish, cleanMission, removeMission };

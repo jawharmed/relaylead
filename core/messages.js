@@ -8,6 +8,7 @@ const messages = {
       '  list      list the missions',
       '  show      open the lead session of a mission',
       '  stop      stop a mission',
+      '  remove    remove a finished mission',
       '  task      manage the tasks of a mission',
       '  state     read or set the state declared by the lead',
       '  wait      wait for a mission to change',
@@ -22,6 +23,8 @@ const messages = {
     unknownCommand: 'relaylead: unknown command "{command}"\n\n',
     noMissions: 'no missions\n',
     missionStopped: 'mission {mission} stopped\n',
+    missionRemoved: 'mission {mission} removed\n',
+    branchDeleted: 'deleted branch {branch}\n',
     missionNothingToStop: 'mission {mission} is already {state}; nothing to do\n',
     missionDoneSessionsStopped: 'mission {mission} is done; its remaining sessions were stopped\n',
     missionStopSkipped:
@@ -32,7 +35,11 @@ const messages = {
     usage: 'usage: {usage}',
     'dir-busy':
       'the folder {dir} is busy with mission "{mission}" ({state}); if its lead is gone, stop it first with: relaylead stop {mission}',
-    'mission-exists': 'a mission named "{mission}" already exists; choose another name with --name',
+    'mission-exists':
+      'a mission named "{mission}" already exists; choose another name with --name, or remove the finished one with: relaylead remove {mission}',
+    'mission-running': 'mission "{mission}" is {state}; stop it first with: relaylead stop {mission}',
+    'remove-unmerged-work':
+      'mission "{mission}" has work not delivered: {items}; remove anyway with: relaylead remove {mission} --force; it deletes these branches and changes',
     'mission-unknown': 'no mission named "{mission}"',
     'mission-stopped': 'mission "{mission}" was stopped; its state can no longer change',
     'mission-finished': 'mission "{mission}" is done; its state can no longer change',
@@ -64,9 +71,9 @@ const messages = {
     'cleanup-failed':
       'task "{id}" is delivered, but its worktree or branch could not be cleaned up; the next "relaylead task deliver {id}" tries again ({detail})',
     'worktree-kept':
-      'the worktree {dir} (branch {branch}) has changes not committed, so it was kept; commit them on its branch or remove them, then run relaylead stop {mission} to clean up again',
+      'the worktree {dir} (branch {branch}) has changes not committed, so it was kept; commit them on its branch or remove them, then run relaylead stop {mission} to clean up again, or delete them with the mission: relaylead remove {mission} --force',
     'worktree-busy':
-      'the worktree {dir} (branch {branch}) was kept: its session may still be running; once it has ended, run relaylead stop {mission} to clean up again',
+      'the worktree {dir} (branch {branch}) was kept: its session may still be running; once it has ended, run relaylead stop {mission} to clean up again, or relaylead remove {mission} to remove the mission',
     'mission-cleanup-failed':
       'the task worktrees of mission "{mission}" could not all be cleaned up; run relaylead stop {mission} to try again ({detail})',
     'session-still-alive':
@@ -80,7 +87,7 @@ const messages = {
     'task-empty': 'task "{id}" has no commit on its branch {branch}, so nothing to deliver; commit the work on that branch first',
     'task-branch-missing': 'cannot deliver task "{id}": its branch {branch} is missing',
     'worktree-mismatch':
-      'the folder {dir} is on branch "{actual}", not "{branch}"; it was left by another mission: remove it with: git worktree remove "{dir}"',
+      'the folder {dir} is on branch "{actual}", not "{branch}"',
     'branch-clash':
       'the integration branch "{branch}" clashes with the task branches relaylead/{mission}/<id>; choose another mission name or delivery.branch',
     'integration-mismatch':
@@ -115,6 +122,10 @@ const messages = {
     orphan: '; could not stop {shortId}: run `claude stop {shortId}`',
     'session-stopped': '; it was stopped',
     'copy-stopped': '; the copy was stopped',
+    // Added after worktree-mismatch: how to free the folder.
+    'worktree-of-mission':
+      '; it was left by mission "{mission}": remove that mission with: relaylead remove {mission}, or only this folder with: git worktree remove "{dir}"',
+    'worktree-not-relaylead': '; remove it with: git worktree remove "{dir}"',
   },
   fr: {
     help: [
@@ -125,6 +136,7 @@ const messages = {
       '  list      lister les missions',
       '  show      ouvrir la session du lead d\'une mission',
       '  stop      arrêter une mission',
+      '  remove    supprimer une mission finie',
       '  task      gérer les tâches d\'une mission',
       '  state     lire ou écrire l\'état déclaré par le lead',
       '  wait      attendre qu\'une mission change',
@@ -139,6 +151,8 @@ const messages = {
     unknownCommand: 'relaylead : commande inconnue « {command} »\n\n',
     noMissions: 'aucune mission\n',
     missionStopped: 'mission {mission} arrêtée\n',
+    missionRemoved: 'mission {mission} supprimée\n',
+    branchDeleted: 'branche supprimée {branch}\n',
     missionNothingToStop: 'la mission {mission} est déjà {state} ; rien à faire\n',
     missionDoneSessionsStopped: 'la mission {mission} est terminée ; ses sessions restantes ont été arrêtées\n',
     missionStopSkipped:
@@ -148,7 +162,11 @@ const messages = {
     usage: 'usage : {usage}',
     'dir-busy':
       'le dossier {dir} est occupé par la mission « {mission} » ({state}) ; si son lead a disparu, arrêtez-la d\'abord avec : relaylead stop {mission}',
-    'mission-exists': 'une mission nommée « {mission} » existe déjà ; choisissez un autre nom avec --name',
+    'mission-exists':
+      'une mission nommée « {mission} » existe déjà ; choisissez un autre nom avec --name, ou supprimez celle qui est finie avec : relaylead remove {mission}',
+    'mission-running': 'la mission « {mission} » est {state} ; arrêtez-la d\'abord avec : relaylead stop {mission}',
+    'remove-unmerged-work':
+      'la mission « {mission} » a du travail non livré : {items} ; supprimez quand même avec : relaylead remove {mission} --force ; cela supprime ces branches et ces changements',
     'mission-unknown': 'aucune mission nommée « {mission} »',
     'mission-stopped': 'la mission « {mission} » a été arrêtée ; son état ne peut plus changer',
     'mission-finished': 'la mission « {mission} » est terminée ; son état ne peut plus changer',
@@ -180,9 +198,9 @@ const messages = {
     'cleanup-failed':
       'la tâche « {id} » est livrée, mais son worktree ou sa branche n\'a pas pu être nettoyé ; le prochain « relaylead task deliver {id} » réessaie ({detail})',
     'worktree-kept':
-      'le worktree {dir} (branche {branch}) a des changements non commités, il est donc conservé ; commitez-les sur sa branche ou retirez-les, puis lancez relaylead stop {mission} pour refaire le ménage',
+      'le worktree {dir} (branche {branch}) a des changements non commités, il est donc conservé ; commitez-les sur sa branche ou retirez-les, puis lancez relaylead stop {mission} pour refaire le ménage, ou supprimez-les avec la mission : relaylead remove {mission} --force',
     'worktree-busy':
-      'le worktree {dir} (branche {branch}) est conservé : sa session tourne peut-être encore ; une fois qu\'elle est finie, lancez relaylead stop {mission} pour refaire le ménage',
+      'le worktree {dir} (branche {branch}) est conservé : sa session tourne peut-être encore ; une fois qu\'elle est finie, lancez relaylead stop {mission} pour refaire le ménage, ou relaylead remove {mission} pour supprimer la mission',
     'mission-cleanup-failed':
       'les worktrees de tâche de la mission « {mission} » n\'ont pas tous pu être retirés ; lancez relaylead stop {mission} pour réessayer ({detail})',
     'session-still-alive':
@@ -196,7 +214,7 @@ const messages = {
     'task-empty': 'la tâche « {id} » n\'a aucun commit sur sa branche {branch}, donc rien à livrer ; commitez d\'abord le travail sur cette branche',
     'task-branch-missing': 'impossible de livrer la tâche « {id} » : sa branche {branch} n\'existe plus',
     'worktree-mismatch':
-      'le dossier {dir} est sur la branche « {actual} », pas « {branch} » ; il vient d\'une autre mission : supprimez-le avec : git worktree remove "{dir}"',
+      'le dossier {dir} est sur la branche « {actual} », pas « {branch} »',
     'branch-clash':
       'la branche d\'intégration « {branch} » entre en conflit avec les branches des tâches relaylead/{mission}/<id> ; choisissez un autre nom de mission ou une autre delivery.branch',
     'integration-mismatch':
@@ -230,6 +248,9 @@ const messages = {
     orphan: ' ; impossible d\'arrêter {shortId} : lancez `claude stop {shortId}`',
     'session-stopped': ' ; elle a été arrêtée',
     'copy-stopped': ' ; la copie a été arrêtée',
+    'worktree-of-mission':
+      ' ; il vient de la mission « {mission} » : supprimez cette mission avec : relaylead remove {mission}, ou seulement ce dossier avec : git worktree remove "{dir}"',
+    'worktree-not-relaylead': ' ; supprimez-le avec : git worktree remove "{dir}"',
   },
 };
 

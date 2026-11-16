@@ -66,10 +66,10 @@ function worktrees(dir) {
     .map((line) => fs.realpathSync.native(line.slice('worktree '.length)));
 }
 
-test('fake mission delivers two tasks with one answered question', { timeout: 3 * MISSION_MS }, async (t) => {
-  process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
-  const dir = gitRepo(readFiles(TOY_REPO));
-  const before = checkoutState(dir);
+// Launches a mission named `name` (the folder's name when null) in `dir` with the fake agent, answers
+// the question of task b if it comes, and waits for the mission to be done. Its sessions are stopped
+// after the test. Returns the mission name and a report() for failure messages.
+async function runMission(t, dir, name) {
   let mission = null;
   t.after(async () => {
     if (mission) for (const session of listSessions(mission)) await fake.stop(session);
@@ -83,32 +83,33 @@ test('fake mission delivers two tasks with one answered question', { timeout: 3 
   };
   const report = () => `--- last poll\n${JSON.stringify(lastPoll)}\n` + missionReport(mission);
 
-  const launched = await relaylead(['launch', '--agent', 'fake', '--request', 'Do the tasks'], dir);
+  const nameArgs = name ? ['--name', name] : [];
+  const launched = await relaylead(['launch', '--agent', 'fake', ...nameArgs, '--request', 'Do the tasks'], dir);
   assert.strictEqual(launched.code, 0, launched.err);
   mission = launched.out.trim();
 
-  let questions = [];
   await waitFor(
     async () => {
-      questions = JSON.parse((await poll(['question', 'list', mission])).out || '[]');
-      return questions.length > 0;
+      const [question] = JSON.parse((await poll(['question', 'list', mission])).out || '[]');
+      if (question) {
+        assert.strictEqual(question.text, 'Should greet speak English only, or English and French?');
+        const answered = await relaylead(['answer', mission, question.id, '1'], dir);
+        assert.strictEqual(answered.code, 0, answered.err);
+      }
+      return (await poll(['state', 'get', '--mission', mission])).out.trim() === 'done';
     },
-    MISSION_MS,
-    'the question of task b',
-    report,
-  );
-  assert.strictEqual(questions.length, 1, report());
-  const [question] = questions;
-  assert.strictEqual(question.text, 'Should greet speak English only, or English and French?');
-  const answered = await relaylead(['answer', mission, question.id, '1'], dir);
-  assert.strictEqual(answered.code, 0, answered.err);
-
-  await waitFor(
-    async () => (await poll(['state', 'get', '--mission', mission])).out.trim() === 'done',
     MISSION_MS,
     'the mission to be done',
     report,
   );
+  return { mission, report };
+}
+
+test('fake mission delivers two tasks with one answered question', { timeout: 3 * MISSION_MS }, async (t) => {
+  process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
+  const dir = gitRepo(readFiles(TOY_REPO));
+  const before = checkoutState(dir);
+  const { mission, report } = await runMission(t, dir, null);
 
   // The fake lead offers "yes" and "no" whatever the ask text says (a real lead offers the
   // choices of the text): option 1 is "yes".
@@ -149,4 +150,27 @@ test('fake mission delivers two tasks with one answered question', { timeout: 3 
   assert.deepStrictEqual(checkoutState(dir), before);
   assert.strictEqual(before.branch, 'main');
   assert.strictEqual(before.status, '');
+});
+
+test('a second mission runs in the same folder after remove', { timeout: 3 * MISSION_MS }, async (t) => {
+  process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
+  const dir = gitRepo(readFiles(TOY_REPO));
+  const { mission } = await runMission(t, dir, null);
+  // A new task, committed on the user's branch once the first mission is over.
+  fs.writeFileSync(path.join(dir, 'tasks', 'c.md'), '---\ntitle: Third task\n---\n\nWrite c.\n');
+  git(dir, 'add', 'tasks/c.md');
+  git(dir, 'commit', '-q', '-m', 'task c');
+  // `state set done` writes done first, then stops the sessions: remove waits for that end.
+  const stateFile = path.join(missionDir(mission), 'state.json');
+  await waitFor(() => !readJson(stateFile).stopping, 15000, 'the end of state set done');
+
+  const removed = await relaylead(['remove', mission], dir);
+  assert.strictEqual(removed.code, 0, removed.err);
+
+  // The same name again: the folder's.
+  const second = await runMission(t, dir, null);
+  assert.strictEqual(second.mission, mission);
+  assert.strictEqual(git(dir, 'show', 'relaylead/integration:c.txt'), 'fake work on c', second.report());
+  const listed = (await relaylead(['list'], dir)).out.trim().split('\n');
+  assert.strictEqual(listed.length, 1, listed.join('\n'));
 });
