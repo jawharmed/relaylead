@@ -163,8 +163,13 @@ test('a second mission runs in the same folder after remove', { timeout: 3 * MIS
   git(dir, 'add', 'tasks/c.md');
   git(dir, 'commit', '-q', '-m', 'task c');
   // `state set done` writes done first, then stops the sessions: remove waits for that end.
+  // It waits for the crew processes to end and removes their worktrees: slow on a loaded Windows
+  // runner. On a timeout, the state and the journal say where it stopped.
   const stateFile = path.join(missionDir(mission), 'state.json');
-  await waitFor(() => !readJson(stateFile).stopping, 15000, 'the end of state set done');
+  const journalFile = path.join(missionDir(mission), 'journal.log');
+  const explain = () =>
+    JSON.stringify(readJson(stateFile)) + '\n' + (fs.existsSync(journalFile) ? fs.readFileSync(journalFile, 'utf8') : '(no journal)');
+  await waitFor(() => !readJson(stateFile).stopping, MISSION_MS, 'the end of state set done', explain);
 
   const removed = await relaylead(['remove', mission], dir);
   assert.strictEqual(removed.code, 0, removed.err);
