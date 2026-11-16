@@ -47,6 +47,8 @@ const messages = {
       'another task of mission "{mission}" has been starting or delivering for a minute ("relaylead {command}", process {pid}, since {since}); try again',
     'start-stuck':
       '"relaylead {command}" (process {pid}) has held the start lock of mission "{mission}" since {since}, too long to be still working: it is probably stuck. End that process, then try again',
+    'stop-pending':
+      'mission "{mission}" is stopped, but its sessions are not stopped yet: "relaylead {holder}" still holds the mission; run relaylead stop {mission} again',
     'task-not-deliverable': 'task "{id}" is {state}; only a done task can be delivered',
     'protected-branch':
       'the integration branch "{branch}" is protected; set another delivery.branch in .relaylead.json',
@@ -149,6 +151,8 @@ const messages = {
       'une autre tâche de la mission « {mission} » est en lancement ou en livraison depuis une minute (« relaylead {command} », processus {pid}, depuis {since}) ; réessayez',
     'start-stuck':
       '« relaylead {command} » (processus {pid}) tient le verrou de lancement de la mission « {mission} » depuis {since}, trop longtemps pour travailler encore : il est sans doute bloqué. Arrêtez ce processus, puis réessayez',
+    'stop-pending':
+      'la mission « {mission} » est arrêtée, mais ses sessions ne le sont pas encore : « relaylead {holder} » tient encore la mission ; relancez relaylead stop {mission}',
     'task-not-deliverable': 'la tâche « {id} » est {state} ; seule une tâche done peut être livrée',
     'protected-branch':
       'la branche d\'intégration « {branch} » est protégée ; indiquez une autre delivery.branch dans .relaylead.json',
