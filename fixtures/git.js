@@ -3,9 +3,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { tmpDir } = require('./helpers');
+const { runFileSync } = require('../core/run-file');
 
+// Like relaylead's own git calls, it does not wait for a process git leaves behind.
 function git(cwd, ...args) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  return runFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 
 // CI runners have no git user. Set in process.env, so the fake agents spawned by the tests get it too.
@@ -46,4 +48,29 @@ function recordingGit(t) {
   return () => (fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').split('\n').filter(Boolean) : []);
 }
 
-module.exports = { git, gitRepo, recordingGit };
+// Puts on the PATH a git that leaves behind a process holding its output open (like a hook or a
+// credential helper that starts a background job), then runs the real git and ends with its exit
+// code. The leftover processes are killed after the test. POSIX only (a shell script).
+function lingeringGit(t) {
+  const bin = tmpDir('relaylead-git-');
+  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  const leftover = path.join(bin, 'leftover.pid');
+  fs.writeFileSync(path.join(bin, 'git'), `#!/bin/sh\nsleep 30 &\necho $! >> '${leftover}'\nexec '${realGit}' "$@"\n`, {
+    mode: 0o755,
+  });
+  const { PATH } = process.env;
+  process.env.PATH = bin + path.delimiter + PATH;
+  t.after(() => {
+    process.env.PATH = PATH;
+    const pids = fs.existsSync(leftover) ? fs.readFileSync(leftover, 'utf8').split('\n').filter(Boolean) : [];
+    for (const pid of pids) {
+      try {
+        process.kill(Number(pid));
+      } catch {
+        // already ended
+      }
+    }
+  });
+}
+
+module.exports = { git, gitRepo, recordingGit, lingeringGit };

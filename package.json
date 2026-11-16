@@ -20,6 +20,6 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "node --test"
+    "test": "node fixtures/run-tests.js"
   }
 }

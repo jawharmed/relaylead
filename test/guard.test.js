@@ -7,7 +7,7 @@ const { execFileSync } = require('node:child_process');
 const { checkToolUse, isAllowed, denyMessage } = require('../core/guard');
 const { DEFAULTS } = require('../core/config');
 const { tmpDir } = require('../fixtures/helpers');
-const { git, gitRepo, recordingGit } = require('../fixtures/git');
+const { git, gitRepo, recordingGit, lingeringGit } = require('../fixtures/git');
 
 const GUARD = DEFAULTS.guard;
 // File names that differ only by case are the same file on macOS and Windows.
@@ -153,6 +153,16 @@ test('the guard reads the branch without background maintenance', { skip: proces
   assertDenied(bash('git push', dir), 'push to protected branch main');
   assert.ok(calls().length > 0);
   for (const call of calls()) assert.match(call, /^-c gc\.auto=0 -c maintenance\.auto=false /, call);
+});
+
+// A git that leaves a process behind with its output open must not slow the guard down, nor make
+// the branch unreadable.
+test('the guard reads the branch when git leaves a process behind', { skip: process.platform === 'win32' }, (t) => {
+  const dir = repoOn('main');
+  lingeringGit(t);
+  const startedAt = Date.now();
+  assertDenied(bash('git push', dir), 'push to protected branch main');
+  assert.ok(Date.now() - startedAt < 5000, `the guard took ${Date.now() - startedAt} ms`);
 });
 
 // Like relaylead's other git calls: messages in English whatever the system's language.

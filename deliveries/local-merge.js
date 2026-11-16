@@ -3,9 +3,9 @@
 // task source happen there: the user's own checkout never changes.
 const fs = require('node:fs');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
 const { t, codedError } = require('../core/messages');
 const { sleepSync, retrySync } = require('../core/timing');
+const { runFileSync } = require('../core/run-file');
 const tasksDirSource = require('../sources/tasks-dir');
 
 // Git refuses to start when another git command holds a lock file (index.lock, a ref's .lock),
@@ -19,8 +19,8 @@ const LOCK_FILE =
   /\.lock['"]|unable to write index|unable to unlink|unable to create|permission denied|resource busy|invalid argument|used by another process/i;
 const LOCK_ATTEMPTS = 10; // about 5 s in all
 // A git command that does not end in this time is stopped and fails. Without a bound, a git that
-// hangs, or that leaves a process holding its output open, would block relaylead forever, and with
-// it the start lock that every start and delivery of the mission waits for. Tests shorten it.
+// hangs would block relaylead forever, and with it the start lock that every start and delivery of
+// the mission waits for. Tests shorten it.
 const gitTimeoutMs = () => Number(process.env.RELAYLEAD_GIT_TIMEOUT_MS) || 5 * 60 * 1000;
 // After a commit or a merge, git may start a gc or maintenance in the background: it may keep the
 // output pipes open, and it holds the repository's locks while relaylead works there.
@@ -32,11 +32,12 @@ function isTransientGitError(detail) {
 }
 
 // Runs git, never through a shell (paths may contain spaces), and stops it after gitTimeoutMs().
+// Returns as soon as git has ended, even when a process it started keeps its output open.
 // LC_ALL=C: git speaks English whatever the system's language, so its messages can be read (the
 // user's hooks run with it too).
 function runGit(cwd, args, stdio) {
   try {
-    return execFileSync('git', [...NO_BACKGROUND_MAINTENANCE, ...args], {
+    return runFileSync('git', [...NO_BACKGROUND_MAINTENANCE, ...args], {
       cwd,
       env: { ...process.env, LC_ALL: 'C' },
       encoding: 'utf8',

@@ -7,6 +7,9 @@ on:
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    # A hung test must not hold a runner for hours; npm test's watchdog (fixtures/run-tests.js)
+    # stops the tests after 10 min and lists the processes still running.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
