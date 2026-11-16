@@ -87,3 +87,10 @@ test('retry is refused to a crew member', async () => {
   const env = { RELAYLEAD_MISSION: 'demo', RELAYLEAD_TASK: 'a' };
   await assert.rejects(commands.task(['retry', 'a'], makeIo(env)), { code: 'not-for-crew' });
 });
+
+test('deliver --no-hooks is refused from inside a session', async () => {
+  await assert.rejects(commands.task(['deliver', 'a', '--no-hooks'], makeIo({ RELAYLEAD_MISSION: 'demo' })), {
+    code: 'not-from-a-session',
+    vars: { command: 'task deliver --no-hooks' },
+  });
+});

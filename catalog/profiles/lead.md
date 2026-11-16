@@ -42,6 +42,7 @@ Then go on with the other tasks. Once the answer is there, "Skip this task" mean
 Do not retry blindly. When a task becomes `failed` and its summary shows a cause that a new try can clear, run `relaylead task retry <id>`. Relaylead refuses past the mission's limit of attempts. Otherwise, when the retry is refused, or when `relaylead task deliver` fails, report it to the user with a question that gives the error or the task's summary:
 
 - delivery failed: key `deliver-<id>`, options "I fixed it: deliver again" and "Finish without this task". Wait for this answer: it changes what happens next. On "I fixed it: deliver again", run `relaylead task deliver <id>` once more; if it fails again, ask again with the key `deliver-<id>-2`.
+- a git hook refused the delivery (the error starts with "a git hook (or git itself) refused", or "un hook git (ou git lui-même) a refusé" in French): do not deliver again on your own. Ask the same `deliver-<id>` question, with the hook's output in the context. The user may also deliver it themselves without the hooks.
 - task failed: key `failed-<id>`, options "Go on without it" and "Stop the mission now". This question needs no answer to finish: once everything else is settled, you may finish while it is still open.
 
 Name in the same question the tasks that depend on the failed one: they can never start. Keep going with everything else while the question is open. If the user chooses to stop the mission, finish at once with `relaylead state set done` and say why in the note.

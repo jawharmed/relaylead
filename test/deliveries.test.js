@@ -131,8 +131,8 @@ test('deliver merges the task branch and marks the source done', async (t) => {
     assert.match(git(dir, 'show', `relaylead/integration:tasks/${id}.md`), /^state: done$/m);
   }
   const subjects = git(dir, 'log', '--format=%s', 'relaylead/integration').split('\n');
-  assert.ok(subjects.includes('chore(relaylead): a livrée'), subjects.join('\n'));
-  assert.ok(subjects.includes('chore(relaylead): b livrée'), subjects.join('\n'));
+  assert.ok(subjects.includes('chore(relaylead): deliver a'), subjects.join('\n'));
+  assert.ok(subjects.includes('chore(relaylead): deliver b'), subjects.join('\n'));
   assert.strictEqual(git(dir, 'log', '--merges', '--format=%s', 'relaylead/integration').split('\n').length, 2);
 
   assert.deepStrictEqual(checkoutState(dir), before);
@@ -252,7 +252,7 @@ test('a delivery interrupted after the merge is finished by the next deliver', a
   assert.strictEqual(replayed.code, 0, replayed.err);
   assert.strictEqual(replayed.out, 'task a already delivered\n');
   assert.strictEqual(git(integrationDir(dir), 'status', '--porcelain'), '');
-  assert.strictEqual(git(dir, 'log', '-1', '--format=%s', 'relaylead/integration'), 'chore(relaylead): a livrée');
+  assert.strictEqual(git(dir, 'log', '-1', '--format=%s', 'relaylead/integration'), 'chore(relaylead): deliver a');
   assert.strictEqual(fs.existsSync(taskWorktree(dir, 'a')), false);
   assert.strictEqual(git(dir, 'branch', '--list', 'relaylead/demo/a'), '');
 });
@@ -404,14 +404,176 @@ test('refuses tasks not committed in the user checkout', async (t) => {
   assert.throws(() => localMerge.prepareMission(readMission('demo')), { code: 'tasks-not-committed' });
 });
 
-test('relaylead commits skip the git hooks', async (t) => {
+// A git hook of the user's repository, shared by all its worktrees. POSIX sh: Git for Windows runs
+// it through its own shell.
+function writeHook(dir, name, lines) {
+  const file = path.join(dir, '.git', 'hooks', name);
+  fs.writeFileSync(file, ['#!/bin/sh', ...lines, ''].join('\n'));
+  fs.chmodSync(file, 0o755);
+}
+
+function removeHook(dir, name) {
+  fs.rmSync(path.join(dir, '.git', 'hooks', name));
+}
+
+test('relaylead commits run the git hooks by default', async (t) => {
   freshHome(t);
   const dir = userRepo({ 'tasks/a.md': TASK_A });
   const mission = preparedMission(dir);
   finishedTask(mission, 'a');
-  for (const hook of ['pre-commit', 'pre-merge-commit', 'commit-msg']) {
-    fs.writeFileSync(path.join(dir, '.git', 'hooks', hook), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
-  }
+  const witness = path.join(tmpDir('relaylead-hooks-'), 'ran.txt');
+  for (const hook of ['pre-merge-commit', 'pre-commit']) writeHook(dir, hook, [`echo ${hook} >> '${witness}'`]);
+
+  const delivered = await deliver('a');
+  assert.strictEqual(delivered.code, 0, delivered.err);
+  const ran = fs.readFileSync(witness, 'utf8');
+  assert.match(ran, /pre-merge-commit/);
+  assert.match(ran, /pre-commit/);
+});
+
+test('a failing hook stops the delivery with its output and the task stays done', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir);
+  finishedTask(mission, 'a');
+  writeHook(dir, 'pre-merge-commit', ['echo "lint failed" >&2', 'exit 1']);
+
+  const refused = await deliver('a');
+  assert.strictEqual(refused.code, 1, refused.err);
+  assert.match(refused.err, /lint failed/);
+  assert.match(refused.err, /--no-hooks/);
+  assert.doesNotMatch(refused.err, /\.\. /, 'git\'s last sentence and the text after the output make one period');
+  const integration = integrationDir(dir);
+  assert.strictEqual(git(integration, 'status', '--porcelain'), '');
+  assert.strictEqual(fs.existsSync(path.resolve(integration, git(integration, 'rev-parse', '--git-path', 'MERGE_HEAD'))), false);
+  assert.strictEqual(listTasks('demo')[0].state, 'done');
+
+  removeHook(dir, 'pre-merge-commit');
+  const delivered = await deliver('a');
+  assert.strictEqual(delivered.code, 0, delivered.err);
+  assert.strictEqual(git(dir, 'show', 'relaylead/integration:a.txt'), 'a');
+});
+
+// A hook that formats a merged file then refuses: git cannot cancel that merge with merge --abort.
+test('a hook that changes a merged file then refuses leaves the integration worktree clean', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir);
+  finishedTask(mission, 'a');
+  writeHook(dir, 'pre-merge-commit', ['echo formatted >> a.txt', 'echo "format changed a.txt" >&2', 'exit 1']);
+
+  const refused = await deliver('a');
+  assert.strictEqual(refused.code, 1, refused.err);
+  assert.match(refused.err, /a git hook \(or git itself\) refused/);
+  assert.match(refused.err, /format changed a\.txt/);
+  const integration = integrationDir(dir);
+  assert.strictEqual(fs.existsSync(path.resolve(integration, git(integration, 'rev-parse', '--git-path', 'MERGE_HEAD'))), false);
+  assert.strictEqual(git(integration, 'status', '--porcelain', '--untracked-files=no'), '');
+  assert.strictEqual(listTasks('demo')[0].state, 'done');
+
+  removeHook(dir, 'pre-merge-commit');
+  const delivered = await deliver('a');
+  assert.strictEqual(delivered.code, 0, delivered.err);
+  assert.strictEqual(git(dir, 'show', 'relaylead/integration:a.txt'), 'a');
+});
+
+// Changes made before the merge (here a line not committed) must not be lost to a reset.
+test('a merge git cannot cancel over earlier changes is left to the user', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir);
+  finishedTask(mission, 'a');
+  const integration = integrationDir(dir);
+  fs.appendFileSync(path.join(integration, 'README.md'), 'not committed yet\n');
+  writeHook(dir, 'pre-merge-commit', ['echo formatted >> a.txt', 'exit 1']);
+
+  const refused = await deliver('a');
+  assert.strictEqual(refused.code, 1, refused.err);
+  assert.match(refused.err, /left in the middle of a merge that git could not cancel/);
+  assert.match(fs.readFileSync(path.join(integration, 'README.md'), 'utf8'), /not committed yet/);
+  assert.strictEqual(listTasks('demo')[0].state, 'done');
+});
+
+test('a hook refusing the update of the integration branch at launch is reported', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  preparedMission(dir);
+  fs.writeFileSync(path.join(dir, 'tasks', 'b.md'), TASK_B);
+  git(dir, 'add', 'tasks');
+  git(dir, 'commit', '-q', '-m', 'task b');
+  writeHook(dir, 'pre-merge-commit', ['echo "lint failed" >&2', 'exit 1']);
+
+  writeMission('two', dir);
+  assert.throws(() => localMerge.prepareMission(readMission('two')), (err) => {
+    assert.strictEqual(err.code, 'launch-hook-failed');
+    assert.match(err.vars.output, /lint failed/);
+    assert.match(err.message, /"runHooks": false/);
+    return true;
+  });
+  const integration = integrationDir(dir);
+  assert.strictEqual(git(integration, 'status', '--porcelain'), '');
+  assert.strictEqual(fs.existsSync(path.resolve(integration, git(integration, 'rev-parse', '--git-path', 'MERGE_HEAD'))), false);
+});
+
+test('deliver --no-hooks is for the user only and skips the hooks', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir);
+  finishedTask(mission, 'a');
+  writeHook(dir, 'pre-merge-commit', ['echo "lint failed" >&2', 'exit 1']);
+  const args = ['task', 'deliver', 'a', '--no-hooks', '--mission', 'demo'];
+
+  const io = makeIo({ env: { RELAYLEAD_MISSION: 'demo' } });
+  assert.strictEqual(await run(args, io), 1);
+  assert.match(io.err.text, /"relaylead task deliver --no-hooks" belongs to the user/);
+  assert.strictEqual(listTasks('demo')[0].state, 'done');
+
+  const delivered = await cli(args);
+  assert.strictEqual(delivered.code, 0, delivered.err);
+  assert.strictEqual(git(dir, 'show', 'relaylead/integration:a.txt'), 'a');
+});
+
+// A merge runs pre-merge-commit, not pre-commit: only the state line commit is refused here.
+test('a hook refusing the state line commit is a warning, and the next deliver commits it', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir);
+  finishedTask(mission, 'a');
+  writeHook(dir, 'pre-commit', ['echo "no commit today" >&2', 'exit 1']);
+
+  const delivered = await deliver('a');
+  assert.strictEqual(delivered.code, 0, delivered.err);
+  assert.strictEqual(delivered.out, 'task a delivered\n');
+  assert.match(delivered.err, /state line commit/);
+  assert.match(delivered.err, /no commit today/);
+  assert.strictEqual(git(dir, 'show', 'relaylead/integration:a.txt'), 'a');
+  assert.notStrictEqual(git(integrationDir(dir), 'status', '--porcelain', '--', 'tasks/a.md'), '');
+
+  removeHook(dir, 'pre-commit');
+  const replayed = await deliver('a');
+  assert.strictEqual(replayed.code, 0, replayed.err);
+  assert.strictEqual(replayed.err, '');
+  assert.strictEqual(git(dir, 'log', '-1', '--format=%s', 'relaylead/integration'), 'chore(relaylead): deliver a');
+  assert.strictEqual(git(integrationDir(dir), 'status', '--porcelain'), '');
+});
+
+test('delivery.runHooks false skips the git hooks', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A, '.relaylead.json': JSON.stringify({ delivery: { runHooks: false } }) });
+  const mission = preparedMission(dir);
+  finishedTask(mission, 'a');
+  for (const hook of ['pre-commit', 'pre-merge-commit', 'commit-msg']) writeHook(dir, hook, ['exit 1']);
+
+  const delivered = await deliver('a');
+  assert.strictEqual(delivered.code, 0, delivered.err);
+  assert.strictEqual(git(dir, 'log', '-1', '--format=%s', 'relaylead/integration'), 'chore(relaylead): deliver a');
+});
+
+test('the state line commit follows the mission language', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A, '.relaylead.json': JSON.stringify({ language: 'fr' }) });
+  const mission = preparedMission(dir);
+  finishedTask(mission, 'a');
 
   const delivered = await deliver('a');
   assert.strictEqual(delivered.code, 0, delivered.err);
@@ -525,6 +687,29 @@ test('a delivery waits for a git lock to be released', async (t) => {
   assert.strictEqual(git(dir, 'show', 'relaylead/integration:a.txt'), 'a');
 });
 
+// A merge that meets a held index.lock stops like a failed hook, with a merge in progress, but says
+// "Unable to write index" (in the system's language): relaylead runs git in English to tell them apart.
+test('a held index lock is retried, not taken for a hook', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir);
+  finishedTask(mission, 'a');
+  const { LC_ALL } = process.env;
+  process.env.LC_ALL = 'fr_FR.UTF-8';
+  t.after(() => {
+    if (LC_ALL === undefined) delete process.env.LC_ALL;
+    else process.env.LC_ALL = LC_ALL;
+  });
+  const lock = path.resolve(integrationDir(dir), git(integrationDir(dir), 'rev-parse', '--git-path', 'index.lock'));
+  fs.writeFileSync(lock, '');
+  const releaser = spawn(process.execPath, ['-e', `setTimeout(() => require('fs').rmSync(${JSON.stringify(lock)}), 300)`]);
+  t.after(() => releaser.kill());
+
+  const delivered = await deliver('a');
+  assert.strictEqual(delivered.code, 0, delivered.err);
+  assert.strictEqual(git(dir, 'show', 'relaylead/integration:a.txt'), 'a');
+});
+
 // A git command that never ends would hold the start lock forever: here git leaves a process
 // behind that keeps its output open, so a caller reading that output never sees it end.
 test('a git command that does not end fails the delivery in time', { skip: process.platform === 'win32', timeout: 20000 }, async (t) => {
@@ -625,6 +810,7 @@ test('git messages that a short wait cures are recognised', () => {
     'error: unable to unlink old a.txt: Permission denied',
     'fatal: cannot remove: Device or resource busy',
     'The process cannot access the file because it is being used by another process.',
+    'error: Unable to write index.',
   ]) {
     assert.ok(localMerge.isTransientGitError(message), message);
   }

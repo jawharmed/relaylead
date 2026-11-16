@@ -8,7 +8,7 @@ const { askQuestion, answerQuestion, listQuestions } = require('./questions');
 const pkg = require('../package.json');
 
 // Options that take no value.
-const FLAGS = ['all', 'force'];
+const FLAGS = ['all', 'force', 'no-hooks'];
 
 // Splits arguments into positional values and `--name value` (or `--name=value`) options.
 // A repeated option (--option a --option b) is also kept in full in `lists`.
@@ -155,13 +155,15 @@ commands.task = async (args, io) => {
   if (!(action === 'list' || (['start', 'retry', 'deliver', 'done', 'fail'].includes(action) && id))) {
     throw codedError('usage', {
       usage:
-        'relaylead task list | start <id> [--profile p] | retry <id> [--profile p] | deliver <id> | done <id> | fail <id> [--summary text] [--mission name]',
+        'relaylead task list | start <id> [--profile p] | retry <id> [--profile p] | deliver <id> [--no-hooks] | done <id> | fail <id> [--summary text] [--mission name]',
     });
   }
   // A crew member runs with RELAYLEAD_TASK set: it finishes its own task and drives no other.
   const own = io.env.RELAYLEAD_TASK;
   if (own && ['start', 'retry', 'deliver'].includes(action)) throw codedError('not-for-crew', { own });
   if (own && ['done', 'fail'].includes(action) && id !== own) throw codedError('not-your-task', { own, id });
+  // The configuration is frozen in mission.json: only the user may deliver without the git hooks.
+  if (action === 'deliver' && options['no-hooks']) refuseInSession('task deliver --no-hooks', io);
   const mission = missionName(options, io);
   if (action === 'list') {
     io.out.write(JSON.stringify(listTasks(mission), null, 2) + '\n');
@@ -172,7 +174,8 @@ commands.task = async (args, io) => {
     const record = await retryTask(mission, { id, profile: options.profile });
     io.out.write(JSON.stringify(record, null, 2) + '\n');
   } else if (action === 'deliver') {
-    const { outcome, warnings } = await deliverTask(mission, id);
+    const runHooks = options['no-hooks'] ? false : undefined;
+    const { outcome, warnings } = await deliverTask(mission, id, { runHooks });
     for (const warning of warnings) io.err.write(`relaylead task: ${t(warning.code, warning.vars, language(io))}\n`);
     io.out.write(t(outcome === 'delivered' ? 'taskDelivered' : 'taskAlreadyDelivered', { id }, language(io)));
   } else {

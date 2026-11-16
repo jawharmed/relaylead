@@ -14,7 +14,9 @@ const tasksDirSource = require('../sources/tasks-dir');
 // On Windows, an antivirus or the search indexer may hold a file for a moment: git then fails
 // with "unable to unlink", "Permission denied", "Device or resource busy", "Invalid argument" or
 // "being used by another process". The same command a moment later works.
-const LOCK_FILE = /\.lock['"]|unable to unlink|unable to create|permission denied|resource busy|invalid argument|used by another process/i;
+// A merge that meets a held index.lock stops with "Unable to write index", and leaves the merge going.
+const LOCK_FILE =
+  /\.lock['"]|unable to write index|unable to unlink|unable to create|permission denied|resource busy|invalid argument|used by another process/i;
 const LOCK_ATTEMPTS = 10; // about 5 s in all
 // A git command that does not end in this time is stopped and fails. Without a bound, a git that
 // hangs, or that leaves a process holding its output open, would block relaylead forever, and with
@@ -30,10 +32,13 @@ function isTransientGitError(detail) {
 }
 
 // Runs git, never through a shell (paths may contain spaces), and stops it after gitTimeoutMs().
+// LC_ALL=C: git speaks English whatever the system's language, so its messages can be read (the
+// user's hooks run with it too).
 function runGit(cwd, args, stdio) {
   try {
     return execFileSync('git', [...NO_BACKGROUND_MAINTENANCE, ...args], {
       cwd,
+      env: { ...process.env, LC_ALL: 'C' },
       encoding: 'utf8',
       stdio,
       windowsHide: true,
@@ -62,7 +67,7 @@ function git(cwd, args) {
         sleepSync(100 * attempt);
         continue;
       }
-      throw new Error(`git ${args.join(' ')} failed: ${detail}`);
+      throw Object.assign(new Error(`git ${args.join(' ')} failed: ${detail}`), { output: detail });
     }
   }
 }
@@ -179,11 +184,12 @@ function prepareMission(mission) {
 // Merges the user's current commit into the integration branch, unless it is there already.
 function updateIntegration(mission) {
   const { branch } = mission.config.delivery;
+  const refusal = { code: 'launch-hook-failed', vars: { what: 'integration update', branch } };
   const userCommit = git(mission.dir, ['rev-parse', 'HEAD']);
   if (git(mission.dir, ['rev-list', '--count', `${branch}..${userCommit}`]) === '0') return;
   const userBranch = currentBranch(mission.dir); // 'HEAD' when detached
   const message = `Merge ${userBranch === 'HEAD' ? userCommit : userBranch} into ${branch}`;
-  if (!mergeOrAbort(integrationDir(mission), ['-m', message, userCommit])) {
+  if (!mergeOrAbort(integrationDir(mission), ['-m', message, userCommit], { runHooks: runHooks(mission), refusal })) {
     throw codedError('integration-sync-conflict', { branch, dir: integrationDir(mission) });
   }
 }
@@ -252,24 +258,61 @@ function cancelKilledMerge(integration, err) {
   return err;
 }
 
-// Merges in the integration worktree; on a conflict, cancels the merge and returns false.
-// Relaylead's own commits skip the project's hooks (--no-verify): they hold only work already
-// committed and state lines.
-// A merge that meets a held index.lock stops like a conflict ("Unable to write index"), but with no
-// conflicted file: it is cancelled and tried again.
-function mergeOrAbort(integration, args) {
+// Whether relaylead's own commits run the project's git hooks. A mission launched before this setting
+// existed runs them.
+function runHooks(mission) {
+  return mission.config.delivery.runHooks !== false;
+}
+
+// What a hook (and git) printed is shown in the error, cut so that a long lint report stays readable.
+// Its last period is dropped: the message goes on with its own sentence.
+const MAX_OUTPUT = 2000;
+
+function shownOutput(text) {
+  return String(text).trim().slice(0, MAX_OUTPUT).replace(/\.+$/, '');
+}
+
+// `merge --abort` fails when a hook changed a merged file ("Entry 'a.txt' not uptodate"). With no
+// changes of its own before the merge, the worktree goes back to its last commit: that drops only
+// what the merge and the hook wrote (files the hook created stay). Changes made before the merge, such
+// as a state line not committed yet, would be lost too: the worktree is then left to the user.
+function cancelMerge(integration, changedBefore) {
+  try {
+    git(integration, ['merge', '--abort']);
+  } catch (err) {
+    if (err.timedOut) throw err;
+    if (changedBefore) throw codedError('integration-stuck', { dir: integration, output: shownOutput(err.output || err.message) });
+    git(integration, ['reset', '--hard', 'HEAD']);
+  }
+}
+
+// Merges in the integration worktree; on a conflict, cancels the merge and returns false. Runs the
+// project's hooks unless runHooks is false (--no-verify).
+// Any other failure is cancelled too. A held lock ("Unable to write index", with no conflicted file)
+// is tried again, LOCK_ATTEMPTS times at most. Otherwise, when the hooks run, a hook may be the cause:
+// throws refusal.code with refusal.vars and git's output; without hooks, throws git's own error.
+// git() is not used for the merge: its own retries would meet the merge left going.
+function mergeOrAbort(integration, args, { runHooks: hooks, refusal }) {
+  const verify = hooks ? [] : ['--no-verify'];
+  const changedBefore = git(integration, ['status', '--porcelain', '--untracked-files=no']) !== '';
   for (let attempt = 1; ; attempt++) {
     try {
-      git(integration, ['merge', '--no-ff', '--no-edit', '--no-verify', ...args]);
+      runGit(integration, ['merge', '--no-ff', '--no-edit', ...verify, ...args], ['ignore', 'pipe', 'pipe']);
       return true;
     } catch (err) {
       if (err.timedOut) throw cancelKilledMerge(integration, err);
-      if (!mergeInProgress(integration)) throw err; // stopped before merging, e.g. no git user configured
-      const conflicted = git(integration, ['diff', '--name-only', '--diff-filter=U']) !== '';
-      git(integration, ['merge', '--abort']);
-      if (conflicted) return false;
-      if (attempt >= LOCK_ATTEMPTS) throw err;
-      sleepSync(100 * attempt);
+      const output = `${err.stdout || ''}${err.stderr || ''}`.trim() || err.message;
+      if (mergeInProgress(integration)) {
+        const conflicted = git(integration, ['diff', '--name-only', '--diff-filter=U']) !== '';
+        cancelMerge(integration, changedBefore);
+        if (conflicted) return false;
+      }
+      if (isTransientGitError(output) && attempt < LOCK_ATTEMPTS) {
+        sleepSync(100 * attempt);
+        continue;
+      }
+      if (hooks) throw codedError(refusal.code, { ...refusal.vars, output: shownOutput(output) });
+      throw new Error(`git merge ${args.join(' ')} failed: ${output}`);
     }
   }
 }
@@ -305,15 +348,17 @@ function checkDone(mission, task) {
 }
 
 // Merges a done task, once checkDone accepts its work. Returns the warnings of finish().
-function deliver(mission, task) {
+// runHooks, when given, replaces the mission's delivery.runHooks (the user's --no-hooks).
+function deliver(mission, task, { runHooks: hooks = runHooks(mission) } = {}) {
   const branch = taskBranch(mission, task);
   const work = checkDone(mission, task);
-  if (work === 'new' && !mergeOrAbort(integrationDir(mission), [branch])) {
+  const refusal = { code: 'hook-failed', vars: { what: 'merge', id: task.id, branch, mission: mission.name } };
+  if (work === 'new' && !mergeOrAbort(integrationDir(mission), [branch], { runHooks: hooks, refusal })) {
     throw codedError('merge-conflict', { id: task.id, branch });
   }
 
   tasksDirSource.markDone(integrationDir(mission), mission.config.source.dir, task.id);
-  return finish(mission, task);
+  return finish(mission, task, { runHooks: hooks });
 }
 
 // Work done after the delivery, which removing the worktree and branch would lose.
@@ -332,17 +377,26 @@ function hasLateWork(mission, task) {
 // finished. Commits the task's state line if needed, then removes its worktree and branch, unless
 // they hold work done since. The task is delivered once committed: a failed or skipped removal is
 // returned as a warning, and the next deliver tries again.
-function finish(mission, task) {
+function finish(mission, task, { runHooks: hooks = runHooks(mission) } = {}) {
   const integration = integrationDir(mission);
   const file = sourceFile(mission, task);
   const cwd = taskDir(mission, task);
   const branch = taskBranch(mission, task);
   // The work is merged by now: nothing from here on may fail the delivery. The state line stays
-  // uncommitted if git keeps refusing, and the next deliver commits it.
+  // uncommitted if git or a hook keeps refusing, and the next deliver commits it.
   try {
     if (git(integration, ['status', '--porcelain', '--', file]) !== '') {
-      git(integration, ['commit', '--no-verify', '-m', `chore(relaylead): ${task.id} livrée`, '--', file]);
+      const message = t('deliveryCommit', { id: task.id }, mission.config.language);
+      git(integration, ['commit', ...(hooks ? [] : ['--no-verify']), '-m', message, '--', file]);
     }
+  } catch (err) {
+    if (hooks && !err.timedOut) {
+      const output = shownOutput(err.output || err.message);
+      return [codedError('state-line-hook-failed', { what: 'state line commit', id: task.id, output })];
+    }
+    return [codedError('cleanup-failed', { id: task.id, detail: err.message })];
+  }
+  try {
     if (hasLateWork(mission, task)) return [codedError('task-late-work', { id: task.id, branch, dir: cwd })];
     // A folder on another branch is not this task's worktree: it is left alone.
     if (fs.existsSync(cwd) && currentBranch(cwd) === branch) removeWorktree(mission, cwd);

@@ -13,7 +13,7 @@ const DEFAULTS = {
   priority: 'normal',
   questions: { onTimeout: 'wait' },
   source: { type: 'tasks-dir', dir: 'tasks' },
-  delivery: { type: 'local-merge', branch: 'relaylead/integration' },
+  delivery: { type: 'local-merge', branch: 'relaylead/integration', runHooks: true },
   guard: {
     protectedBranches: ['main', 'master'],
     secrets: ['.env', '.env.*'],
