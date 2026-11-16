@@ -43,7 +43,10 @@ const messages = {
     'task-not-ready': 'task "{id}" depends on tasks not delivered yet ({missing}); deliver them first',
     'task-skipped': 'task "{id}" was set aside: the user chose "Skip this task"; leave it as it is',
     'mission-done': 'mission "{mission}" is done; no task can start',
-    'start-busy': 'another task of mission "{mission}" has been starting or delivering for a minute; try again',
+    'start-busy':
+      'another task of mission "{mission}" has been starting or delivering for a minute ("relaylead {command}", process {pid}, since {since}); try again',
+    'start-stuck':
+      '"relaylead {command}" (process {pid}) has held the start lock of mission "{mission}" since {since}, too long to be still working: it is probably stuck. End that process, then try again',
     'task-not-deliverable': 'task "{id}" is {state}; only a done task can be delivered',
     'protected-branch':
       'the integration branch "{branch}" is protected; set another delivery.branch in .relaylead.json',
@@ -142,7 +145,10 @@ const messages = {
     'task-not-ready': 'la tâche « {id} » dépend de tâches pas encore livrées ({missing}) ; livrez-les d\'abord',
     'task-skipped': 'la tâche « {id} » est mise de côté : l\'utilisateur a choisi « Skip this task » ; laissez-la telle quelle',
     'mission-done': 'la mission « {mission} » est terminée ; aucune tâche ne peut être lancée',
-    'start-busy': 'une autre tâche de la mission « {mission} » est en lancement ou en livraison depuis une minute ; réessayez',
+    'start-busy':
+      'une autre tâche de la mission « {mission} » est en lancement ou en livraison depuis une minute (« relaylead {command} », processus {pid}, depuis {since}) ; réessayez',
+    'start-stuck':
+      '« relaylead {command} » (processus {pid}) tient le verrou de lancement de la mission « {mission} » depuis {since}, trop longtemps pour travailler encore : il est sans doute bloqué. Arrêtez ce processus, puis réessayez',
     'task-not-deliverable': 'la tâche « {id} » est {state} ; seule une tâche done peut être livrée',
     'protected-branch':
       'la branche d\'intégration « {branch} » est protégée ; indiquez une autre delivery.branch dans .relaylead.json',
