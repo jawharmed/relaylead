@@ -13,6 +13,7 @@ const { writeJournal } = require('./guard');
 const { getAdapter } = require('../adapters');
 const { getDelivery } = require('../deliveries');
 const { sleep } = require('./timing');
+const { withMissionLock } = require('./mission-lock');
 
 // States the lead may declare. 'stopped' is written by the core only.
 const STATES = ['starting', 'working', 'waiting', 'done'];
@@ -197,12 +198,15 @@ async function setState(name, state, note) {
   if (current === 'done' && state !== 'done') throw codedError('mission-finished', { mission: name });
   writeJson(missionFile(name, 'state.json'), { state, note, updatedAt: now() });
   if (state === 'done') {
-    // The lock is released last: until the crew is stopped, the folder is still in use.
-    try {
-      await endMission(mission);
-    } finally {
-      releaseLock(mission.dir, name);
-    }
+    // The mission lock keeps a removal or a new launch from crossing the end. The folder lock is
+    // released last: until the crew is stopped, the folder is still in use.
+    await withMissionLock(name, 'state set done', async () => {
+      try {
+        await endMission(mission);
+      } finally {
+        releaseLock(mission.dir, name);
+      }
+    });
   }
 }
 
@@ -328,10 +332,27 @@ async function stopMission(name) {
   if (['stopped', 'done'].includes(state) && !adapter.stopById) return false;
   // Written first, so a `state set` from a session being stopped is refused instead of erasing the stop.
   if (state !== 'done') writeStopped(name);
+  // The sessions are stopped under the mission lock, behind a start or a delivery that is running.
+  // When that wait gives up, the state stays stopped and the folder stays locked: stop can be run again.
+  // A stuck holder (start-stuck) is not turned into stop-pending: running stop again would fail until
+  // that process is ended, and its error says so.
+  try {
+    await withMissionLock(name, 'stop', () => stopSessions(mission, state));
+  } catch (err) {
+    if (err.code === 'start-busy') {
+      throw codedError('stop-pending', { mission: name, holder: err.vars.command });
+    }
+    throw err;
+  }
+  return true;
+}
+
+async function stopSessions(mission, state) {
+  const name = mission.name;
   let firstError = null;
   for (const session of listSessions(name)) {
     try {
-      await adapter.stop(session);
+      await getAdapter(mission.agent).stop(session);
     } catch (err) {
       firstError = firstError || err;
     }
@@ -340,7 +361,6 @@ async function stopMission(name) {
   if (state !== 'done') writeStopped(name);
   if (firstError) throw firstError; // the folder stays locked: a session may still run in it
   releaseLock(mission.dir, name);
-  return true;
 }
 
 module.exports = {

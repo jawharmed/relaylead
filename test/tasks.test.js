@@ -5,7 +5,9 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { run } = require('../core/cli');
 const { listTasks, startTask, finishTask, deliverTask } = require('../core/tasks');
-const { getState, stopMission } = require('../core/missions');
+const { getState, setState, stopMission } = require('../core/missions');
+const { withMissionLock } = require('../core/mission-lock');
+const { sleep } = require('../core/timing');
 const { askQuestion, answerQuestion } = require('../core/questions');
 const { writeJson } = require('../core/store');
 const { loadProfile } = require('../core/profiles');
@@ -197,9 +199,10 @@ test('a stop during a launch stops the crew member', async (t) => {
 
   const starting = startTask('demo', { id: 'a' });
   await new Promise((resolve) => setTimeout(resolve, 100));
+  const refused = assert.rejects(starting, { code: 'mission-stopped' }); // the stop waits for the start
   await stopMission('demo'); // the crew member is not in the registry yet
 
-  await assert.rejects(starting, { code: 'mission-stopped' });
+  await refused;
   await waitFor(() => !isAlive(crew.pid), 30000, 'the crew member to be stopped');
   assert.strictEqual(fs.existsSync(path.join(missionDir('demo'), 'tasks', 'a.json')), false);
 });
@@ -384,4 +387,110 @@ test('fake mission runs two dependent tasks to done', async (t) => {
     listSessions('demo').map((session) => session.name).sort(),
     ['demo/developer/1', 'demo/developer/2', 'demo/lead/1'],
   );
+});
+
+// Holds the lock until `release` is called; `finished` resolves once the lock is released.
+function holdMissionLock(name, command) {
+  let release;
+  const held = new Promise((resolve) => {
+    const finished = withMissionLock(name, command, () => new Promise((done) => (release = done)));
+    finished.catch(() => {});
+    resolve(finished);
+  });
+  return { finished: held, release: () => release() };
+}
+
+test('the end of state set done holds the mission lock', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  await startTask('demo', { id: 'a' });
+  const original = fake.stop;
+  let stopping = false;
+  fake.stop = async (session) => {
+    stopping = true;
+    await sleep(500);
+    return original(session);
+  };
+  t.after(() => {
+    fake.stop = original;
+  });
+
+  const ending = setState('demo', 'done').then(() => Date.now());
+  await waitFor(() => stopping, 10000, 'the crew to be stopping');
+  let probe = null;
+  const probing = withMissionLock('demo', 'probe', async () => {
+    probe = { at: Date.now(), reaper: fs.existsSync(path.join(missionDir('demo'), 'reaper.json')) };
+  });
+  const endedAt = await ending;
+  await probing;
+
+  assert.ok(probe.at >= endedAt, 'the probe must run after state set done is over');
+  assert.strictEqual(probe.reaper, true);
+});
+
+test('a stop waits for the holder of the mission lock', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  await startTask('demo', { id: 'a' });
+  const original = fake.stop;
+  let stoppedAt = null;
+  fake.stop = async (session) => {
+    stoppedAt = stoppedAt || Date.now();
+    return original(session);
+  };
+  t.after(() => {
+    fake.stop = original;
+  });
+
+  let stopping;
+  let releasedAt = null;
+  await withMissionLock('demo', 'probe', async () => {
+    stopping = stopMission('demo');
+    await waitFor(() => getState('demo') === 'stopped', 10000, 'the state to be stopped');
+    await sleep(500);
+    assert.strictEqual(stoppedAt, null, 'no session may be stopped while the lock is held');
+    releasedAt = Date.now();
+  });
+  await stopping;
+
+  assert.ok(stoppedAt >= releasedAt, 'the sessions must be stopped after the lock is released');
+});
+
+test('the mission lock of an unknown mission is a coded error', async (t) => {
+  setupProject(t, 'demo');
+  await assert.rejects(withMissionLock('ghost', 'probe', async () => {}), { code: 'mission-unknown' });
+});
+
+test('a stop that gives up behind a slow holder says to run it again', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  const previous = process.env.RELAYLEAD_START_LOCK_WAIT_MS;
+  process.env.RELAYLEAD_START_LOCK_WAIT_MS = '300';
+  t.after(() => {
+    if (previous === undefined) delete process.env.RELAYLEAD_START_LOCK_WAIT_MS;
+    else process.env.RELAYLEAD_START_LOCK_WAIT_MS = previous;
+  });
+  const holder = holdMissionLock('demo', 'task deliver a');
+  await waitFor(() => fs.existsSync(startLock()), 10000, 'the lock to be held');
+
+  const io = makeIo();
+  const code = await run(['stop', 'demo'], io);
+  holder.release();
+  await holder.finished;
+
+  assert.strictEqual(code, 1);
+  assert.match(io.err.text, /run relaylead stop demo again/);
+  assert.match(io.err.text, /task deliver a/);
+  assert.strictEqual(getState('demo'), 'stopped');
+});
+
+test('a stop behind a stuck holder keeps the start-stuck error and the stopped state', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  const since = new Date(Date.now() - 16 * 60 * 1000).toISOString();
+  fs.writeFileSync(startLock(), JSON.stringify({ pid: process.pid, command: 'task deliver a', since }));
+
+  await assert.rejects(stopMission('demo'), { code: 'start-stuck' });
+
+  assert.strictEqual(getState('demo'), 'stopped');
 });
