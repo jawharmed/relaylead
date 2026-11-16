@@ -4,7 +4,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { codedError } = require('../core/messages');
+const { t, codedError } = require('../core/messages');
 const { sleepSync, retrySync } = require('../core/timing');
 const tasksDirSource = require('../sources/tasks-dir');
 
@@ -189,12 +189,21 @@ function updateIntegration(mission) {
 }
 
 // A worktree folder that exists must be this task's: it may have been left by an older mission.
+// When that mission is another Relaylead one (branch relaylead/<mission>/<id>), the error says to
+// remove it.
 function checkTaskWorktree(mission, task) {
   const cwd = taskDir(mission, task);
   const branch = taskBranch(mission, task);
-  if (fs.existsSync(cwd) && currentBranch(cwd) !== branch) {
-    throw codedError('worktree-mismatch', { dir: cwd, actual: currentBranch(cwd), branch });
-  }
+  if (!fs.existsSync(cwd)) return;
+  const actual = currentBranch(cwd);
+  if (actual === branch) return;
+  const err = codedError('worktree-mismatch', { dir: cwd, actual, branch });
+  const owner = actual.match(/^relaylead\/([a-z0-9-]+)\/[^/]+$/);
+  err.suffix = owner && owner[1] !== mission.name
+    ? { key: 'worktree-of-mission', vars: { mission: owner[1], dir: cwd } }
+    : { key: 'worktree-not-relaylead', vars: { dir: cwd } };
+  err.message += t(err.suffix.key, err.suffix.vars);
+  throw err;
 }
 
 // The task's branch starts from the integration branch. A worktree left by a failed launch is reused.
@@ -268,8 +277,10 @@ function mergeOrAbort(integration, args) {
 // On Windows, a folder cannot be removed while a process still uses it: a crew member that has
 // just been stopped, or an antivirus scanning the new files. That lasts a moment, so retry for
 // about 5 s ("Permission denied", "Directory not empty", "busy"). Removing again is harmless.
-function removeWorktree(mission, cwd) {
-  retrySync(() => git(mission.dir, ['worktree', 'remove', '--force', cwd]), {
+// A worktree locked with `git worktree lock` is removed only when `locked` says so (a second --force).
+function removeWorktree(mission, cwd, { locked = false } = {}) {
+  const force = locked ? ['--force', '--force'] : ['--force'];
+  retrySync(() => git(mission.dir, ['worktree', 'remove', ...force, cwd]), {
     retryIf: () => process.platform === 'win32',
     budgetMs: 5000,
     delayMs: (attempt) => 200 * attempt,
@@ -343,16 +354,23 @@ function finish(mission, task) {
 }
 
 // The task worktrees of the mission, as git lists them: those on a branch relaylead/<mission>/….
-// The integration worktree and the worktrees of other missions are left out.
+// `locked` is true for a worktree locked with `git worktree lock`. The user's own checkout, the
+// integration worktree and the worktrees of other missions are left out.
 function missionWorktrees(mission) {
   const prefix = `refs/heads/relaylead/${mission.name}/`;
+  const checkout = realPath(mission.dir);
   const worktrees = [];
-  let dir = null;
+  let current = null;
+  // One block per worktree: "worktree <dir>", then "branch <ref>", "locked" and others.
   for (const line of git(mission.dir, ['worktree', 'list', '--porcelain']).split(/\r?\n/)) {
-    if (line.startsWith('worktree ')) dir = path.resolve(line.slice('worktree '.length));
-    if (line.startsWith('branch ' + prefix)) worktrees.push({ dir, branch: line.slice('branch refs/heads/'.length) });
+    if (line.startsWith('worktree ')) {
+      current = { dir: path.resolve(line.slice('worktree '.length)), branch: null, locked: false };
+      worktrees.push(current);
+    }
+    if (current && line.startsWith('branch ' + prefix)) current.branch = line.slice('branch refs/heads/'.length);
+    if (current && (line === 'locked' || line.startsWith('locked '))) current.locked = true;
   }
-  return worktrees;
+  return worktrees.filter((worktree) => worktree.branch && realPath(worktree.dir) !== checkout);
 }
 
 // Git and the session registry may spell one folder differently: slashes, letter case, /private on macOS.
@@ -401,6 +419,58 @@ function cleanMission(mission, { keepDirs = [] } = {}) {
   return warnings;
 }
 
+// The task branches of the mission: relaylead/<mission>/<id>. Full ref names, stripped by hand:
+// %(refname:short) may add "heads/" when a tag has the same name.
+function missionBranches(mission) {
+  const output = git(mission.dir, ['for-each-ref', '--format=%(refname)', `refs/heads/relaylead/${mission.name}/`]);
+  return output === '' ? [] : output.split(/\r?\n/).map((ref) => ref.slice('refs/heads/'.length));
+}
+
+// `relaylead remove`: removes the task worktrees and branches of the mission, ignored files
+// included. The integration worktree and branch stay: they hold the delivered work. Checks
+// everything before changing anything:
+// - the user's checkout on a task branch is always refused: git cannot delete that branch;
+// - unless `force`, so is work not delivered: a worktree with changes not committed or locked
+//   (`git worktree lock`), a branch with commits the integration branch does not have (every branch,
+//   when the integration branch is gone).
+// Calls onBranchDeleted("<name> <sha>") as soon as each branch is deleted, so the sha is shown even
+// if a later step fails: `git branch <name> <sha>` makes it again. Returns all of them.
+function removeMission(mission, { force = false, onBranchDeleted = () => {} } = {}) {
+  const integrationBranch = mission.config.delivery.branch;
+  const integration = realPath(integrationDir(mission));
+  const branches = missionBranches(mission).filter((branch) => branch !== integrationBranch);
+  const checkoutBranch = currentBranch(mission.dir);
+  if (branches.includes(checkoutBranch)) {
+    throw codedError('checkout-on-task-branch', { dir: mission.dir, branch: checkoutBranch });
+  }
+  // A folder removed by hand has no work left: `worktree prune` forgets it.
+  const worktrees = missionWorktrees(mission).filter(({ dir }) => fs.existsSync(dir) && realPath(dir) !== integration);
+  // --untracked-files=all: a user setting status.showUntrackedFiles=no would hide new files.
+  const dirty = worktrees
+    .filter(({ dir, locked }) => locked || git(dir, ['status', '--porcelain', '--untracked-files=all']) !== '')
+    .map(({ dir }) => dir);
+  const integrationExists = branchExists(mission.dir, integrationBranch);
+  const unmerged = branches.filter(
+    (branch) =>
+      !integrationExists ||
+      git(mission.dir, ['rev-list', '--count', `refs/heads/${integrationBranch}..refs/heads/${branch}`]) !== '0',
+  );
+  const items = [...dirty, ...unmerged];
+  if (items.length > 0 && !force) {
+    throw codedError('remove-unmerged-work', { mission: mission.name, items: items.join(', ') });
+  }
+
+  const deleted = branches.map((branch) => `${branch} ${git(mission.dir, ['rev-parse', `refs/heads/${branch}`])}`);
+  for (const { dir, locked } of worktrees) removeWorktree(mission, dir, { locked });
+  // Before the branches: git refuses to delete a branch that a worktree, even a missing one, has out.
+  git(mission.dir, ['worktree', 'prune']);
+  branches.forEach((branch, index) => {
+    git(mission.dir, ['branch', '-D', branch]);
+    onBranchDeleted(deleted[index]);
+  });
+  return deleted;
+}
+
 module.exports = {
   prepareMission,
   prepareTask,
@@ -409,6 +479,8 @@ module.exports = {
   finish,
   missionWorktrees,
   cleanMission,
+  missionBranches,
+  removeMission,
   isTransientGitError,
   gitTimeoutMs,
 };

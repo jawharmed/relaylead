@@ -505,10 +505,75 @@ async function stopSessions(mission, justStopped) {
   return result;
 }
 
+// Whether a launch of this mission is running: a folder lock names it and its process is alive.
+// The launch has reserved the mission folder but not written mission.json yet.
+function launchRunning(name) {
+  const locks = path.join(home(), 'locks');
+  let files;
+  try {
+    files = fs.readdirSync(locks);
+  } catch (err) {
+    if (err.code === 'ENOENT') return false;
+    throw err;
+  }
+  return files.some((file) => {
+    let lock;
+    try {
+      lock = readJson(path.join(locks, file), null);
+    } catch {
+      return false; // being written: not readable yet
+    }
+    return Boolean(lock && lock.mission === name && isAlive(lock.pid));
+  });
+}
+
+// `relaylead remove`: frees the name and the folder of a finished mission. Its sessions are stopped
+// again by an adapter that stops by id, its task worktrees and branches are removed by the delivery,
+// then its folder under missions/ is deleted. Returns the deleted branches ("<name> <sha>"), each
+// also passed to onBranchDeleted as soon as it is deleted.
+async function removeMission(name, { force = false, onBranchDeleted } = {}) {
+  // The name ends up in a recursive removal: no "..", no separator.
+  if (!/^[a-z0-9-]+$/.test(name)) throw codedError('usage', { usage: 'relaylead remove <mission> [--force]' });
+  const folder = missionDir(name);
+  if (!fs.existsSync(folder)) throw codedError('mission-unknown', { mission: name });
+  // No mission.json: a removal that was interrupted, or a folder written again by a late helper. Unless
+  // a launch is creating it right now.
+  if (!fs.existsSync(path.join(folder, 'mission.json'))) {
+    if (launchRunning(name)) throw codedError('dir-busy', { dir: folder, mission: name, state: 'starting' });
+    fs.rmSync(folder, { recursive: true, force: true, maxRetries: 5 });
+    return [];
+  }
+  // Under the mission lock: an end of mission (`state set done`) still running is waited for.
+  const deleted = await withMissionLock(name, 'remove', async () => {
+    const mission = readMission(name);
+    const record = readStateRecord(name);
+    if (!FINISHED.includes(record.state) || record.stopping) {
+      const state = record.stopping ? `${record.state}, stopping` : record.state;
+      throw codedError('mission-running', { mission: name, state });
+    }
+    // Stopping by id again is harmless, and catches a session restarted since. A stop by pid is not
+    // tried: the recorded pids may belong to unrelated processes by now.
+    const adapter = getAdapter(mission.agent);
+    if (adapter.stopById) {
+      for (const session of listSessions(name)) await adapter.stop(session);
+    }
+    // A project folder deleted since has no worktree or branch left to remove.
+    const branches = fs.existsSync(mission.dir)
+      ? getDelivery(mission.config.delivery.type).removeMission(mission, { force, onBranchDeleted })
+      : [];
+    releaseLock(mission.dir, mission);
+    return branches;
+  });
+  // Retries: on Windows, a helper that has just ended may still hold a file for a moment.
+  fs.rmSync(folder, { recursive: true, force: true, maxRetries: 5 });
+  return deleted;
+}
+
 module.exports = {
   createMission,
   listMissions,
   stopMission,
+  removeMission,
   readMission,
   getState,
   setState,

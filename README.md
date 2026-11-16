@@ -24,11 +24,14 @@ From the root of your repository:
 - `relaylead question list <mission>` shows the questions the lead is waiting on;
 - `relaylead answer <mission> <question id> <choice>` answers one (a number or the text of an option);
 - `relaylead show <mission>` opens the lead's session;
-- `relaylead stop <mission>` stops the mission and all its sessions.
+- `relaylead stop <mission>` stops the mission and all its sessions;
+- `relaylead remove <mission>` removes a finished (done or stopped) mission, so its name, by default the folder's, can be used again.
 
 The work lands on the branch `relaylead/integration`; your own checkout is never changed.
 
 Each task works in its own worktree, under `.relaylead/worktrees/`. When a mission is stopped or done, its clean task worktrees are removed, **ignored files included** (`node_modules`, build output); their branches stay, so no commit is lost. A worktree with changes not committed, or whose session is still running, is kept and reported: commit or remove those changes, or wait for the session to end, then run `relaylead stop <mission>` again to clean up.
+
+`relaylead remove <mission>` deletes the mission's task worktrees, **ignored files included**, its task branches `relaylead/<mission>/…` and its state under `~/.relaylead/missions/`. It keeps the integration branch and its worktree, with the delivered work. It refuses, before deleting anything, a task branch with commits not merged into the integration branch, or a task worktree with changes not committed or locked (`git worktree lock`), and names them; and, even with `--force`, your own checkout on one of its task branches. `relaylead remove <mission> --force` deletes them anyway; it prints each deleted branch with its last commit, so it can be made again with `git branch <name> <commit>` while git keeps that commit.
 
 Design documents are in French for now:
 
@@ -66,11 +69,14 @@ Depuis un clone de ce dépôt, lancez `npm link` : la commande `relaylead` est a
 - `relaylead question list <mission>` montre les questions qu'attend le lead ;
 - `relaylead answer <mission> <id de la question> <choix>` y répond (un numéro ou le texte d'une option) ;
 - `relaylead show <mission>` ouvre la session du lead ;
-- `relaylead stop <mission>` arrête la mission et toutes ses sessions.
+- `relaylead stop <mission>` arrête la mission et toutes ses sessions ;
+- `relaylead remove <mission>` supprime une mission finie (terminée ou arrêtée), pour que son nom, par défaut celui du dossier, serve de nouveau.
 
 Le travail arrive sur la branche `relaylead/integration` ; votre propre copie de travail ne change jamais.
 
 Chaque tâche travaille dans son propre worktree, sous `.relaylead/worktrees/`. À l'arrêt ou à la fin d'une mission, ses worktrees de tâche propres sont retirés, **fichiers ignorés compris** (`node_modules`, sorties de build) ; leurs branches restent, aucun commit n'est perdu. Un worktree avec des modifications non commitées, ou dont la session tourne encore, est gardé et signalé : committez ou retirez ces modifications, ou attendez la fin de la session, puis relancez `relaylead stop <mission>` pour refaire le ménage.
+
+`relaylead remove <mission>` supprime les worktrees de tâche de la mission, **fichiers ignorés compris**, ses branches de tâche `relaylead/<mission>/…` et son état sous `~/.relaylead/missions/`. Il garde la branche d'intégration et son worktree, avec le travail livré. Il refuse, avant de rien supprimer, une branche de tâche dont des commits ne sont pas fusionnés dans la branche d'intégration, ou un worktree de tâche avec des modifications non commitées ou verrouillé (`git worktree lock`), et les nomme ; et, même avec `--force`, votre propre copie de travail sur une de ses branches de tâche. `relaylead remove <mission> --force` les supprime quand même ; il affiche chaque branche supprimée avec son dernier commit, pour la recréer avec `git branch <nom> <commit>` tant que git garde ce commit.
 
 ## Développer
 

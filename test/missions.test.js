@@ -703,3 +703,64 @@ test('a session the adapter no longer lists has no process to wait for', async (
   assert.deepStrictEqual([stopped.code, stopped.out, stopped.err], [0, 'mission demo stopped\n', '']);
   assert.ok(isAlive(unrelated.pid));
 });
+
+test('remove waits for the end of state set done', async (t) => {
+  freshHome(t);
+  writeMission('demo', tmpDir('relaylead-project-')); // no lead: the test plays it
+  const crew = await launchCrew(tmpDir('relaylead-project-'), 1);
+  let stopCalled = false;
+  stub(t, 'stop', (original) => async (session) => {
+    stopCalled = true;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    return original(session);
+  });
+  const ended = [];
+
+  const done = cli(['state', 'set', 'done', '--mission', 'demo']).then((result) => {
+    ended.push('done');
+    return result;
+  });
+  await waitFor(() => stopCalled, 10000, 'state set done to stop the crew');
+  const removed = await cli(['remove', 'demo']);
+  ended.push('remove');
+
+  assert.strictEqual(removed.code, 0, removed.err);
+  assert.strictEqual((await done).code, 0);
+  assert.deepStrictEqual(ended, ['done', 'remove']);
+  await waitFor(() => !isAlive(crew.pid), 30000, 'the crew member to end');
+  assert.strictEqual(fs.existsSync(missionDir('demo')), false);
+});
+
+test('remove finishes an interrupted removal', async (t) => {
+  freshHome(t);
+  const dir = tmpDir('relaylead-project-');
+  writeJson(path.join(missionDir('demo'), 'reaper.json'), { pid: 0, startedAt: new Date().toISOString() });
+
+  const removed = await cli(['remove', 'demo']);
+
+  assert.strictEqual(removed.code, 0, removed.err);
+  assert.strictEqual(fs.existsSync(missionDir('demo')), false);
+  const launched = await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir]);
+  assert.strictEqual(launched.code, 0, launched.err);
+});
+
+test('remove leaves a mission folder being launched', async (t) => {
+  freshHome(t);
+  fs.mkdirSync(missionDir('demo'), { recursive: true }); // reserved, mission.json not written yet
+  writeJson(lockFile(fs.realpathSync.native(tmpDir('relaylead-project-'))), { pid: process.pid, mission: 'demo' });
+
+  const refused = await cli(['remove', 'demo']);
+
+  assert.strictEqual(refused.code, 1);
+  assert.match(refused.err, /busy/);
+  assert.strictEqual(fs.existsSync(missionDir('demo')), true);
+});
+
+test('remove checks the mission name before removing anything', async (t) => {
+  freshHome(t);
+  const refused = await cli(['remove', '..']);
+  assert.strictEqual(refused.code, 1);
+  assert.match(refused.err, /usage: relaylead remove <mission> \[--force\]/);
+  // missions/.. is RELAYLEAD_HOME itself.
+  assert.strictEqual(fs.existsSync(path.join(process.env.RELAYLEAD_HOME, 'config.json')), true);
+});
