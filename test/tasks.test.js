@@ -243,11 +243,11 @@ test('the start lock names its holder', async (t) => {
   assert.ok(Date.parse(lock.since) >= before - 1000, lock.since);
 });
 
-// Its holder is alive (this very process) but has held it for 11 minutes: it is stuck.
+// Its holder is alive (this very process) but has held it for 16 minutes: it is stuck.
 test('a start lock held for too long is reported at once, with its holder', { timeout: 5000 }, async (t) => {
   const dir = setupProject(t, 'demo');
   writeMission('demo', dir);
-  const since = new Date(Date.now() - 11 * 60 * 1000).toISOString();
+  const since = new Date(Date.now() - 16 * 60 * 1000).toISOString();
   fs.writeFileSync(startLock(), JSON.stringify({ pid: process.pid, command: 'task deliver a', since }));
 
   await assert.rejects(startTask('demo', { id: 'a' }), {
@@ -257,10 +257,11 @@ test('a start lock held for too long is reported at once, with its holder', { ti
   assert.strictEqual(fs.existsSync(path.join(missionDir('demo'), 'tasks', 'a.json')), false);
 });
 
+// 11 minutes is not stuck: a delivery may run several git commands of up to 5 minutes each.
 test('a start that waits too long names the holder of the lock', { timeout: 5000 }, async (t) => {
   const dir = setupProject(t, 'demo');
   writeMission('demo', dir);
-  const since = new Date().toISOString();
+  const since = new Date(Date.now() - 11 * 60 * 1000).toISOString();
   fs.writeFileSync(startLock(), JSON.stringify({ pid: process.pid, command: 'task deliver a', since }));
   // A clock that runs a second per reading: the minute a start waits passes at once.
   const startedAt = Date.now();
@@ -270,6 +271,25 @@ test('a start that waits too long names the holder of the lock', { timeout: 5000
   await assert.rejects(startTask('demo', { id: 'a' }), {
     code: 'start-busy',
     vars: { mission: 'demo', command: 'task deliver a', pid: process.pid, since },
+  });
+});
+
+// Like Windows refusing to create the file again for a while (EPERM) after its holder removed it.
+test('a start gives up after a minute even when the lock cannot be read', { timeout: 5000 }, async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  const originalWrite = fs.writeFileSync;
+  t.mock.method(fs, 'writeFileSync', (file, ...rest) => {
+    if (String(file).endsWith('start.lock')) throw Object.assign(new Error('exists'), { code: 'EEXIST' });
+    return originalWrite(file, ...rest);
+  });
+  const startedAt = Date.now();
+  let readings = 0;
+  t.mock.method(Date, 'now', () => startedAt + readings++ * 1000);
+
+  await assert.rejects(startTask('demo', { id: 'a' }), {
+    code: 'start-busy',
+    vars: { mission: 'demo', command: '?', pid: '?', since: '?' },
   });
 });
 

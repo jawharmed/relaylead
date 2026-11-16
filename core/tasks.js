@@ -11,6 +11,7 @@ const { loadProfile } = require('./profiles');
 const { listQuestions } = require('./questions');
 const { getAdapter } = require('../adapters');
 const { getDelivery } = require('../deliveries');
+const { gitTimeoutMs } = require('../deliveries/local-merge');
 const tasksDirSource = require('../sources/tasks-dir');
 
 // The option the lead adds to the question of a task that asks first (catalog/profiles/lead.md).
@@ -18,8 +19,9 @@ const SKIP_CHOICE = 'Skip this task';
 // Long enough for a slow agent launch held by another start.
 const START_LOCK_WAIT_MS = 60 * 1000;
 const EMPTY_LOCK_STALE_MS = 10 * 1000;
-// A live holder this old is stuck: every git command of a delivery ends within 5 minutes.
-const START_LOCK_STUCK_MS = 10 * 60 * 1000;
+// A live holder this old is stuck: a delivery runs a few git commands, each stopped after
+// gitTimeoutMs(), so even a slow one ends well before.
+const startLockStuckMs = () => Math.max(15 * 60 * 1000, 3 * gitTimeoutMs());
 
 function now() {
   return new Date().toISOString();
@@ -218,18 +220,20 @@ async function takeOverStaleLock(file) {
 // must see the sessions and task records written by the previous one. Deliveries take it too, so
 // two git commands never change the same repository at the same time. `command` names the holder
 // ("task start a") in the lock file and in the errors of those who wait for it.
-// A waiter gives up after a minute; at once if the live holder has held it for too long.
+// A waiter gives up after a minute, even when it cannot read who holds it; at once if the live
+// holder has held it for too long.
 async function withStartLock(name, command, action) {
   const file = path.join(missionDir(name), 'start.lock');
   const giveUpAt = Date.now() + START_LOCK_WAIT_MS;
   while (!tryCreateLock(file, command)) {
     if (isStaleLock(file) && (await takeOverStaleLock(file))) continue;
     const lock = readLock(file);
-    if (lock && lock.pid) {
-      const holder = { mission: name, command: lock.command, pid: lock.pid, since: lock.since };
-      if (Date.now() - Date.parse(lock.since) > START_LOCK_STUCK_MS) throw codedError('start-stuck', holder);
-      if (Date.now() > giveUpAt) throw codedError('start-busy', holder);
-    }
+    const known = lock && lock.pid;
+    const holder = known
+      ? { mission: name, command: lock.command, pid: lock.pid, since: lock.since }
+      : { mission: name, command: '?', pid: '?', since: '?' };
+    if (known && Date.now() - Date.parse(lock.since) > startLockStuckMs()) throw codedError('start-stuck', holder);
+    if (Date.now() > giveUpAt) throw codedError('start-busy', holder);
     await sleep(50);
   }
   try {

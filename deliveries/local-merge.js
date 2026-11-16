@@ -243,6 +243,21 @@ function mergeInProgress(cwd) {
   return fs.existsSync(path.resolve(cwd, git(cwd, ['rev-parse', '--git-path', 'MERGE_HEAD'])));
 }
 
+// A merge stopped by its timeout was killed: it may have left the merge going and its index.lock.
+// Only the holder of start.lock runs git in the integration worktree, and the killed git has ended,
+// so that index.lock is stale. Best effort: returns the error to throw, saying what was done.
+function cancelKilledMerge(integration, err) {
+  try {
+    const indexLock = path.resolve(integration, git(integration, ['rev-parse', '--git-path', 'index.lock']));
+    fs.rmSync(indexLock, { force: true });
+    if (mergeInProgress(integration)) git(integration, ['merge', '--abort']);
+    err.message += '; the merge was cancelled';
+  } catch (cleanup) {
+    err.message += `; it could not be cancelled (${cleanup.message}): check the integration worktree ${integration}`;
+  }
+  return err;
+}
+
 // Merges in the integration worktree; on a conflict, cancels the merge and returns false.
 // Relaylead's own commits skip the project's hooks (--no-verify): they hold only work already
 // committed and state lines.
@@ -254,7 +269,7 @@ function mergeOrAbort(integration, args) {
       git(integration, ['merge', '--no-ff', '--no-edit', '--no-verify', ...args]);
       return true;
     } catch (err) {
-      if (err.timedOut) throw err;
+      if (err.timedOut) throw cancelKilledMerge(integration, err);
       if (!mergeInProgress(integration)) throw err; // stopped before merging, e.g. no git user configured
       const conflicted = git(integration, ['diff', '--name-only', '--diff-filter=U']) !== '';
       git(integration, ['merge', '--abort']);
@@ -342,4 +357,4 @@ function finish(mission, task) {
   return [];
 }
 
-module.exports = { prepareMission, prepareTask, checkDone, deliver, finish, isTransientGitError };
+module.exports = { prepareMission, prepareTask, checkDone, deliver, finish, isTransientGitError, gitTimeoutMs };
