@@ -33,6 +33,10 @@ Each task works in its own worktree, under `.relaylead/worktrees/`. When a missi
 
 `relaylead remove <mission>` deletes the mission's task worktrees, **ignored files included**, its task branches `relaylead/<mission>/…` and its state under `~/.relaylead/missions/`. It keeps the integration branch and its worktree, with the delivered work. It refuses, before deleting anything, a task branch with commits not merged into the integration branch, or a task worktree with changes not committed or locked (`git worktree lock`), and names them; and, even with `--force`, your own checkout on one of its task branches. `relaylead remove <mission> --force` deletes them anyway; it prints each deleted branch with its last commit, so it can be made again with `git branch <name> <commit>` while git keeps that commit.
 
+### Dependencies
+
+The `developer` profile may only run `npm ci --ignore-scripts` and `npm install --ignore-scripts`, exactly: install scripts run third-party code with your rights, and the guard only sees the `npm` command. This guards against an agent installing out of habit, not against a hostile session: `node *`, `npm test` and git aliases still run code. A project that needs install scripts adds, knowingly, `"guard": {"allow": ["Bash(npm ci)"]}` to `.relaylead.json`. The `all` mode stays an explicit choice that blocks nothing: `npm ci` is allowed there and **runs the install scripts**.
+
 Design documents are in French for now:
 
 - [Design](docs/specs/2026-11-14-relaylead-design.md)
@@ -77,6 +81,10 @@ Le travail arrive sur la branche `relaylead/integration` ; votre propre copie de
 Chaque tâche travaille dans son propre worktree, sous `.relaylead/worktrees/`. À l'arrêt ou à la fin d'une mission, ses worktrees de tâche propres sont retirés, **fichiers ignorés compris** (`node_modules`, sorties de build) ; leurs branches restent, aucun commit n'est perdu. Un worktree avec des modifications non commitées, ou dont la session tourne encore, est gardé et signalé : committez ou retirez ces modifications, ou attendez la fin de la session, puis relancez `relaylead stop <mission>` pour refaire le ménage.
 
 `relaylead remove <mission>` supprime les worktrees de tâche de la mission, **fichiers ignorés compris**, ses branches de tâche `relaylead/<mission>/…` et son état sous `~/.relaylead/missions/`. Il garde la branche d'intégration et son worktree, avec le travail livré. Il refuse, avant de rien supprimer, une branche de tâche dont des commits ne sont pas fusionnés dans la branche d'intégration, ou un worktree de tâche avec des modifications non commitées ou verrouillé (`git worktree lock`), et les nomme ; et, même avec `--force`, votre propre copie de travail sur une de ses branches de tâche. `relaylead remove <mission> --force` les supprime quand même ; il affiche chaque branche supprimée avec son dernier commit, pour la recréer avec `git branch <nom> <commit>` tant que git garde ce commit.
+
+### Dépendances
+
+Le profil `developer` n'a droit qu'à `npm ci --ignore-scripts` et `npm install --ignore-scripts`, tels quels : les scripts d'installation exécutent le code de paquets tiers avec vos droits, et le garde-fou ne voit que la commande `npm`. C'est un garde-fou contre l'habitude d'un agent qui installe « comme d'habitude », pas contre une session hostile : `node *`, `npm test` et les alias git exécutent toujours du code. Un projet qui a besoin des scripts ajoute, en connaissance de cause, `"guard": {"allow": ["Bash(npm ci)"]}` à `.relaylead.json`. Le mode `all` reste un choix explicite qui ne bloque rien : `npm ci` y est permis et **lance les scripts d'installation**.
 
 ## Développer
 

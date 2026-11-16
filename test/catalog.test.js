@@ -3,6 +3,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { run } = require('../core/cli');
+const { isAllowed } = require('../core/guard');
 const { loadProfile, loadMethod } = require('../core/profiles');
 const { readJson } = require('../core/store');
 const { missionDir } = require('../core/paths');
@@ -43,7 +44,7 @@ test('catalog profiles parse with the expected fields', () => {
   const developer = loadProfile('developer', { dir });
   assert.deepStrictEqual([developer.agent, developer.model, developer.effort], ['claude', 'sonnet', 'medium']);
   assert.deepStrictEqual(developer.tools, [
-    'Bash(git *)', 'Bash(npm test*)', 'Bash(npm ci*)', 'Bash(npm install*)', 'Bash(node *)', 'Bash(relaylead task *)',
+    'Bash(git *)', 'Bash(npm test*)', 'Bash(npm ci --ignore-scripts)', 'Bash(npm install --ignore-scripts)', 'Bash(node *)', 'Bash(relaylead task *)',
     'Read', 'Write', 'Edit', 'Glob', 'Grep',
   ]);
   for (const command of ['relaylead task done', 'relaylead task fail']) {
@@ -98,4 +99,35 @@ test('show attaches to the current lead', async (t) => {
   const unknown = await cli(['show', 'ghost']);
   assert.strictEqual(unknown.code, 1);
   assert.match(unknown.err, /ghost/);
+});
+
+test('the developer may install dependencies only without their scripts', () => {
+  process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
+  const { tools } = loadProfile('developer', { dir: tmpDir('relaylead-project-') });
+  const allowed = (command) => isAllowed({ tool_name: 'Bash', tool_input: { command } }, tools);
+
+  for (const command of ['npm ci --ignore-scripts', 'npm install --ignore-scripts']) {
+    assert.strictEqual(allowed(command), true, command);
+  }
+  for (const command of [
+    'npm ci', 'npm install', 'npm i left-pad', 'npm install --ignore-scripts left-pad', 'npm ci --ignore-scripts=false',
+    'npm ci --ignore-scripts && npm install', 'npm_config_ignore_scripts=false npm ci --ignore-scripts',
+  ]) {
+    assert.strictEqual(allowed(command), false, command);
+  }
+});
+
+test('the developer instructions install without scripts', () => {
+  process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
+  const { instructions } = loadProfile('developer', { dir: tmpDir('relaylead-project-') });
+  assert.ok(instructions.includes('npm ci --ignore-scripts'));
+  assert.ok(!instructions.includes('`npm ci` or `npm install` first'));
+});
+
+test('the toy repository pins a dependency without scripts', () => {
+  const toy = path.join(__dirname, '..', 'fixtures', 'toy-repo');
+  const lock = JSON.parse(fs.readFileSync(path.join(toy, 'package-lock.json'), 'utf8'));
+  assert.strictEqual(lock.packages['node_modules/ms'].version, '2.1.3');
+  assert.deepStrictEqual(Object.values(lock.packages).filter((entry) => entry.hasInstallScript), []);
+  assert.ok(fs.readFileSync(path.join(toy, 'lib', 'duration.js'), 'utf8').includes("require('ms')"));
 });
