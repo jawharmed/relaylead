@@ -19,6 +19,12 @@ const { withMissionLock } = require('./mission-lock');
 const STATES = ['starting', 'working', 'waiting', 'done'];
 const BIN = path.join(__dirname, '..', 'bin', 'relaylead.js');
 const REAP_POLL_MS = 2000;
+// The states after which no session of the mission may run.
+const FINISHED = ['done', 'stopped'];
+// An empty or partly written folder lock this old was left by a launch that crashed.
+const EMPTY_LOCK_STALE_MS = 10 * 1000;
+// Past this age, the recorded pids of a mission may belong to unrelated processes.
+const PIDS_TRUSTED_MS = 60 * 60 * 1000;
 // How long the helper waits for the lead to end its turn after `state set done`; tests shorten it.
 const reapMaxMs = () => Number(process.env.RELAYLEAD_REAP_MAX_MS) || 10 * 60 * 1000;
 
@@ -36,10 +42,34 @@ function lockFile(realDir) {
   return path.join(home(), 'locks', `${hash}.lock`);
 }
 
-// A lock is stale when its process is gone or its mission is over.
-function isStale(lock) {
-  if (!isAlive(lock.pid)) return true;
-  return ['done', 'stopped'].includes(readState(lock.mission));
+// The lock follows its mission, not the lead's pid: an agent may restart a lead under another pid.
+// A lead gone for good is dealt with by `relaylead stop`.
+function isStale(lock, realDir) {
+  const mission = readJson(missionFile(lock.mission, 'mission.json'), null);
+  // No mission yet: its launch is running, or crashed before writing it.
+  if (!mission) return !isAlive(lock.pid);
+  // The name now belongs to a mission of another folder, or to a newer mission. A lock without
+  // createdAt was written by an older relaylead: it belongs to the mission it names.
+  if (mission.dir !== realDir) return true;
+  if (lock.createdAt && lock.createdAt !== mission.createdAt) return true;
+  // Over, and every session stopped.
+  const record = readStateRecord(lock.mission);
+  return FINISHED.includes(record.state) && !record.stopping;
+}
+
+function busyError(realDir, name) {
+  const record = name === '?' ? { state: 'starting' } : readStateRecord(name);
+  const state = record.stopping ? `${record.state}, stopping` : record.state;
+  return codedError('dir-busy', { dir: realDir, mission: name, state });
+}
+
+// Milliseconds since the file was last written; Infinity once it is gone.
+function ageOf(file) {
+  try {
+    return Date.now() - fs.statSync(file).mtimeMs;
+  } catch {
+    return Infinity;
+  }
 }
 
 // Creating the file with 'wx' fails if it exists: of two launches at the same time, only one wins.
@@ -49,7 +79,7 @@ function takeLock(realDir, mission) {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const fd = fs.openSync(file, 'wx');
-      fs.writeSync(fd, JSON.stringify({ pid: process.pid, mission }));
+      fs.writeSync(fd, JSON.stringify({ pid: process.pid, mission: mission.name, createdAt: mission.createdAt }));
       fs.closeSync(fd);
       return;
     } catch (err) {
@@ -59,17 +89,22 @@ function takeLock(realDir, mission) {
     try {
       lock = readJson(file, null);
     } catch {
-      // Empty or partial file: another launch has just created it and is writing it.
-      throw codedError('dir-busy', { dir: realDir, mission: '?' });
+      lock = undefined;
     }
     if (lock === null) continue; // released in the meantime: try again
-    if (!isStale(lock)) throw codedError('dir-busy', { dir: realDir, mission: lock.mission });
+    if (!lock || typeof lock.mission !== 'string' || !/^[a-z0-9-]+$/.test(lock.mission)) {
+      // Empty or partial file: another launch has just created it and is writing it, unless it is old.
+      if (ageOf(file) <= EMPTY_LOCK_STALE_MS) throw busyError(realDir, '?');
+    } else if (!isStale(lock, realDir)) {
+      throw busyError(realDir, lock.mission);
+    }
     fs.rmSync(file, { force: true });
   }
-  throw codedError('dir-busy', { dir: realDir, mission: '?' });
+  throw busyError(realDir, '?');
 }
 
-// Only the mission that holds the lock removes it: a newer mission may have taken it over.
+// Only the mission that holds the lock removes it: a newer mission, even of the same name, may have
+// taken it over.
 function releaseLock(realDir, mission) {
   const file = lockFile(realDir);
   let lock;
@@ -78,7 +113,9 @@ function releaseLock(realDir, mission) {
   } catch {
     return; // being written by another launch, so not ours
   }
-  if (lock && lock.mission === mission) fs.rmSync(file, { force: true });
+  if (!lock || lock.mission !== mission.name) return;
+  if (lock.createdAt && lock.createdAt !== mission.createdAt) return;
+  fs.rmSync(file, { force: true });
 }
 
 // mkdir without `recursive` fails if the folder exists: two launches cannot take the same name.
@@ -102,23 +139,23 @@ async function createMission({ name, dir, request, team, priority, agent, params
   // Read before anything is created: an unknown profile or method leaves nothing behind.
   const leadProfile = loadProfile('lead', { dir: realDir });
   const method = loadMethod(config.method, { dir: realDir });
+  const mission = {
+    name: missionName,
+    dir: realDir,
+    request: request || null,
+    team: team || null,
+    priority: priority || config.priority,
+    agent: adapter.name,
+    createdAt: now(), // also in the folder lock: it tells this mission from a later one of the same name
+    config,
+  };
 
-  takeLock(realDir, missionName);
+  takeLock(realDir, mission);
   let reserved = false;
   let lead = null;
   try {
     reserveName(missionName);
     reserved = true;
-    const mission = {
-      name: missionName,
-      dir: realDir,
-      request: request || null,
-      team: team || null,
-      priority: priority || config.priority,
-      agent: adapter.name,
-      createdAt: now(),
-      config,
-    };
     // Before the lead starts: the integration worktree is where the lead reads the tasks.
     delivery.prepareMission(mission);
     writeJson(missionFile(missionName, 'mission.json'), mission);
@@ -133,8 +170,6 @@ async function createMission({ name, dir, request, team, priority, agent, params
       env: { RELAYLEAD_MISSION: missionName, RELAYLEAD_HOME: home() },
       permissionMode: config.permissionMode,
     });
-    // From now on the lock follows the lead: it becomes stale when the lead is gone.
-    writeJson(lockFile(realDir), { pid: lead.pid, mission: missionName });
     writeJson(missionFile(missionName, 'lead.json'), {
       sessionId: lead.sessionId,
       shortId: lead.shortId,
@@ -151,7 +186,7 @@ async function createMission({ name, dir, request, team, priority, agent, params
     }
     // Retries: the stopped lead may still be finishing a write in the folder.
     if (reserved) fs.rmSync(missionDir(missionName), { recursive: true, force: true, maxRetries: 5 });
-    releaseLock(realDir, missionName);
+    releaseLock(realDir, mission);
     throw err;
   }
 }
@@ -178,9 +213,21 @@ function readMission(name) {
   return mission;
 }
 
-// 'starting' until the lead declares a state.
+// {state, note, stopping, updatedAt}: state.json, or 'starting' until the lead declares a state.
+function readStateRecord(name) {
+  return readJson(missionFile(name, 'state.json'), { state: 'starting' });
+}
+
 function readState(name) {
-  return readJson(missionFile(name, 'state.json'), { state: 'starting' }).state;
+  return readStateRecord(name).state;
+}
+
+// `stopping: true` keeps the folder locked while the sessions of a stopped or done mission are being
+// stopped. Only the core writes it.
+function writeState(name, { state, note, stopping }) {
+  const record = { state, note, updatedAt: now() };
+  if (stopping) record.stopping = true;
+  writeJson(missionFile(name, 'state.json'), record);
 }
 
 function getState(name) {
@@ -188,26 +235,26 @@ function getState(name) {
   return readState(name);
 }
 
+// Returns 'skipped' when a done replayed was too old to stop its sessions again, null otherwise.
 async function setState(name, state, note) {
   const mission = readMission(name);
   if (!STATES.includes(state)) throw codedError('bad-state', { state, states: STATES.join(', ') });
   // A lead restarted after a stop must not erase the stop. Once done, only `done` again is taken:
   // it retries the stops of a done that failed.
-  const current = readState(name);
-  if (current === 'stopped') throw codedError('mission-stopped', { mission: name });
-  if (current === 'done' && state !== 'done') throw codedError('mission-finished', { mission: name });
-  writeJson(missionFile(name, 'state.json'), { state, note, updatedAt: now() });
-  if (state === 'done') {
-    // The mission lock keeps a removal or a new launch from crossing the end. The folder lock is
-    // released last: until the crew is stopped, the folder is still in use.
-    await withMissionLock(name, 'state set done', async () => {
-      try {
-        await endMission(mission);
-      } finally {
-        releaseLock(mission.dir, name);
-      }
-    });
+  const current = readStateRecord(name);
+  if (current.state === 'stopped') throw codedError('mission-stopped', { mission: name });
+  if (current.state === 'done' && state !== 'done') throw codedError('mission-finished', { mission: name });
+  if (state !== 'done') {
+    writeState(name, { state, note });
+    return null;
   }
+  // A replay keeps the state as it is, with its date: that date tells how old the pids are.
+  const replay = current.state === 'done';
+  if (replay && !needsStop(mission, current)) return null;
+  if (!replay) writeState(name, { state: 'done', note, stopping: true });
+  const record = replay ? current : { state: 'done', note };
+  // The mission lock keeps a removal or a new launch from crossing the end.
+  return withMissionLock(name, 'state set done', () => stopAndFree(mission, record, () => endMission(mission)));
 }
 
 // Once the mission is done, no session of it may keep running. The crew is stopped now. The lead
@@ -316,38 +363,58 @@ function listMissions() {
   return missions.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function writeStopped(name) {
-  writeJson(missionFile(name, 'state.json'), { state: 'stopped', updatedAt: now() });
+// Whether the sessions of a mission must be stopped (again). A mission still stopping always is:
+// its stop has not finished, and its pids are recent. A finished one is left alone by an adapter
+// that stops by pid, as its recorded pids may now belong to unrelated processes; one that stops by
+// id (claude) is asked again, which retries a stop that failed.
+function needsStop(mission, record) {
+  if (!FINISHED.includes(record.state) || record.stopping) return true;
+  return Boolean(getAdapter(mission.agent).stopById);
 }
 
-// Returns false when there was nothing to do. A stop that fails does not keep the other sessions
-// running: its error is thrown at the end, and the stop can be run again.
+// Stops the sessions with `stopAll`, which throws the first stop that failed. Once all are stopped,
+// the state is written again without the stopping marker, then the folder is freed. A stop that
+// failed keeps both: the folder may still be in use, and the stop can be run again.
+// With a marker more than an hour old, an adapter that stops by pid is not called: those pids are no
+// longer safe to stop. The marker is cleared and the folder freed all the same. Returns 'stopped' or 'skipped'.
+async function stopAndFree(mission, record, stopAll) {
+  const pidsTooOld = record.stopping && Date.now() - Date.parse(record.updatedAt) > PIDS_TRUSTED_MS;
+  const skipped = pidsTooOld && !getAdapter(mission.agent).stopById;
+  if (!skipped) await stopAll();
+  writeState(mission.name, { state: record.state, note: record.note });
+  releaseLock(mission.dir, mission);
+  return skipped ? 'skipped' : 'stopped';
+}
+
+// Returns 'stopped', 'skipped' (pids too old to stop again) or 'nothing' (nothing to do). A stop
+// that fails does not keep the other sessions running: its error is thrown at the end, and the stop
+// can be run again. A done mission stays done.
 async function stopMission(name) {
   const mission = readMission(name);
-  const adapter = getAdapter(mission.agent);
-  const state = readState(name);
-  // A finished mission is left alone by an adapter that stops by pid: its recorded pids may now
-  // belong to unrelated processes. One that stops by id (claude) is asked again: that retries a
-  // stop that failed. A done mission stays done.
-  if (['stopped', 'done'].includes(state) && !adapter.stopById) return false;
+  const current = readStateRecord(name);
+  if (!needsStop(mission, current)) return 'nothing';
+  // A replay keeps the state as it is, with its date: that date tells how old the pids are.
+  const replay = FINISHED.includes(current.state);
+  const record = replay ? current : { state: 'stopped' };
   // Written first, so a `state set` from a session being stopped is refused instead of erasing the stop.
-  if (state !== 'done') writeStopped(name);
+  if (!replay) writeState(name, { state: 'stopped', stopping: true });
   // The sessions are stopped under the mission lock, behind a start or a delivery that is running.
   // When that wait gives up, the state stays stopped and the folder stays locked: stop can be run again.
   // A stuck holder (start-stuck) is not turned into stop-pending: running stop again would fail until
   // that process is ended, and its error says so.
   try {
-    await withMissionLock(name, 'stop', () => stopSessions(mission, state));
+    return await withMissionLock(name, 'stop', () =>
+      stopAndFree(mission, record, () => stopSessions(mission, !replay)),
+    );
   } catch (err) {
     if (err.code === 'start-busy') {
       throw codedError('stop-pending', { mission: name, holder: err.vars.command });
     }
     throw err;
   }
-  return true;
 }
 
-async function stopSessions(mission, state) {
+async function stopSessions(mission, justStopped) {
   const name = mission.name;
   let firstError = null;
   for (const session of listSessions(name)) {
@@ -358,9 +425,8 @@ async function stopSessions(mission, state) {
     }
   }
   // Written again: a `state set` that read the state just before the first write may have landed since.
-  if (state !== 'done') writeStopped(name);
-  if (firstError) throw firstError; // the folder stays locked: a session may still run in it
-  releaseLock(mission.dir, name);
+  if (justStopped) writeState(name, { state: 'stopped', stopping: true });
+  if (firstError) throw firstError;
 }
 
 module.exports = {
@@ -373,4 +439,5 @@ module.exports = {
   reapLead,
   attachLead,
   lockFile,
+  releaseLock,
 };

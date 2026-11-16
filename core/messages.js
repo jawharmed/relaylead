@@ -23,11 +23,14 @@ const messages = {
     noMissions: 'no missions\n',
     missionStopped: 'mission {mission} stopped\n',
     missionNothingToStop: 'mission {mission} is already {state}; nothing to do\n',
+    missionStopSkipped:
+      'the sessions of mission {mission} were not stopped again: their process ids are more than an hour old\n',
     taskDelivered: 'task {id} delivered\n',
     taskAlreadyDelivered: 'task {id} already delivered\n',
     // Errors: the key is the error code (see codedError).
     usage: 'usage: {usage}',
-    'dir-busy': 'the folder {dir} is busy with mission "{mission}"; stop it first with: relaylead stop {mission}',
+    'dir-busy':
+      'the folder {dir} is busy with mission "{mission}" ({state}); if its lead is gone, stop it first with: relaylead stop {mission}',
     'mission-exists': 'a mission named "{mission}" already exists; choose another name with --name',
     'mission-unknown': 'no mission named "{mission}"',
     'mission-stopped': 'mission "{mission}" was stopped; its state can no longer change',
@@ -128,10 +131,13 @@ const messages = {
     noMissions: 'aucune mission\n',
     missionStopped: 'mission {mission} arrêtée\n',
     missionNothingToStop: 'la mission {mission} est déjà {state} ; rien à faire\n',
+    missionStopSkipped:
+      'les sessions de la mission {mission} n\'ont pas été arrêtées de nouveau : leurs numéros de processus ont plus d\'une heure\n',
     taskDelivered: 'tâche {id} livrée\n',
     taskAlreadyDelivered: 'tâche {id} déjà livrée\n',
     usage: 'usage : {usage}',
-    'dir-busy': 'le dossier {dir} est occupé par la mission « {mission} » ; arrêtez-la d\'abord avec : relaylead stop {mission}',
+    'dir-busy':
+      'le dossier {dir} est occupé par la mission « {mission} » ({state}) ; si son lead a disparu, arrêtez-la d\'abord avec : relaylead stop {mission}',
     'mission-exists': 'une mission nommée « {mission} » existe déjà ; choisissez un autre nom avec --name',
     'mission-unknown': 'aucune mission nommée « {mission} »',
     'mission-stopped': 'la mission « {mission} » a été arrêtée ; son état ne peut plus changer',
