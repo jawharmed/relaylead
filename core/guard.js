@@ -4,7 +4,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
+const { runFileSync } = require('./run-file');
 const { home, missionDir } = require('./paths');
 const { readJson } = require('./store');
 const { DEFAULTS } = require('./config');
@@ -225,9 +225,9 @@ function currentBranch(dir) {
     timeout: 10000,
     windowsHide: true,
   };
-  // Like every git command relaylead runs itself: no gc or maintenance left in the background, and
-  // messages in English.
-  const git = (...args) => execFileSync('git', ['-c', 'gc.auto=0', '-c', 'maintenance.auto=false', ...args], options);
+  // Like every git command relaylead runs itself: no gc or maintenance left in the background,
+  // messages in English, and no wait for a process git leaves behind with its output open.
+  const git = (...args) => runFileSync('git', ['-c', 'gc.auto=0', '-c', 'maintenance.auto=false', ...args], options);
   try {
     const branch = git('rev-parse', '--abbrev-ref', 'HEAD').trim();
     return branch === 'HEAD' ? null : branch;

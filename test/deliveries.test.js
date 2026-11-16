@@ -15,7 +15,7 @@ const files = require('../deliveries/files');
 const tasksDirSource = require('../sources/tasks-dir');
 const { tmpDir, makeIo, waitFor } = require('../fixtures/helpers');
 const { writeMission, missionReport } = require('../fixtures/missions');
-const { git, gitRepo, recordingGit } = require('../fixtures/git');
+const { git, gitRepo, recordingGit, lingeringGit } = require('../fixtures/git');
 
 const TASK_A = '---\ntitle: First task\n---\n\nWrite a.\n';
 const TASK_B = '---\ntitle: Second task\ndepends: [a]\n---\n\nWrite b.\n';
@@ -710,21 +710,35 @@ test('a held index lock is retried, not taken for a hook', async (t) => {
   assert.strictEqual(git(dir, 'show', 'relaylead/integration:a.txt'), 'a');
 });
 
-// A git command that never ends would hold the start lock forever: here git leaves a process
-// behind that keeps its output open, so a caller reading that output never sees it end.
+// A git that leaves a process behind (a hook's background job, a credential helper) that keeps
+// its output open: relaylead must still go on as soon as git itself has ended.
+test('a git command that leaves a process behind does not hold the delivery', { skip: process.platform === 'win32', timeout: 20000 }, async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir);
+  finishedTask(mission, 'a');
+  lingeringGit(t);
+  process.env.RELAYLEAD_GIT_TIMEOUT_MS = '3000';
+  t.after(() => {
+    delete process.env.RELAYLEAD_GIT_TIMEOUT_MS;
+  });
+
+  const startedAt = Date.now();
+  const delivered = await deliver('a');
+  assert.strictEqual(delivered.code, 0, delivered.err);
+  assert.ok(Date.now() - startedAt < 10000, `the delivery took ${Date.now() - startedAt} ms`);
+  assert.strictEqual(git(dir, 'show', 'relaylead/integration:a.txt'), 'a');
+});
+
+// A git command that never ends would hold the start lock forever.
 test('a git command that does not end fails the delivery in time', { skip: process.platform === 'win32', timeout: 20000 }, async (t) => {
   freshHome(t);
   const dir = userRepo({ 'tasks/a.md': TASK_A });
   const mission = preparedMission(dir);
   finishedTask(mission, 'a');
   const bin = tmpDir('relaylead-git-');
-  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
   const leftover = path.join(bin, 'leftover.pid');
-  fs.writeFileSync(
-    path.join(bin, 'git'),
-    `#!/bin/sh\nsleep 30 &\necho $! >> '${leftover}'\nexec '${realGit}' "$@"\n`,
-    { mode: 0o755 },
-  );
+  fs.writeFileSync(path.join(bin, 'git'), `#!/bin/sh\nsleep 30 &\necho $! >> '${leftover}'\nwait\n`, { mode: 0o755 });
   const { PATH } = process.env;
   process.env.PATH = bin + path.delimiter + PATH;
   process.env.RELAYLEAD_GIT_TIMEOUT_MS = '1000';

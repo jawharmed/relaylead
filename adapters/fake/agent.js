@@ -1,11 +1,11 @@
 // Process of a fake agent session. Usage: node agent.js <role>
 // Like a real session, it acts only through the relaylead CLI, never by writing state files.
-const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { missionDir, slug } = require('../../core/paths');
 const { readJson } = require('../../core/store');
 const { DEFAULTS } = require('../../core/config');
+const { runFileSync } = require('../../core/run-file');
 
 const CLI = path.join(__dirname, '..', '..', 'bin', 'relaylead.js');
 // A delivery may fail for a moment (a git lock, a folder still busy on Windows): it is tried again
@@ -26,7 +26,7 @@ function log(text) {
 // The env carries RELAYLEAD_MISSION and RELAYLEAD_HOME; no shell and no PATH lookup.
 function relaylead(...args) {
   return logged(`relaylead ${args.join(' ')}`, () =>
-    execFileSync(process.execPath, [CLI, ...args], {
+    runFileSync(process.execPath, [CLI, ...args], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
@@ -34,8 +34,10 @@ function relaylead(...args) {
   );
 }
 
+// Like a real crew member's git (gc and maintenance left as they are), but the agent does not wait
+// for a process git leaves behind with its output open.
 function git(...args) {
-  logged(`git ${args.join(' ')}`, () => execFileSync('git', args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }));
+  logged(`git ${args.join(' ')}`, () => runFileSync('git', args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }));
 }
 
 function logged(command, action) {
