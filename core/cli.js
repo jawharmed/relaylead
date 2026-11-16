@@ -93,8 +93,9 @@ commands.stop = async (args, io) => {
   refuseInSession('stop', io);
   const [name] = parseArgs(args).positional;
   if (!name) throw codedError('usage', { usage: 'relaylead stop <mission>' });
-  const stopped = await stopMission(name);
-  if (stopped) io.out.write(t('missionStopped', { mission: name }, language(io)));
+  const outcome = await stopMission(name);
+  if (outcome === 'stopped') io.out.write(t('missionStopped', { mission: name }, language(io)));
+  else if (outcome === 'skipped') io.out.write(t('missionStopSkipped', { mission: name }, language(io)));
   else io.out.write(t('missionNothingToStop', { mission: name, state: getState(name) }, language(io)));
   return 0;
 };
@@ -116,7 +117,8 @@ commands.state = async (args, io) => {
   if (action === 'get') {
     io.out.write(getState(mission) + '\n');
   } else {
-    await setState(mission, state, options.note);
+    const outcome = await setState(mission, state, options.note);
+    if (outcome === 'skipped') io.out.write(t('missionStopSkipped', { mission }, language(io)));
   }
   return 0;
 };

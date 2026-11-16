@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { run } = require('../core/cli');
-const { listMissions, lockFile, reapLead } = require('../core/missions');
+const { listMissions, lockFile, releaseLock, reapLead } = require('../core/missions');
 const { listSessions, recordSession, isAlive } = require('../core/sessions');
 const { readJson, writeJson } = require('../core/store');
 const { missionDir } = require('../core/paths');
@@ -357,7 +357,7 @@ function stub(t, name, replacement) {
   });
 }
 
-test('a failing crew stop does not keep the others running, and the lock is released last', async (t) => {
+test('a failing crew stop does not keep the others running, and the folder stays locked', async (t) => {
   freshHome(t);
   const dir = tmpDir('relaylead-project-');
   assert.strictEqual((await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir])).code, 0);
@@ -378,7 +378,7 @@ test('a failing crew stop does not keep the others running, and the lock is rele
   assert.match(done.err, /stop failed/);
   await waitFor(() => !isAlive(second.pid), 30000, 'the second crew member to end');
   assert.deepStrictEqual(lockSeen, [true, true]);
-  assert.strictEqual(fs.existsSync(lock), false);
+  assert.strictEqual(fs.existsSync(lock), true);
   assert.strictEqual((await cli(['state', 'get', '--mission', 'demo'])).out.trim(), 'done');
 });
 
@@ -495,4 +495,176 @@ test('once done, the lead can no longer declare another state', async (t) => {
     assert.match(refused.err, /mission "demo" is done/);
   }
   assert.strictEqual((await cli(['state', 'get', '--mission', 'demo'])).out.trim(), 'done');
+});
+
+// state.json as the core wrote it.
+function stateRecord(name) {
+  return readJson(path.join(missionDir(name), 'state.json'));
+}
+
+test('the lock follows the mission state, not the lead pid', async (t) => {
+  freshHome(t);
+  const dir = tmpDir('relaylead-project-');
+  assert.strictEqual((await cli(['launch', '--agent', 'fake', '--name', 'one', '--dir', dir])).code, 0);
+  await waitUntilWorking('one');
+  const [lead] = listSessions('one');
+  await fake.stop(lead); // the lead's process is gone, as when the agent's daemon restarts it elsewhere
+  await waitFor(() => !isAlive(lead.pid), 30000, 'the lead to end');
+
+  const refused = await cli(['launch', '--agent', 'fake', '--name', 'two', '--dir', dir]);
+  assert.strictEqual(refused.code, 1);
+  assert.match(refused.err, /busy with mission "one"/);
+
+  assert.strictEqual((await cli(['stop', 'one'])).code, 0);
+  const second = await cli(['launch', '--agent', 'fake', '--name', 'two', '--dir', dir]);
+  assert.strictEqual(second.code, 0, second.err);
+});
+
+test('a stop that could not stop every session keeps the folder', async (t) => {
+  freshHome(t);
+  const dir = tmpDir('relaylead-project-');
+  assert.strictEqual((await cli(['launch', '--agent', 'fake', '--name', 'one', '--dir', dir])).code, 0);
+  await waitUntilWorking('one');
+  const original = fake.stop;
+  let failed;
+  fake.stop = async () => {
+    throw new Error('stop failed');
+  };
+  try {
+    failed = await cli(['stop', 'one']);
+  } finally {
+    fake.stop = original;
+  }
+
+  assert.strictEqual(failed.code, 1);
+  assert.strictEqual(stateRecord('one').stopping, true);
+  const refused = await cli(['launch', '--agent', 'fake', '--name', 'two', '--dir', dir]);
+  assert.strictEqual(refused.code, 1);
+  assert.match(refused.err, /busy with mission "one" \(stopped, stopping\)/);
+
+  const again = await cli(['stop', 'one']);
+  assert.strictEqual(again.code, 0, again.err);
+  assert.strictEqual(stateRecord('one').stopping, undefined);
+  const second = await cli(['launch', '--agent', 'fake', '--name', 'two', '--dir', dir]);
+  assert.strictEqual(second.code, 0, second.err);
+});
+
+test('a failed crew stop at done keeps the folder', async (t) => {
+  freshHome(t);
+  const dir = tmpDir('relaylead-project-');
+  assert.strictEqual((await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir])).code, 0);
+  await waitUntilWorking('demo');
+  const crew = await launchCrew(dir, 1);
+  const original = fake.stop;
+  let failed;
+  fake.stop = async (session) => {
+    if (session.shortId === crew.shortId) throw new Error('stop failed');
+    return original(session);
+  };
+  try {
+    failed = await cli(['state', 'set', 'done', '--mission', 'demo']);
+  } finally {
+    fake.stop = original;
+  }
+
+  assert.strictEqual(failed.code, 1);
+  assert.strictEqual(stateRecord('demo').stopping, true);
+  const refused = await cli(['launch', '--agent', 'fake', '--name', 'two', '--dir', dir]);
+  assert.strictEqual(refused.code, 1);
+  assert.match(refused.err, /busy with mission "demo" \(done, stopping\)/);
+
+  const again = await cli(['state', 'set', 'done', '--mission', 'demo']);
+  assert.strictEqual(again.code, 0, again.err);
+  await waitFor(() => !isAlive(crew.pid), 30000, 'the crew member to end');
+  assert.strictEqual(stateRecord('demo').stopping, undefined);
+  const second = await cli(['launch', '--agent', 'fake', '--name', 'two', '--dir', dir]);
+  assert.strictEqual(second.code, 0, second.err);
+});
+
+test('a lock of a newer mission of the same name is not released', async (t) => {
+  freshHome(t);
+  const dir = fs.realpathSync.native(tmpDir('relaylead-project-'));
+  const lock = lockFile(dir);
+  writeJson(lock, { pid: process.pid, mission: 'demo', createdAt: '2026-11-16T10:00:00.000Z' });
+
+  releaseLock(dir, { name: 'demo', createdAt: '2026-11-16T09:00:00.000Z' });
+
+  assert.strictEqual(readJson(lock).createdAt, '2026-11-16T10:00:00.000Z');
+});
+
+test('a lock naming a mission of another folder is taken over', async (t) => {
+  freshHome(t);
+  const dir = fs.realpathSync.native(tmpDir('relaylead-project-'));
+  writeMission('elsewhere', fs.realpathSync.native(tmpDir('relaylead-project-')));
+  writeJson(path.join(missionDir('elsewhere'), 'state.json'), { state: 'working', updatedAt: new Date().toISOString() });
+  const { createdAt } = readJson(path.join(missionDir('elsewhere'), 'mission.json'));
+  const lock = lockFile(dir);
+  writeJson(lock, { pid: process.pid, mission: 'elsewhere', createdAt });
+
+  const result = await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir]);
+
+  assert.strictEqual(result.code, 0, result.err);
+  assert.strictEqual(readJson(lock).mission, 'demo');
+});
+
+test('a lock written before this lot is released by its mission', async (t) => {
+  freshHome(t);
+  const dir = fs.realpathSync.native(tmpDir('relaylead-project-'));
+  writeMission('demo', dir); // no lead: the test plays it
+  const lock = lockFile(dir);
+  writeJson(lock, { pid: process.pid, mission: 'demo' });
+
+  const done = await cli(['state', 'set', 'done', '--mission', 'demo']);
+
+  assert.strictEqual(done.code, 0, done.err);
+  assert.strictEqual(fs.existsSync(lock), false);
+});
+
+test('an old stopping marker does not replay a stop by pid', async (t) => {
+  freshHome(t);
+  const dir = fs.realpathSync.native(tmpDir('relaylead-project-'));
+  writeMission('demo', dir);
+  const { createdAt } = readJson(path.join(missionDir('demo'), 'mission.json'));
+  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  writeJson(path.join(missionDir('demo'), 'state.json'), { state: 'stopped', stopping: true, updatedAt: twoHoursAgo });
+  // A session whose pid may belong to another process by now.
+  const oldPid = spawnSync(process.execPath, ['-e', '']).pid;
+  recordSession('demo', { sessionId: 'fake-old', shortId: 'old00000', name: 'demo/lead/1', role: 'lead', pid: oldPid });
+  const lock = lockFile(dir);
+  writeJson(lock, { pid: process.pid, mission: 'demo', createdAt });
+  let stopCalls = 0;
+  stub(t, 'stop', () => async () => {
+    stopCalls++;
+  });
+
+  const result = await cli(['stop', 'demo']);
+
+  assert.strictEqual(result.code, 0, result.err);
+  assert.strictEqual(
+    result.out,
+    'the sessions of mission demo were not stopped again: their process ids are more than an hour old\n',
+  );
+  assert.strictEqual(stopCalls, 0);
+  assert.strictEqual(stateRecord('demo').stopping, undefined);
+  assert.strictEqual(stateRecord('demo').state, 'stopped');
+  assert.strictEqual(fs.existsSync(lock), false);
+});
+
+test('an empty folder lock older than 10 s is taken over', async (t) => {
+  freshHome(t);
+  const dir = fs.realpathSync.native(tmpDir('relaylead-project-'));
+  const lock = lockFile(dir);
+  fs.mkdirSync(path.dirname(lock), { recursive: true });
+  fs.writeFileSync(lock, '');
+
+  // A fresh empty lock: another launch has just created it and is writing it.
+  const refused = await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir]);
+  assert.strictEqual(refused.code, 1);
+  assert.match(refused.err, /busy/);
+
+  const longAgo = new Date(Date.now() - 20 * 1000);
+  fs.utimesSync(lock, longAgo, longAgo);
+  const result = await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir]);
+  assert.strictEqual(result.code, 0, result.err);
+  assert.strictEqual(readJson(lock).mission, 'demo');
 });
