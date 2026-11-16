@@ -15,7 +15,7 @@ const files = require('../deliveries/files');
 const tasksDirSource = require('../sources/tasks-dir');
 const { tmpDir, makeIo, waitFor } = require('../fixtures/helpers');
 const { writeMission, missionReport } = require('../fixtures/missions');
-const { git, gitRepo } = require('../fixtures/git');
+const { git, gitRepo, recordingGit } = require('../fixtures/git');
 
 const TASK_A = '---\ntitle: First task\n---\n\nWrite a.\n';
 const TASK_B = '---\ntitle: Second task\ndepends: [a]\n---\n\nWrite b.\n';
@@ -556,6 +556,23 @@ test('a git command that does not end fails the delivery in time', { skip: proce
   assert.match(delivered.err, /did not end within 1 s/);
   assert.ok(Date.now() - startedAt < 10000, `the delivery took ${Date.now() - startedAt} ms`);
   assert.strictEqual(fs.existsSync(path.join(missionDir('demo'), 'start.lock')), false);
+});
+
+// A background gc or maintenance started by git may keep the output pipes open, and holds the
+// repository's locks: relaylead's own git commands never start one.
+test('relaylead runs git without background maintenance', { skip: process.platform === 'win32' }, async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A, 'tasks/b.md': TASK_B });
+  const calls = recordingGit(t);
+  const mission = preparedMission(dir);
+  finishedTask(mission, 'a'); // the crew's own add and commit (fixtures/git) go through it too
+  const delivered = await deliver('a');
+  assert.strictEqual(delivered.code, 0, delivered.err);
+
+  // The crew's commands are its own git, left as they are.
+  const own = calls().filter((call) => !/^(add -A|commit -q -m a)$/.test(call));
+  assert.ok(own.length > 10, own.join('\n'));
+  for (const call of own) assert.match(call, /^-c gc\.auto=0 -c maintenance\.auto=false /, call);
 });
 
 test('git messages that a short wait cures are recognised', () => {

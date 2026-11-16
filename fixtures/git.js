@@ -31,4 +31,19 @@ function gitRepo(files) {
   return dir;
 }
 
-module.exports = { git, gitRepo };
+// Puts on the PATH a git that notes the arguments of each call, one line per call, then runs the
+// real git. Returns a function giving the calls noted so far. POSIX only (a shell script).
+function recordingGit(t) {
+  const bin = tmpDir('relaylead-git-');
+  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  const calls = path.join(bin, 'calls.log');
+  fs.writeFileSync(path.join(bin, 'git'), `#!/bin/sh\necho "$*" >> '${calls}'\nexec '${realGit}' "$@"\n`, { mode: 0o755 });
+  const { PATH } = process.env;
+  process.env.PATH = bin + path.delimiter + PATH;
+  t.after(() => {
+    process.env.PATH = PATH;
+  });
+  return () => (fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').split('\n').filter(Boolean) : []);
+}
+
+module.exports = { git, gitRepo, recordingGit };

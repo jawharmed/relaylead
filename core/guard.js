@@ -218,14 +218,16 @@ function moveTo(dir, target) {
 function currentBranch(dir) {
   if (dir === null) return COMPUTED;
   const options = { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10000, windowsHide: true };
+  // Like every git command relaylead runs itself: no gc or maintenance left in the background.
+  const git = (...args) => execFileSync('git', ['-c', 'gc.auto=0', '-c', 'maintenance.auto=false', ...args], options);
   try {
-    const branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], options).trim();
+    const branch = git('rev-parse', '--abbrev-ref', 'HEAD').trim();
     return branch === 'HEAD' ? null : branch;
   } catch {
     // try the other way below
   }
   try {
-    return execFileSync('git', ['symbolic-ref', '--short', 'HEAD'], options).trim();
+    return git('symbolic-ref', '--short', 'HEAD').trim();
   } catch {
     return UNKNOWN;
   }

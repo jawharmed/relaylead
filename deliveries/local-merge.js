@@ -19,6 +19,9 @@ const LOCK_ATTEMPTS = 10; // about 5 s in all
 // hangs, or that leaves a process holding its output open, would block relaylead forever, and with
 // it the start lock that every start and delivery of the mission waits for. Tests shorten it.
 const gitTimeoutMs = () => Number(process.env.RELAYLEAD_GIT_TIMEOUT_MS) || 5 * 60 * 1000;
+// After a commit or a merge, git may start a gc or maintenance in the background: it may keep the
+// output pipes open, and it holds the repository's locks while relaylead works there.
+const NO_BACKGROUND_MAINTENANCE = ['-c', 'gc.auto=0', '-c', 'maintenance.auto=false'];
 
 // Whether the message of a failed git command is worth trying again.
 function isTransientGitError(detail) {
@@ -44,7 +47,7 @@ function sleep(ms) {
 // Runs git, never through a shell (paths may contain spaces), and stops it after gitTimeoutMs().
 function runGit(cwd, args, stdio) {
   try {
-    return execFileSync('git', args, {
+    return execFileSync('git', [...NO_BACKGROUND_MAINTENANCE, ...args], {
       cwd,
       encoding: 'utf8',
       stdio,
