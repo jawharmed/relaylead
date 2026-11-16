@@ -31,6 +31,8 @@ const messages = {
       'the sessions of mission {mission} were not stopped again: their process ids are more than an hour old\n',
     taskDelivered: 'task {id} delivered\n',
     taskAlreadyDelivered: 'task {id} already delivered\n',
+    // Subject of the commit of a task's state line, in the integration branch.
+    deliveryCommit: 'chore(relaylead): deliver {id}',
     // Errors: the key is the error code (see codedError).
     usage: 'usage: {usage}',
     'dir-busy':
@@ -76,6 +78,12 @@ const messages = {
       '{dir} is not the root of a git repository; run the mission at the root, or set "delivery": {"type": "files"} in .relaylead.json',
     'merge-conflict':
       'task "{id}" conflicts with the integration branch; the merge was cancelled and the task stays done. Resolve it on branch {branch}, then deliver again',
+    'hook-failed':
+      'a git hook (or git itself) refused relaylead\'s {what} for task "{id}"; nothing was merged and the task stays done. Output: {output}. Fix the cause on branch {branch} and deliver again, or deliver without hooks yourself with: relaylead task deliver {id} --no-hooks --mission {mission}',
+    'launch-hook-failed':
+      'a git hook (or git itself) refused relaylead\'s {what}: the merge of your current branch into the integration branch {branch}; nothing was merged and the mission was not launched. Output: {output}. Fix the cause and launch again, or let relaylead\'s own commits skip the hooks with "delivery": {"runHooks": false} in .relaylead.json',
+    'state-line-hook-failed':
+      'task "{id}" is delivered, but a git hook (or git itself) refused relaylead\'s {what}; the line stays uncommitted in the integration worktree, and the next "relaylead task deliver {id}" commits it. Output: {output}',
     'empty-output': 'task "{id}" delivered nothing: its output folder {dir} is empty',
     'cleanup-failed':
       'task "{id}" is delivered, but its worktree or branch could not be cleaned up; the next "relaylead task deliver {id}" tries again ({detail})',
@@ -168,6 +176,7 @@ const messages = {
       'les sessions de la mission {mission} n\'ont pas été arrêtées de nouveau : leurs numéros de processus ont plus d\'une heure\n',
     taskDelivered: 'tâche {id} livrée\n',
     taskAlreadyDelivered: 'tâche {id} déjà livrée\n',
+    deliveryCommit: 'chore(relaylead): {id} livrée',
     usage: 'usage : {usage}',
     'dir-busy':
       'le dossier {dir} est occupé par la mission « {mission} » ({state}) ; si son lead a disparu, arrêtez-la d\'abord avec : relaylead stop {mission}',
@@ -213,6 +222,12 @@ const messages = {
       '{dir} n\'est pas la racine d\'un dépôt git ; lancez la mission à la racine, ou mettez "delivery": {"type": "files"} dans .relaylead.json',
     'merge-conflict':
       'la tâche « {id} » est en conflit avec la branche d\'intégration ; la fusion est annulée et la tâche reste done. Résolvez-le sur la branche {branch}, puis livrez de nouveau',
+    'hook-failed':
+      'un hook git (ou git lui-même) a refusé la fusion de la tâche « {id} » par relaylead ; rien n\'a été fusionné et la tâche reste done. Sortie : {output}. Corrigez la cause sur la branche {branch} et livrez de nouveau, ou livrez vous-même sans hooks avec : relaylead task deliver {id} --no-hooks --mission {mission}',
+    'launch-hook-failed':
+      'un hook git (ou git lui-même) a refusé la fusion de votre branche courante dans la branche d\'intégration {branch} par relaylead ; rien n\'a été fusionné et la mission n\'est pas lancée. Sortie : {output}. Corrigez la cause et relancez, ou faites passer les commits de relaylead sans hooks avec "delivery": {"runHooks": false} dans .relaylead.json',
+    'state-line-hook-failed':
+      'la tâche « {id} » est livrée, mais un hook git (ou git lui-même) a refusé le commit de sa ligne d\'état par relaylead ; la ligne reste non commitée dans le worktree d\'intégration, et le prochain « relaylead task deliver {id} » la commite. Sortie : {output}',
     'empty-output': 'la tâche « {id} » n\'a rien livré : son dossier de sortie {dir} est vide',
     'cleanup-failed':
       'la tâche « {id} » est livrée, mais son worktree ou sa branche n\'a pas pu être nettoyé ; le prochain « relaylead task deliver {id} » réessaie ({detail})',

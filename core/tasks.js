@@ -266,14 +266,17 @@ function archiveAttempt(name, id, attempt, record) {
 
 // Delivers a done task. Returns {outcome: 'delivered' or 'already-delivered', warnings}. A task
 // already delivered is finished again: that completes a delivery that was interrupted.
-async function deliverTask(name, id) {
+// runHooks false skips the git hooks whatever the mission's configuration (the user's --no-hooks).
+async function deliverTask(name, id, { runHooks } = {}) {
   const mission = readMission(name); // before the lock, which lives in the mission folder
   const delivery = getDelivery(mission.config.delivery.type);
   return withMissionLock(name, `task deliver ${id}`, () => {
     const task = findTask(name, id);
-    if (task.state === 'delivered') return { outcome: 'already-delivered', warnings: delivery.finish(mission, task) };
+    if (task.state === 'delivered') {
+      return { outcome: 'already-delivered', warnings: delivery.finish(mission, task, { runHooks }) };
+    }
     if (task.state !== 'done') throw codedError('task-not-deliverable', { id, state: task.state });
-    return { outcome: 'delivered', warnings: delivery.deliver(mission, task) };
+    return { outcome: 'delivered', warnings: delivery.deliver(mission, task, { runHooks }) };
   });
 }
 
