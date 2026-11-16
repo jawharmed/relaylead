@@ -9,15 +9,12 @@ const { listSessions, isAlive } = require('../../core/sessions');
 const { MIN_VERSION, buildLaunchArgs, compareVersion } = require('./args');
 const { writeSessionSettings } = require('./settings');
 const { parseLaunchOutput, mapState } = require('./sessions');
+const { sleep } = require('../../core/timing');
 
 const PACKAGE_DIR = path.join(__dirname, '..', '..');
 const POLL_MS = 250;
 // The version found, per command: `claude --version` runs once per process.
 const versions = {};
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 // Delays, read at call time so tests can shorten them.
 function delayMs(name, fallback) {

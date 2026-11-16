@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { home, missionDir } = require('../../core/paths');
-const { writeJson } = require('../../core/store');
+const { writeJson, writeText } = require('../../core/store');
 const { allowedTools } = require('./args');
 
 // Same shape as the spike settings (no matcher). Double quotes: the paths may contain spaces (Windows included).
@@ -21,13 +21,10 @@ function shQuote(text) {
   return `'${text.replace(/'/g, "'\\''")}'`;
 }
 
-// Written only when it changes, and through a rename: a session may be running it right now.
+// Written only when it changes, and through a rename (writeText): a session may be running it right now.
 function writeExecutable(file, text) {
   if (fs.existsSync(file) && fs.readFileSync(file, 'utf8') === text) return;
-  const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, text);
-  fs.chmodSync(tmp, 0o755);
-  fs.renameSync(tmp, file);
+  writeText(file, text, { mode: 0o755 });
 }
 
 // The `relaylead` the sessions' commands run, whatever the user's PATH holds: this very package,
@@ -59,6 +56,10 @@ function sessionSettings({ mission, packageDir, profile, permissionMode, env = {
       PermissionRequest: hookEntry(packageDir, 'permission'),
     },
   };
+  // A background session does not inherit the launcher's environment.
+  if (process.env.RELAYLEAD_WRITE_RETRY_MS !== undefined) {
+    settings.env.RELAYLEAD_WRITE_RETRY_MS = process.env.RELAYLEAD_WRITE_RETRY_MS;
+  }
   if (mission.config.attribution != null) settings.attribution = mission.config.attribution;
   return settings;
 }

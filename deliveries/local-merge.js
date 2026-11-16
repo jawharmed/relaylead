@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { codedError } = require('../core/messages');
+const { sleepSync, retrySync } = require('../core/timing');
 const tasksDirSource = require('../sources/tasks-dir');
 
 // Git refuses to start when another git command holds a lock file (index.lock, a ref's .lock),
@@ -26,22 +27,6 @@ const NO_BACKGROUND_MAINTENANCE = ['-c', 'gc.auto=0', '-c', 'maintenance.auto=fa
 // Whether the message of a failed git command is worth trying again.
 function isTransientGitError(detail) {
   return LOCK_FILE.test(detail);
-}
-
-// Writing a file, or renaming one over another, fails the same way on Windows for a moment.
-function retryFileWrite(action) {
-  for (let attempt = 1; ; attempt++) {
-    try {
-      return action();
-    } catch (err) {
-      if (!['EPERM', 'EBUSY', 'EACCES'].includes(err.code) || attempt >= LOCK_ATTEMPTS) throw err;
-      sleep(100 * attempt);
-    }
-  }
-}
-
-function sleep(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 // Runs git, never through a shell (paths may contain spaces), and stops it after gitTimeoutMs().
@@ -74,7 +59,7 @@ function git(cwd, args) {
       if (err.timedOut) throw err;
       const detail = String(err.stderr || err.stdout || err.message).trim();
       if (isTransientGitError(detail) && attempt < LOCK_ATTEMPTS) {
-        sleep(100 * attempt);
+        sleepSync(100 * attempt);
         continue;
       }
       throw new Error(`git ${args.join(' ')} failed: ${detail}`);
@@ -275,7 +260,7 @@ function mergeOrAbort(integration, args) {
       git(integration, ['merge', '--abort']);
       if (conflicted) return false;
       if (attempt >= LOCK_ATTEMPTS) throw err;
-      sleep(100 * attempt);
+      sleepSync(100 * attempt);
     }
   }
 }
@@ -284,15 +269,11 @@ function mergeOrAbort(integration, args) {
 // just been stopped, or an antivirus scanning the new files. That lasts a moment, so retry for
 // about 5 s ("Permission denied", "Directory not empty", "busy"). Removing again is harmless.
 function removeWorktree(mission, cwd) {
-  for (let attempt = 1; ; attempt++) {
-    try {
-      git(mission.dir, ['worktree', 'remove', '--force', cwd]);
-      return;
-    } catch (err) {
-      if (process.platform !== 'win32' || attempt >= 7) throw err;
-      sleep(200 * attempt);
-    }
-  }
+  retrySync(() => git(mission.dir, ['worktree', 'remove', '--force', cwd]), {
+    retryIf: () => process.platform === 'win32',
+    budgetMs: 5000,
+    delayMs: (attempt) => 200 * attempt,
+  });
 }
 
 // Refuses work that is not committed or empty: it could not be delivered, and `worktree remove
@@ -319,7 +300,7 @@ function deliver(mission, task) {
     throw codedError('merge-conflict', { id: task.id, branch });
   }
 
-  retryFileWrite(() => tasksDirSource.markDone(integrationDir(mission), mission.config.source.dir, task.id));
+  tasksDirSource.markDone(integrationDir(mission), mission.config.source.dir, task.id);
   return finish(mission, task);
 }
 

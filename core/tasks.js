@@ -13,6 +13,7 @@ const { getAdapter } = require('../adapters');
 const { getDelivery } = require('../deliveries');
 const { gitTimeoutMs } = require('../deliveries/local-merge');
 const tasksDirSource = require('../sources/tasks-dir');
+const { sleep } = require('./timing');
 
 // The option the lead adds to the question of a task that asks first (catalog/profiles/lead.md).
 const SKIP_CHOICE = 'Skip this task';
@@ -25,10 +26,6 @@ const startLockStuckMs = () => Math.max(15 * 60 * 1000, 3 * gitTimeoutMs());
 
 function now() {
   return new Date().toISOString();
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function taskFile(mission, id) {

@@ -38,6 +38,8 @@ Design documents are in French for now:
 
 Run the tests with `npm test` (Node.js 18 or newer, no dependencies to install).
 
+`RELAYLEAD_WRITE_RETRY_MS` sets how long (in ms) a state file write is retried on Windows when another process holds the file (2000 by default).
+
 ---
 
 Confiez une mission à un lead qui la mène en arrière-plan avec son équipe d'agents spécialisés. Premier squelette ; la documentation de conception est en français.
@@ -69,3 +71,5 @@ Le travail arrive sur la branche `relaylead/integration` ; votre propre copie de
 ## Développer
 
 Lancez les tests avec `npm test` (Node.js 18 ou plus, aucune dépendance à installer).
+
+`RELAYLEAD_WRITE_RETRY_MS` règle la durée (en ms) pendant laquelle une écriture de fichier d'état est retentée sous Windows quand un autre processus tient le fichier (2000 par défaut).

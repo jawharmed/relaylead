@@ -4,6 +4,7 @@ const path = require('node:path');
 const { missionDir } = require('./paths');
 const { writeJson, readJson } = require('./store');
 const { readMission, getState } = require('./missions');
+const { sleep } = require('./timing');
 const { codedError } = require('./messages');
 const { listTasks, markFailed } = require('./tasks');
 const { listQuestions } = require('./questions');
@@ -28,10 +29,6 @@ const EMPTY_SNAPSHOT = { tasks: {}, questions: {}, sessions: {}, lostSince: {} }
 
 function snapshotFile(name) {
   return path.join(missionDir(name), 'wait-snapshot.json');
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // Judged on the state the adapter reports, never on the pid alone: a Claude session can be done
