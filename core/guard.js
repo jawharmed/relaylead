@@ -335,17 +335,17 @@ function commitMessageIndexes(words, start) {
 
 // --- Files ------------------------------------------------------------------------------------
 
-// True when `name` is a secret file name, or a glob that may match one.
-function isSecretName(name, guard) {
+// True when `name` is a secret file name, or a glob that may match one. `dotFiles` says whether a
+// leading wildcard matches a name that starts with a dot: not in the shell, but in ripgrep.
+function isSecretName(name, guard, dotFiles = false) {
   if (guard.secretExceptions.some((pattern) => globMatch(pattern, name, CASE_INSENSITIVE))) return false;
   if (!/[*?[]/.test(name)) return guard.secrets.some((pattern) => globMatch(pattern, name, CASE_INSENSITIVE));
-  // A glob may match a secret when one matches an example of the other. Like the shell, a
-  // leading wildcard does not match a name that starts with a dot.
+  // A glob may match a secret when one matches an example of the other.
   const word = shellGlobRegExp(name);
   const wordExample = name.replace(/\[[^\]]*\]|[*?]/g, 'x');
   return guard.secrets.some((pattern) => {
     const examples = [pattern.replace(/\*/g, ''), pattern.replace(/\*/g, 'x')];
-    const hidesDotFiles = /^[*?[]/.test(name);
+    const hidesDotFiles = !dotFiles && /^[*?[]/.test(name);
     const meets = examples.some((example) => word.test(example) && !(hidesDotFiles && example.startsWith('.')));
     return meets || globMatch(pattern, wordExample, CASE_INSENSITIVE);
   });
@@ -396,13 +396,14 @@ function expandBraces(word) {
 }
 
 // Reason to refuse a file named in a Bash word, or null. `--env-file=.env` names .env too.
-function checkFileWord(word, dir, guard, stateDir) {
+// `dotFiles` as in isSecretName.
+function checkFileWord(word, dir, guard, stateDir, dotFiles = false) {
   const names = expandBraces(word.replace(/^[<>&]+/, ''));
   if (names === null) return 'a brace expansion that cannot be judged';
   for (const part of names.flatMap((name) => name.split('='))) {
     if (inStateFolder(part, dir, stateDir)) return 'access to the mission state folder';
     const name = path.posix.basename(part);
-    if (name && isSecretName(name, guard)) return `access to secret file ${name}`;
+    if (name && isSecretName(name, guard, dotFiles)) return `access to secret file ${name}`;
   }
   return null;
 }
@@ -495,10 +496,11 @@ function checkFile(file, dir, guard, stateDir) {
 // `stateDir` is the mission's state folder: sessions change it only through the relaylead CLI.
 // Glob and Grep also name files by a glob, seen from their `path` (or `cwd`). Glob's `pattern` is
 // judged for the state folder only: Glob gives names and reads nothing. Grep's `glob` is judged
-// for the state folder and the secrets: Grep reads the files it names.
-// Known gap: a Grep without `glob` whose `path` is a parent of the state folder (the home folder,
-// say) searches it; refusing it would block every search in the home folder. To be taken up
-// again with the full guards (lot 3).
+// for the state folder and the secrets: Grep reads the files it names, and in ripgrep `*` also
+// matches `.env`.
+// Known gap: a Grep without `glob`, or with a glob that has no folder part (`*.json`), whose `path`
+// is a parent of the state folder (the home folder, say) searches it; refusing it would block every
+// search in the home folder. To be taken up again with the full guards (lot 3).
 function checkToolUse({ tool_name, tool_input, cwd }, guard, stateDir = null) {
   const input = tool_input || {};
   const dir = cwd || process.cwd();
@@ -511,7 +513,7 @@ function checkToolUse({ tool_name, tool_input, cwd }, guard, stateDir = null) {
     reason = checkFileWord(String(input.pattern), searched, { ...guard, secrets: [] }, stateDir);
   }
   if (!reason && tool_name === 'Grep' && input.glob) {
-    reason = checkFileWord(String(input.glob), searched, guard, stateDir);
+    reason = checkFileWord(String(input.glob), searched, guard, stateDir, true);
   }
   return reason ? { decision: 'deny', reason } : { decision: 'allow' };
 }

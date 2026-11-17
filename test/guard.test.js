@@ -410,6 +410,10 @@ test('a Grep glob naming a secret or the state folder is refused', () => {
   const project = tmpDir();
   const grep = (tool_input) => checkToolUse({ tool_name: 'Grep', tool_input, cwd: project }, GUARD, stateDir);
   assertDenied(grep({ pattern: 'KEY', glob: '.env' }), 'access to secret file .env');
+  // Unlike the shell, ripgrep lets a leading wildcard match a name that starts with a dot.
+  assertDenied(grep({ pattern: 'KEY', glob: '*.env' }), 'access to secret file *.env');
+  assertDenied(grep({ pattern: 'KEY', glob: '*.{js,env}' }), 'access to secret file *.env');
+  assertDenied(grep({ pattern: 'KEY', glob: '*' }), 'access to secret file *');
   assertDenied(grep({ pattern: 'x', glob: '.relaylead/**', path: parent }), 'access to the mission state folder');
   assert.deepStrictEqual(grep({ pattern: 'x', glob: '*.{ts,js}' }), ALLOW);
 });
