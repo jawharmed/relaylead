@@ -1277,6 +1277,34 @@ test('remove refuses work not delivered unless --force', async (t) => {
   assert.strictEqual(fs.existsSync(missionDir('demo')), false);
 });
 
+// Mission demo-x is another mission: its branches start with relaylead/demo-x/, not relaylead/demo/.
+test('stop and remove --force of a mission leave a mission with a longer name alone', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir);
+  const neighbour = path.join(dir, '.relaylead', 'worktrees', 'demo-x-a');
+  git(dir, 'worktree', 'add', '-q', '-b', 'relaylead/demo-x/a', neighbour, 'relaylead/integration');
+  fs.writeFileSync(path.join(neighbour, 'x.txt'), 'x\n');
+  git(neighbour, 'add', '-A');
+  git(neighbour, 'commit', '-q', '-m', 'x');
+  const sha = git(dir, 'rev-parse', 'relaylead/demo-x/a');
+  taskWithWork(mission, 'a', { committed: true });
+
+  const stopped = await cli(['stop', 'demo']);
+
+  assert.strictEqual(stopped.code, 0, stopped.err);
+  assert.strictEqual(fs.existsSync(taskWorktree(dir, 'a')), false);
+  assert.strictEqual(fs.existsSync(neighbour), true);
+
+  const removed = await cli(['remove', 'demo', '--force']);
+
+  assert.strictEqual(removed.code, 0, removed.err);
+  assert.doesNotMatch(removed.out, /demo-x/);
+  assert.strictEqual(demoBranches(dir), '');
+  assert.strictEqual(fs.existsSync(neighbour), true);
+  assert.strictEqual(git(dir, 'rev-parse', 'relaylead/demo-x/a'), sha);
+});
+
 test('remove refuses a dirty worktree unless --force', async (t) => {
   freshHome(t);
   const dir = userRepo({ 'tasks/b.md': TASK_A });
