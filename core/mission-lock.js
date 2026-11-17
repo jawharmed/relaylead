@@ -110,16 +110,22 @@ async function withMissionLock(name, command, action) {
   if (!fs.existsSync(missionDir(name))) throw codedError('mission-unknown', { mission: name });
   const file = path.join(missionDir(name), 'start.lock');
   const giveUpAt = Date.now() + lockWaitMs();
-  while (!tryCreateLock(file, command)) {
-    if (isStaleLock(file) && (await takeOverStaleLock(file))) continue;
-    const lock = readLock(file);
-    const known = lock && lock.pid;
-    const holder = known
-      ? { mission: name, command: lock.command, pid: lock.pid, since: lock.since }
-      : { mission: name, command: '?', pid: '?', since: '?' };
-    if (known && Date.now() - Date.parse(lock.since) > startLockStuckMs()) throw codedError('start-stuck', holder);
-    if (Date.now() > giveUpAt) throw codedError('start-busy', holder);
-    await sleep(50);
+  try {
+    while (!tryCreateLock(file, command)) {
+      if (isStaleLock(file) && (await takeOverStaleLock(file))) continue;
+      const lock = readLock(file);
+      const known = lock && lock.pid;
+      const holder = known
+        ? { mission: name, command: lock.command, pid: lock.pid, since: lock.since }
+        : { mission: name, command: '?', pid: '?', since: '?' };
+      if (known && Date.now() - Date.parse(lock.since) > startLockStuckMs()) throw codedError('start-stuck', holder);
+      if (Date.now() > giveUpAt) throw codedError('start-busy', holder);
+      await sleep(50);
+    }
+  } catch (err) {
+    // The mission folder was removed while waiting (relaylead remove).
+    if (err.code === 'ENOENT') throw codedError('mission-unknown', { mission: name });
+    throw err;
   }
   try {
     return await action();
