@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { t, codedError } = require('../core/messages');
 const { sleepSync, retrySync } = require('../core/timing');
-const { runFileSync } = require('../core/run-file');
+const { runFileSync, gitTimeoutMs } = require('../core/run-file');
 const tasksDirSource = require('../sources/tasks-dir');
 
 // Git refuses to start when another git command holds a lock file (index.lock, a ref's .lock),
@@ -18,10 +18,6 @@ const tasksDirSource = require('../sources/tasks-dir');
 const LOCK_FILE =
   /\.lock['"]|unable to write index|unable to unlink|unable to create|permission denied|resource busy|invalid argument|used by another process/i;
 const LOCK_ATTEMPTS = 10; // about 5 s in all
-// A git command that does not end in this time is stopped and fails. Without a bound, a git that
-// hangs would block relaylead forever, and with it the start lock that every start and delivery of
-// the mission waits for. Tests shorten it.
-const gitTimeoutMs = () => Number(process.env.RELAYLEAD_GIT_TIMEOUT_MS) || 5 * 60 * 1000;
 // After a commit or a merge, git may start a gc or maintenance in the background: it may keep the
 // output pipes open, and it holds the repository's locks while relaylead works there.
 const NO_BACKGROUND_MAINTENANCE = ['-c', 'gc.auto=0', '-c', 'maintenance.auto=false'];
@@ -596,5 +592,4 @@ module.exports = {
   missionBranches,
   removeMission,
   isTransientGitError,
-  gitTimeoutMs,
 };

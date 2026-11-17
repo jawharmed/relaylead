@@ -8,6 +8,11 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
+// A git command that does not end in this time is stopped and fails. Without a bound, a git that
+// hangs would block relaylead forever, and with it the start lock that every start and delivery of
+// the mission waits for. Tests shorten it.
+const gitTimeoutMs = () => Number(process.env.RELAYLEAD_GIT_TIMEOUT_MS) || 5 * 60 * 1000;
+
 // `options` are those of execFileSync. Each 'pipe' of `stdio` (the default) becomes a file.
 // Returns stdout; throws like execFileSync: `status`, `signal`, `stdout` and `stderr` on the error,
 // `code` 'ETIMEDOUT' when the timeout stopped the program.
@@ -55,4 +60,4 @@ function runFileSync(file, args, options = {}) {
   }
 }
 
-module.exports = { runFileSync };
+module.exports = { runFileSync, gitTimeoutMs };

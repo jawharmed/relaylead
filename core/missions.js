@@ -13,7 +13,7 @@ const { writeJournal } = require('./guard');
 const { getAdapter } = require('../adapters');
 const { getDelivery } = require('../deliveries');
 const { sleep } = require('./timing');
-const { withMissionLock } = require('./mission-lock');
+const { withMissionLock, EMPTY_LOCK_STALE_MS } = require('./mission-lock');
 
 // States the lead may declare. 'stopped' is written by the core only.
 const STATES = ['starting', 'working', 'waiting', 'done'];
@@ -21,8 +21,6 @@ const BIN = path.join(__dirname, '..', 'bin', 'relaylead.js');
 const REAP_POLL_MS = 2000;
 // The states after which no session of the mission may run.
 const FINISHED = ['done', 'stopped'];
-// An empty or partly written folder lock this old was left by a launch that crashed.
-const EMPTY_LOCK_STALE_MS = 10 * 1000;
 // Past this age, the recorded pids of a mission may belong to unrelated processes.
 const PIDS_TRUSTED_MS = 60 * 60 * 1000;
 // How long the helper waits for the lead to end its turn after `state set done`; tests shorten it.

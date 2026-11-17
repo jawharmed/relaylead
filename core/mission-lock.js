@@ -4,11 +4,13 @@ const path = require('node:path');
 const { missionDir } = require('./paths');
 const { codedError } = require('./messages');
 const { isAlive } = require('./sessions');
-const { gitTimeoutMs } = require('../deliveries/local-merge');
+const { gitTimeoutMs } = require('./run-file');
 const { sleep } = require('./timing');
 
 // Long enough for a slow agent launch held by another start. Read at each call.
 const lockWaitMs = () => Number(process.env.RELAYLEAD_START_LOCK_WAIT_MS) || 60 * 1000;
+// An empty or partly written lock file this old was left by a holder that crashed (also used for
+// the folder lock of missions.js).
 const EMPTY_LOCK_STALE_MS = 10 * 1000;
 // A live holder this old is stuck: a delivery runs a few git commands, each stopped after
 // gitTimeoutMs(), so even a slow one ends well before.
@@ -126,4 +128,4 @@ async function withMissionLock(name, command, action) {
   }
 }
 
-module.exports = { withMissionLock };
+module.exports = { withMissionLock, EMPTY_LOCK_STALE_MS };
