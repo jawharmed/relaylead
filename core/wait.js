@@ -1,4 +1,5 @@
-// `relaylead wait`: blocks the lead until its mission changes, then says what changed.
+// `relaylead wait`: blocks the lead until a task or a question of its mission changes, then says what changed.
+// The end of a crew session is not reported: it reads as a change of its task (done, or failed by wait).
 // The last view is kept in wait-snapshot.json, so a change made while nobody waits is reported by the next wait.
 const path = require('node:path');
 const { missionDir } = require('./paths');
@@ -27,7 +28,7 @@ const RETRY_INTERRUPTED = 'retry interrupted before its crew started';
 // Without a snapshot, everything that exists is reported as new (from: null).
 // lostSince keeps, per session, when it was first seen missing, without a process, or waiting; and,
 // under the key task:<id>, when a running task was first seen without a session.
-const EMPTY_SNAPSHOT = { tasks: {}, questions: {}, sessions: {}, lostSince: {} };
+const EMPTY_SNAPSHOT = { tasks: {}, questions: {}, lostSince: {} };
 
 function snapshotFile(name) {
   return path.join(missionDir(name), 'wait-snapshot.json');
@@ -80,7 +81,6 @@ function look(name, sessions, previousLostSince) {
     view: {
       tasks: Object.fromEntries(tasks.map((task) => [task.id, task.state])),
       questions: Object.fromEntries(listQuestions(name).map((question) => [question.id, question.state])),
-      sessions: Object.fromEntries(sessions.map((session) => [session.shortId, session.state])),
       lostSince,
     },
   };
@@ -88,7 +88,7 @@ function look(name, sessions, previousLostSince) {
 
 function diff(before, after) {
   const changes = [];
-  for (const [kind, key] of [['task', 'tasks'], ['question', 'questions'], ['session', 'sessions']]) {
+  for (const [kind, key] of [['task', 'tasks'], ['question', 'questions']]) {
     const ids = new Set([...Object.keys(before[key]), ...Object.keys(after[key])]);
     for (const id of [...ids].sort()) {
       const from = id in before[key] ? before[key][id] : null;

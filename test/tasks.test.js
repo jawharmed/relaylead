@@ -173,6 +173,29 @@ function addIndependentTask(dir) {
   fs.writeFileSync(path.join(dir, 'tasks', 'c.md'), '---\ntitle: Third task\n---\n\nWrite the third file.\n');
 }
 
+// The project's .relaylead.json allows one running task at a time.
+function allowOneRunningTask(dir) {
+  writeJson(path.join(dir, '.relaylead.json'), { parallel: 1 });
+}
+
+test('a start beyond the parallel limit is refused, naming the running tasks', async (t) => {
+  const dir = setupProject(t, 'demo');
+  addIndependentTask(dir);
+  allowOneRunningTask(dir);
+  writeMission('demo', dir);
+  const specs = spyLaunches(t);
+
+  const first = await startTask('demo', { id: 'a' });
+  const refused = await startTask('demo', { id: 'c' }).catch((err) => err);
+
+  assert.strictEqual(refused.code, 'parallel-limit');
+  assert.deepStrictEqual(refused.vars, { mission: 'demo', limit: 1, running: 'a' });
+  assert.match(refused.message, /\(a\)/);
+  assert.strictEqual(fs.existsSync(path.join(missionDir('demo'), 'tasks', 'c.json')), false);
+  assert.deepStrictEqual(await startTask('demo', { id: 'a' }), first);
+  assert.strictEqual(specs.length, 1);
+});
+
 test('concurrent starts of two tasks give distinct session names', async (t) => {
   const dir = setupProject(t, 'demo');
   addIndependentTask(dir);
@@ -625,7 +648,6 @@ test('a retry interrupted before its launch is marked failed after the grace', a
   writeJson(path.join(missionDir('demo'), 'wait-snapshot.json'), {
     tasks: { a: 'running', b: 'todo' },
     questions: {},
-    sessions: {},
     lostSince: { 'task:a': new Date(Date.now() - 61 * 1000).toISOString() },
   });
   const specs = spyLaunches(t);
@@ -643,6 +665,24 @@ test('a retry interrupted before its launch is marked failed after the grace', a
   await stopCrew(record);
   assert.strictEqual(record.attempt, 2);
   assert.strictEqual(specs[0].env.RELAYLEAD_ATTEMPT, '2');
+});
+
+test('a retry obeys the parallel limit', async (t) => {
+  const dir = setupProject(t, 'demo');
+  addIndependentTask(dir);
+  allowOneRunningTask(dir);
+  writeMission('demo', dir);
+  await failedTask();
+  await startTask('demo', { id: 'c' });
+
+  await assert.rejects(retryTask('demo', { id: 'a' }), {
+    code: 'parallel-limit',
+    vars: { mission: 'demo', limit: 1, running: 'c' },
+  });
+
+  assert.strictEqual(fs.existsSync(tasksPath('archive')), false);
+  const [a] = listTasks('demo');
+  assert.deepStrictEqual([a.state, a.attempt], ['failed', 1]);
 });
 
 test('retry stops at maxAttempts', async (t) => {

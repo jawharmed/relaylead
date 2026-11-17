@@ -106,10 +106,24 @@ test('a change between two waits is not lost', async (t) => {
   assert.ok(Date.now() - startedAt < 1000, 'the change was already there');
   assert.deepStrictEqual(changes, [
     { kind: 'task', id: 'a', from: 'running', to: 'done' },
-    { kind: 'session', id: record.session, from: 'working', to: 'done' },
   ]);
 
   // Reported once: on timeout, wait prints no change and still succeeds.
+  assert.deepStrictEqual(await wait(0), []);
+});
+
+test('a finished task wakes the lead once', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  const record = await startTask('demo', { id: 'a' });
+  await wait(5);
+
+  // The fake crew member runs `task done a` after 1 s, then its session ends.
+  const changes = await wait(5);
+  const crew = listSessions('demo').find((session) => session.shortId === record.session);
+  await waitFor(() => !isAlive(crew.pid), 30000, 'the crew session to end');
+
+  assert.deepStrictEqual(changes, [{ kind: 'task', id: 'a', from: 'running', to: 'done' }]);
   assert.deepStrictEqual(await wait(0), []);
 });
 

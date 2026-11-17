@@ -170,6 +170,14 @@ function checkMissionOpen(name) {
   if (state === 'done') throw codedError('mission-done', { mission: name });
 }
 
+// At most mission.config.parallel tasks run at a time. The task `id` itself is not counted: a retry
+// that takes up its own interrupted attempt finds it running already.
+function checkParallelLimit(mission, tasks, id) {
+  const running = tasks.filter((task) => task.state === 'running' && task.id !== id).map((task) => task.id);
+  const limit = mission.config.parallel;
+  if (running.length >= limit) throw codedError('parallel-limit', { mission: mission.name, limit, running: running.join(', ') });
+}
+
 // A retry (attempt > 1) launches on a task left running without a session by retryTask.
 async function launchCrew(mission, id, profile, { attempt = 1, previousSummary = null } = {}) {
   const name = mission.name;
@@ -179,6 +187,7 @@ async function launchCrew(mission, id, profile, { attempt = 1, previousSummary =
   const retrying = attempt > 1 && task.state === 'running' && task.session === null;
   if (task.state === 'running' && !retrying) return readJson(taskFile(name, id));
   if (task.state !== 'todo' && !retrying) throw codedError('task-not-startable', { id, state: task.state });
+  checkParallelLimit(mission, tasks, id);
   // Checked before the task's folder or branch is made, so a refusal leaves nothing behind.
   checkDependencies(tasks, task);
   const question = answeredQuestion(name, task);
@@ -217,7 +226,8 @@ async function retryTask(name, { id, profile }) {
   const mission = readMission(name); // before the lock, which lives in the mission folder
   return withMissionLock(name, `task retry ${id}`, async () => {
     checkMissionOpen(name);
-    const task = findTask(name, id);
+    const tasks = listTasks(name);
+    const task = findTask(name, id, tasks);
     const record = readJson(taskFile(name, id), { id, profile: 'developer' });
     if (task.state === 'running' && record.session) return record;
     let attempt = currentAttempt(record);
@@ -226,6 +236,10 @@ async function retryTask(name, { id, profile }) {
       if (task.state !== 'failed') throw codedError('task-not-retryable', { id, state: task.state });
       const max = mission.config.maxAttempts || DEFAULTS.maxAttempts;
       if (attempt >= max) throw codedError('task-retry-limit', { id, max });
+    }
+    // Checked before anything changes: a refused retry leaves the failed attempt as it is.
+    checkParallelLimit(mission, tasks, id);
+    if (!neverLaunched) {
       await stopPreviousCrew(mission, id, record.session);
       archiveAttempt(name, id, attempt, record);
       attempt++;
