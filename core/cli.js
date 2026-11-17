@@ -41,6 +41,17 @@ function parseArgs(args) {
   return { positional, options, lists };
 }
 
+// True when an argument is `--help` or `-h` without being the value of the option before it
+// (`--note --help` is a note). As in parseArgs, an option takes the next argument as its value
+// when it starts with `--`, has no `=` and is not a flag.
+function wantsHelp(args) {
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--help' || args[i] === '-h') return true;
+    if (args[i].startsWith('--') && !args[i].includes('=') && !FLAGS.includes(args[i].slice(2))) i++;
+  }
+  return false;
+}
+
 function language(io) {
   try {
     return loadConfig({ dir: io.cwd }).language;
@@ -248,7 +259,7 @@ async function run(argv, io) {
     io.out.write(pkg.version + '\n');
     return 0;
   }
-  if (first === undefined || [first, ...args].some((arg) => arg === '--help' || arg === '-h')) {
+  if (first === undefined || wantsHelp([first, ...args])) {
     io.out.write(t('help'));
     return 0;
   }
