@@ -63,6 +63,8 @@ const messages = {
     'task-not-answered':
       'task "{id}" asks a question first; ask it with: relaylead question ask --key {id} …, and start the task once it is answered',
     'task-not-ready': 'task "{id}" depends on tasks not delivered yet ({missing}); deliver them first',
+    'parallel-limit':
+      'mission "{mission}" already runs {limit} tasks ({running}), its limit; start this one once a task finishes',
     'task-skipped': 'task "{id}" was set aside: the user chose "Skip this task"; leave it as it is',
     'mission-done': 'mission "{mission}" is done; no task can start',
     'start-busy':
@@ -209,6 +211,8 @@ const messages = {
     'task-not-answered':
       'la tâche « {id} » pose d\'abord une question ; posez-la avec : relaylead question ask --key {id} …, puis lancez la tâche une fois la réponse donnée',
     'task-not-ready': 'la tâche « {id} » dépend de tâches pas encore livrées ({missing}) ; livrez-les d\'abord',
+    'parallel-limit':
+      'la mission « {mission} » mène déjà {limit} tâches ({running}), sa limite ; lancez celle-ci quand une tâche se termine',
     'task-skipped': 'la tâche « {id} » est mise de côté : l\'utilisateur a choisi « Skip this task » ; laissez-la telle quelle',
     'mission-done': 'la mission « {mission} » est terminée ; aucune tâche ne peut être lancée',
     'start-busy':
