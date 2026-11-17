@@ -16,6 +16,7 @@ const tasksDirSource = require('../sources/tasks-dir');
 const { tmpDir, makeIo, waitFor } = require('../fixtures/helpers');
 const { writeMission, missionReport } = require('../fixtures/missions');
 const { git, gitRepo, recordingGit, lingeringGit } = require('../fixtures/git');
+const { needsPipes } = require('../core/run-file');
 
 const TASK_A = '---\ntitle: First task\n---\n\nWrite a.\n';
 const TASK_B = '---\ntitle: Second task\ndepends: [a]\n---\n\nWrite b.\n';
@@ -712,7 +713,8 @@ test('a held index lock is retried, not taken for a hook', async (t) => {
 
 // A git that leaves a process behind (a hook's background job, a credential helper) that keeps
 // its output open: relaylead must still go on as soon as git itself has ended.
-test('a git command that leaves a process behind does not hold the delivery', { skip: process.platform === 'win32', timeout: 20000 }, async (t) => {
+const PIPES = needsPipes(process.platform, process.versions.uv) && 'pipes stay open until the timeout on macOS with libuv < 1.45';
+test('a git command that leaves a process behind does not hold the delivery', { skip: process.platform === 'win32' || PIPES, timeout: 20000 }, async (t) => {
   freshHome(t);
   const dir = userRepo({ 'tasks/a.md': TASK_A });
   const mission = preparedMission(dir);
