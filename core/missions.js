@@ -60,8 +60,7 @@ function isStale(lock, realDir) {
 
 function busyError(realDir, name) {
   const record = name === '?' ? { state: 'starting' } : readStateRecord(name);
-  const state = record.stopping ? `${record.state}, stopping` : record.state;
-  return codedError('dir-busy', { dir: realDir, mission: name, state });
+  return codedError('dir-busy', { dir: realDir, mission: name, state: shownState(record) });
 }
 
 // Milliseconds since the file was last written; Infinity once it is gone.
@@ -223,6 +222,11 @@ function readState(name) {
   return readStateRecord(name).state;
 }
 
+// The state as the user sees it: "stopped, stopping" while its sessions are still being stopped.
+function shownState(record) {
+  return record.stopping ? `${record.state}, stopping` : record.state;
+}
+
 // `stopping: true` keeps the folder locked while the sessions of a stopped or done mission are being
 // stopped. Only the core writes it.
 function writeState(name, { state, note, stopping }) {
@@ -236,7 +240,8 @@ function getState(name) {
   return readState(name);
 }
 
-// Returns 'skipped' when a done replayed was too old to stop its sessions again, null otherwise.
+// For `done`, returns 'stopped' once the sessions are stopped, or 'skipped' when a done replayed
+// was too old to stop its sessions again; null otherwise (any other state, or nothing left to stop).
 async function setState(name, state, note) {
   const mission = readMission(name);
   if (!STATES.includes(state)) throw codedError('bad-state', { state, states: STATES.join(', ') });
@@ -409,7 +414,7 @@ function listMissions() {
     missions.push({
       name: mission.name,
       dir: mission.dir,
-      state: readState(mission.name),
+      state: shownState(readStateRecord(mission.name)),
       lead: readJson(missionFile(mission.name, 'lead.json'), null),
     });
   }
@@ -546,8 +551,7 @@ async function removeMission(name, { force = false, onBranchDeleted } = {}) {
     const mission = readMission(name);
     const record = readStateRecord(name);
     if (!FINISHED.includes(record.state) || record.stopping) {
-      const state = record.stopping ? `${record.state}, stopping` : record.state;
-      throw codedError('mission-running', { mission: name, state });
+      throw codedError('mission-running', { mission: name, state: shownState(record) });
     }
     // Stopping by id again is harmless, and catches a session restarted since. A stop by pid is not
     // tried: the recorded pids may belong to unrelated processes by now.
