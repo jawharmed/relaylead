@@ -84,6 +84,10 @@ const messages = {
       'a git hook (or git itself) refused relaylead\'s {what}: the merge of your current branch into the integration branch {branch}; nothing was merged and the mission was not launched. Output: {output}. Fix the cause and launch again, or let relaylead\'s own commits skip the hooks with "delivery": {"runHooks": false} in .relaylead.json',
     'state-line-hook-failed':
       'task "{id}" is delivered, but a git hook (or git itself) refused relaylead\'s {what}; the line stays uncommitted in the integration worktree, and the next "relaylead task deliver {id}" commits it. Output: {output}',
+    'launch-state-line-hook-failed':
+      'a git hook (or git itself) refused relaylead\'s commit of task "{id}"\'s state line, left uncommitted in the integration worktree by an earlier delivery; the mission was not launched. Output: {output}. Fix the cause and launch again, or let relaylead\'s own commits skip the hooks with "delivery": {"runHooks": false} in .relaylead.json',
+    'mark-failed':
+      'task "{id}" is merged, but its state line could not be written ({detail}); run relaylead task deliver {id} again to finish',
     'integration-stuck':
       'the integration worktree {dir} is left in the middle of a merge that git could not cancel ({output}); there, run git merge --abort or git reset --merge, keep the changes under the task folder, then deliver again',
     'empty-output': 'task "{id}" delivered nothing: its output folder {dir} is empty',
@@ -111,6 +115,8 @@ const messages = {
       'the integration branch "{branch}" clashes with the task branches relaylead/{mission}/<id>; choose another mission name or delivery.branch',
     'integration-mismatch':
       'the integration worktree {dir} is on branch "{actual}", not "{branch}"; set delivery.branch back to "{actual}", or remove the worktree with: git worktree remove "{dir}"',
+    'integration-dirty':
+      'the integration worktree {dir} has changes nobody committed ({files}); commit them there, or remove the ones that are not under {tasksDir}, then launch again; files under {tasksDir} hold the state of delivered tasks: never remove them',
     'tasks-not-committed':
       'the task folder "{dir}" has changes not committed, or is missing from branch {branch}; commit it first: the crew works from commits',
     'question-unknown': 'mission "{mission}" has no question "{id}"; see the open ones with: relaylead question list {mission}',
@@ -230,6 +236,10 @@ const messages = {
       'un hook git (ou git lui-même) a refusé la fusion de votre branche courante dans la branche d\'intégration {branch} par relaylead ; rien n\'a été fusionné et la mission n\'est pas lancée. Sortie : {output}. Corrigez la cause et relancez, ou faites passer les commits de relaylead sans hooks avec "delivery": {"runHooks": false} dans .relaylead.json',
     'state-line-hook-failed':
       'la tâche « {id} » est livrée, mais un hook git (ou git lui-même) a refusé le commit de sa ligne d\'état par relaylead ; la ligne reste non commitée dans le worktree d\'intégration, et le prochain « relaylead task deliver {id} » la commite. Sortie : {output}',
+    'launch-state-line-hook-failed':
+      'un hook git (ou git lui-même) a refusé le commit par relaylead de la ligne d\'état de la tâche « {id} », laissée non commitée dans le worktree d\'intégration par une livraison précédente ; la mission n\'est pas lancée. Sortie : {output}. Corrigez la cause et relancez, ou faites passer les commits de relaylead sans hooks avec "delivery": {"runHooks": false} dans .relaylead.json',
+    'mark-failed':
+      'la tâche « {id} » est fusionnée, mais sa ligne d\'état n\'a pas pu être écrite ({detail}) ; relancez relaylead task deliver {id} pour finir',
     'integration-stuck':
       'le worktree d\'intégration {dir} reste au milieu d\'une fusion que git n\'a pas pu annuler ({output}) ; dans ce dossier, lancez git merge --abort ou git reset --merge, gardez les changements du dossier des tâches, puis livrez de nouveau',
     'empty-output': 'la tâche « {id} » n\'a rien livré : son dossier de sortie {dir} est vide',
@@ -257,6 +267,8 @@ const messages = {
       'la branche d\'intégration « {branch} » entre en conflit avec les branches des tâches relaylead/{mission}/<id> ; choisissez un autre nom de mission ou une autre delivery.branch',
     'integration-mismatch':
       'le worktree d\'intégration {dir} est sur la branche « {actual} », pas « {branch} » ; remettez delivery.branch à « {actual} », ou supprimez le worktree avec : git worktree remove "{dir}"',
+    'integration-dirty':
+      'le worktree d\'intégration {dir} a des changements que personne n\'a commités ({files}) ; commitez-les dans ce dossier, ou retirez ceux qui ne sont pas sous {tasksDir}, puis relancez ; les fichiers sous {tasksDir} portent l\'état des tâches livrées : ne les retirez jamais',
     'tasks-not-committed':
       'le dossier des tâches « {dir} » a des changements non commités, ou manque dans la branche {branch} ; commitez-le d\'abord : les équipiers travaillent à partir des commits',
     'question-unknown': 'la mission « {mission} » n\'a pas de question « {id} » ; voir les questions ouvertes avec : relaylead question list {mission}',

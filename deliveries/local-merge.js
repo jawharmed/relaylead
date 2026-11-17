@@ -162,12 +162,17 @@ function prepareMission(mission) {
     throw codedError('tasks-not-committed', { dir: sourceDir(mission), branch });
   }
   const integration = integrationDir(mission);
-  if (fs.existsSync(integration) && currentBranch(integration) !== branch) {
-    throw codedError('integration-mismatch', { dir: integration, actual: currentBranch(integration), branch });
+  if (fs.existsSync(integration)) {
+    const actual = gitInIntegration(mission, ['rev-parse', '--abbrev-ref', 'HEAD']);
+    if (actual !== branch) throw codedError('integration-mismatch', { dir: integration, actual, branch });
   }
   const isNew = !branchExists(mission.dir, branch);
   if (isNew && !refHas(mission.dir, 'HEAD', sourceDir(mission))) {
     throw codedError('tasks-not-committed', { dir: sourceDir(mission), branch });
+  }
+  if (fs.existsSync(integration)) {
+    commitPendingStateLines(mission);
+    checkIntegrationClean(mission);
   }
 
   excludeRelaylead(mission.dir);
@@ -182,6 +187,35 @@ function prepareMission(mission) {
   }
 }
 
+// A state line that a delivery left uncommitted in the integration worktree, on purpose (a hook
+// refused its commit, or the commit did not end in time), is committed now, as finish() does.
+// Only the task files (<source.dir>/<id>.md) that were changed count: anything else is left to
+// checkIntegrationClean.
+function commitPendingStateLines(mission) {
+  const hooks = runHooks(mission);
+  const changed = gitInIntegration(mission, ['diff', '--name-only', '-z', '--diff-filter=M', 'HEAD', '--', sourceDir(mission)]);
+  for (const file of changed.split('\0').filter(Boolean)) {
+    const id = path.posix.basename(file, '.md');
+    if (file !== sourceFile(mission, { id })) continue;
+    try {
+      commitStateLine(mission, id, hooks);
+    } catch (err) {
+      if (!hooks || err.timedOut) throw err;
+      throw codedError('launch-state-line-hook-failed', { id, output: shownOutput(err.output || err.message) });
+    }
+  }
+}
+
+// Changes nobody committed in the integration worktree would get in the way of the merges, with a
+// raw git error, or be mixed into relaylead's commits.
+function checkIntegrationClean(mission) {
+  const status = gitInIntegration(mission, ['status', '--porcelain', '--untracked-files=all']);
+  if (status === '') return;
+  // Each line is "XY path": the status letters, then the path.
+  const files = status.split(/\r?\n/).map((line) => line.trim().replace(/^\S+\s+/, ''));
+  throw codedError('integration-dirty', { dir: integrationDir(mission), files: files.join(', '), tasksDir: sourceDir(mission) });
+}
+
 // Merges the user's current commit into the integration branch, unless it is there already.
 function updateIntegration(mission) {
   const { branch } = mission.config.delivery;
@@ -190,7 +224,7 @@ function updateIntegration(mission) {
   if (git(mission.dir, ['rev-list', '--count', `${branch}..${userCommit}`]) === '0') return;
   const userBranch = currentBranch(mission.dir); // 'HEAD' when detached
   const message = `Merge ${userBranch === 'HEAD' ? userCommit : userBranch} into ${branch}`;
-  if (!mergeOrAbort(integrationDir(mission), ['-m', message, userCommit], { runHooks: runHooks(mission), refusal })) {
+  if (!mergeOrAbort(mission, ['-m', message, userCommit], { runHooks: runHooks(mission), refusal })) {
     throw codedError('integration-sync-conflict', { branch, dir: integrationDir(mission) });
   }
 }
@@ -239,20 +273,35 @@ function branchWork(mission, branch) {
   return ownLine.includes(tip) ? 'empty' : 'merged';
 }
 
-// A stopped merge leaves MERGE_HEAD in the worktree's git folder.
+// A stopped merge leaves MERGE_HEAD in the worktree's git folder. Runs git directly, not through
+// gitInIntegration: the cleanup of a killed git uses it, and must not clean up after itself.
 function mergeInProgress(cwd) {
   return fs.existsSync(path.resolve(cwd, git(cwd, ['rev-parse', '--git-path', 'MERGE_HEAD'])));
 }
 
-// A merge stopped by its timeout was killed: it may have left the merge going and its index.lock.
-// Only the holder of start.lock runs git in the integration worktree, and the killed git has ended,
-// so that index.lock is stale. Best effort: returns the error to throw, saying what was done.
-function cancelKilledMerge(integration, err) {
+// Runs git in the integration worktree. A command stopped by its timeout was killed: it may have
+// left its index.lock, and a merge going. Only one relaylead at a time runs git there (a delivery
+// holds the mission's start.lock, a launch the folder's lock), and the killed git has ended, so
+// that index.lock is stale: it is removed and the merge cancelled before the error is thrown.
+function gitInIntegration(mission, args) {
+  try {
+    return git(integrationDir(mission), args);
+  } catch (err) {
+    if (err.timedOut) throw cleanUpKilledGit(integrationDir(mission), err);
+    throw err;
+  }
+}
+
+// Best effort: returns the error to throw, saying what was done. Runs git directly: a cleanup that
+// does not end in turn is not cleaned up again.
+function cleanUpKilledGit(integration, err) {
   try {
     const indexLock = path.resolve(integration, git(integration, ['rev-parse', '--git-path', 'index.lock']));
     fs.rmSync(indexLock, { force: true });
-    if (mergeInProgress(integration)) git(integration, ['merge', '--abort']);
-    err.message += '; the merge was cancelled';
+    if (mergeInProgress(integration)) {
+      git(integration, ['merge', '--abort']);
+      err.message += '; the merge was cancelled';
+    }
   } catch (cleanup) {
     err.message += `; it could not be cancelled (${cleanup.message}): check the integration worktree ${integration}`;
   }
@@ -277,13 +326,15 @@ function shownOutput(text) {
 // changes of its own before the merge, the worktree goes back to its last commit: that drops only
 // what the merge and the hook wrote (files the hook created stay). Changes made before the merge, such
 // as a state line not committed yet, would be lost too: the worktree is then left to the user.
-function cancelMerge(integration, changedBefore) {
+function cancelMerge(mission, changedBefore) {
   try {
-    git(integration, ['merge', '--abort']);
+    gitInIntegration(mission, ['merge', '--abort']);
   } catch (err) {
     if (err.timedOut) throw err;
-    if (changedBefore) throw codedError('integration-stuck', { dir: integration, output: shownOutput(err.output || err.message) });
-    git(integration, ['reset', '--hard', 'HEAD']);
+    if (changedBefore) {
+      throw codedError('integration-stuck', { dir: integrationDir(mission), output: shownOutput(err.output || err.message) });
+    }
+    gitInIntegration(mission, ['reset', '--hard', 'HEAD']);
   }
 }
 
@@ -293,19 +344,20 @@ function cancelMerge(integration, changedBefore) {
 // is tried again, LOCK_ATTEMPTS times at most. Otherwise, when the hooks run, a hook may be the cause:
 // throws refusal.code with refusal.vars and git's output; without hooks, throws git's own error.
 // git() is not used for the merge: its own retries would meet the merge left going.
-function mergeOrAbort(integration, args, { runHooks: hooks, refusal }) {
+function mergeOrAbort(mission, args, { runHooks: hooks, refusal }) {
+  const integration = integrationDir(mission);
   const verify = hooks ? [] : ['--no-verify'];
-  const changedBefore = git(integration, ['status', '--porcelain', '--untracked-files=no']) !== '';
+  const changedBefore = gitInIntegration(mission, ['status', '--porcelain', '--untracked-files=no']) !== '';
   for (let attempt = 1; ; attempt++) {
     try {
       runGit(integration, ['merge', '--no-ff', '--no-edit', ...verify, ...args], ['ignore', 'pipe', 'pipe']);
       return true;
     } catch (err) {
-      if (err.timedOut) throw cancelKilledMerge(integration, err);
+      if (err.timedOut) throw cleanUpKilledGit(integration, err);
       const output = `${err.stdout || ''}${err.stderr || ''}`.trim() || err.message;
       if (mergeInProgress(integration)) {
-        const conflicted = git(integration, ['diff', '--name-only', '--diff-filter=U']) !== '';
-        cancelMerge(integration, changedBefore);
+        const conflicted = gitInIntegration(mission, ['diff', '--name-only', '--diff-filter=U']) !== '';
+        cancelMerge(mission, changedBefore);
         if (conflicted) return false;
       }
       if (isTransientGitError(output) && attempt < LOCK_ATTEMPTS) {
@@ -354,11 +406,16 @@ function deliver(mission, task, { runHooks: hooks = runHooks(mission) } = {}) {
   const branch = taskBranch(mission, task);
   const work = checkDone(mission, task);
   const refusal = { code: 'hook-failed', vars: { what: 'merge', id: task.id, branch, mission: mission.name } };
-  if (work === 'new' && !mergeOrAbort(integrationDir(mission), [branch], { runHooks: hooks, refusal })) {
+  if (work === 'new' && !mergeOrAbort(mission, [branch], { runHooks: hooks, refusal })) {
     throw codedError('merge-conflict', { id: task.id, branch });
   }
 
-  tasksDirSource.markDone(integrationDir(mission), mission.config.source.dir, task.id);
+  // The branch is merged now: the next deliver finds it 'merged' and writes the line again.
+  try {
+    tasksDirSource.markDone(integrationDir(mission), mission.config.source.dir, task.id);
+  } catch (err) {
+    throw codedError('mark-failed', { id: task.id, detail: err.message });
+  }
   return finish(mission, task, { runHooks: hooks });
 }
 
@@ -379,17 +436,13 @@ function hasLateWork(mission, task) {
 // they hold work done since. The task is delivered once committed: a failed or skipped removal is
 // returned as a warning, and the next deliver tries again.
 function finish(mission, task, { runHooks: hooks = runHooks(mission) } = {}) {
-  const integration = integrationDir(mission);
   const file = sourceFile(mission, task);
   const cwd = taskDir(mission, task);
   const branch = taskBranch(mission, task);
   // The work is merged by now: nothing from here on may fail the delivery. The state line stays
   // uncommitted if git or a hook keeps refusing, and the next deliver commits it.
   try {
-    if (git(integration, ['status', '--porcelain', '--', file]) !== '') {
-      const message = t('deliveryCommit', { id: task.id }, mission.config.language);
-      git(integration, ['commit', ...(hooks ? [] : ['--no-verify']), '-m', message, '--', file]);
-    }
+    if (gitInIntegration(mission, ['status', '--porcelain', '--', file]) !== '') commitStateLine(mission, task.id, hooks);
   } catch (err) {
     if (hooks && !err.timedOut) {
       const output = shownOutput(err.output || err.message);
@@ -406,6 +459,12 @@ function finish(mission, task, { runHooks: hooks = runHooks(mission) } = {}) {
     return [codedError('cleanup-failed', { id: task.id, detail: err.message })];
   }
   return [];
+}
+
+// Commits only the state line of task `id`, written by markDone in the integration worktree.
+function commitStateLine(mission, id, hooks) {
+  const message = t('deliveryCommit', { id }, mission.config.language);
+  gitInIntegration(mission, ['commit', ...(hooks ? [] : ['--no-verify']), '-m', message, '--', sourceFile(mission, { id })]);
 }
 
 // The task worktrees of the mission, as git lists them: those on a branch relaylead/<mission>/….
