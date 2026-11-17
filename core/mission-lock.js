@@ -4,11 +4,13 @@ const path = require('node:path');
 const { missionDir } = require('./paths');
 const { codedError } = require('./messages');
 const { isAlive } = require('./sessions');
-const { gitTimeoutMs } = require('../deliveries/local-merge');
+const { gitTimeoutMs } = require('./run-file');
 const { sleep } = require('./timing');
 
 // Long enough for a slow agent launch held by another start. Read at each call.
 const lockWaitMs = () => Number(process.env.RELAYLEAD_START_LOCK_WAIT_MS) || 60 * 1000;
+// An empty or partly written lock file this old was left by a holder that crashed (also used for
+// the folder lock of missions.js).
 const EMPTY_LOCK_STALE_MS = 10 * 1000;
 // A live holder this old is stuck: a delivery runs a few git commands, each stopped after
 // gitTimeoutMs(), so even a slow one ends well before.
@@ -108,16 +110,22 @@ async function withMissionLock(name, command, action) {
   if (!fs.existsSync(missionDir(name))) throw codedError('mission-unknown', { mission: name });
   const file = path.join(missionDir(name), 'start.lock');
   const giveUpAt = Date.now() + lockWaitMs();
-  while (!tryCreateLock(file, command)) {
-    if (isStaleLock(file) && (await takeOverStaleLock(file))) continue;
-    const lock = readLock(file);
-    const known = lock && lock.pid;
-    const holder = known
-      ? { mission: name, command: lock.command, pid: lock.pid, since: lock.since }
-      : { mission: name, command: '?', pid: '?', since: '?' };
-    if (known && Date.now() - Date.parse(lock.since) > startLockStuckMs()) throw codedError('start-stuck', holder);
-    if (Date.now() > giveUpAt) throw codedError('start-busy', holder);
-    await sleep(50);
+  try {
+    while (!tryCreateLock(file, command)) {
+      if (isStaleLock(file) && (await takeOverStaleLock(file))) continue;
+      const lock = readLock(file);
+      const known = lock && lock.pid;
+      const holder = known
+        ? { mission: name, command: lock.command, pid: lock.pid, since: lock.since }
+        : { mission: name, command: '?', pid: '?', since: '?' };
+      if (known && Date.now() - Date.parse(lock.since) > startLockStuckMs()) throw codedError('start-stuck', holder);
+      if (Date.now() > giveUpAt) throw codedError('start-busy', holder);
+      await sleep(50);
+    }
+  } catch (err) {
+    // The mission folder was removed while waiting (relaylead remove).
+    if (err.code === 'ENOENT') throw codedError('mission-unknown', { mission: name });
+    throw err;
   }
   try {
     return await action();
@@ -126,4 +134,4 @@ async function withMissionLock(name, command, action) {
   }
 }
 
-module.exports = { withMissionLock };
+module.exports = { withMissionLock, EMPTY_LOCK_STALE_MS };

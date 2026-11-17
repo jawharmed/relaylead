@@ -487,6 +487,20 @@ test('the mission lock of an unknown mission is a coded error', async (t) => {
   await assert.rejects(withMissionLock('ghost', 'probe', async () => {}), { code: 'mission-unknown' });
 });
 
+test('a waiter for the mission lock whose mission is removed gets a coded error', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  const holder = holdMissionLock('demo', 'probe');
+  await waitFor(() => fs.existsSync(path.join(missionDir('demo'), 'start.lock')), 5000, 'the lock to be held');
+  const waiting = withMissionLock('demo', 'waiter', async () => {});
+  await sleep(100);
+  fs.rmSync(missionDir('demo'), { recursive: true, force: true });
+
+  await assert.rejects(waiting, { code: 'mission-unknown' });
+  holder.release();
+  await holder.finished;
+});
+
 test('a stop that gives up behind a slow holder says to run it again', async (t) => {
   const dir = setupProject(t, 'demo');
   writeMission('demo', dir);

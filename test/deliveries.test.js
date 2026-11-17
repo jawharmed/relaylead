@@ -16,6 +16,7 @@ const tasksDirSource = require('../sources/tasks-dir');
 const { tmpDir, makeIo, waitFor } = require('../fixtures/helpers');
 const { writeMission, missionReport } = require('../fixtures/missions');
 const { git, gitRepo, recordingGit, lingeringGit } = require('../fixtures/git');
+const { needsPipes } = require('../core/run-file');
 
 const TASK_A = '---\ntitle: First task\n---\n\nWrite a.\n';
 const TASK_B = '---\ntitle: Second task\ndepends: [a]\n---\n\nWrite b.\n';
@@ -712,7 +713,8 @@ test('a held index lock is retried, not taken for a hook', async (t) => {
 
 // A git that leaves a process behind (a hook's background job, a credential helper) that keeps
 // its output open: relaylead must still go on as soon as git itself has ended.
-test('a git command that leaves a process behind does not hold the delivery', { skip: process.platform === 'win32', timeout: 20000 }, async (t) => {
+const PIPES = needsPipes(process.platform, process.versions.uv) && 'pipes stay open until the timeout on macOS with libuv < 1.45';
+test('a git command that leaves a process behind does not hold the delivery', { skip: process.platform === 'win32' || PIPES, timeout: 20000 }, async (t) => {
   freshHome(t);
   const dir = userRepo({ 'tasks/a.md': TASK_A });
   const mission = preparedMission(dir);
@@ -1273,6 +1275,34 @@ test('remove refuses work not delivered unless --force', async (t) => {
   assert.strictEqual(forced.out, `deleted branch relaylead/demo/b ${sha}\nmission demo removed\n`);
   assert.strictEqual(demoBranches(dir), '');
   assert.strictEqual(fs.existsSync(missionDir('demo')), false);
+});
+
+// Mission demo-x is another mission: its branches start with relaylead/demo-x/, not relaylead/demo/.
+test('stop and remove --force of a mission leave a mission with a longer name alone', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir);
+  const neighbour = path.join(dir, '.relaylead', 'worktrees', 'demo-x-a');
+  git(dir, 'worktree', 'add', '-q', '-b', 'relaylead/demo-x/a', neighbour, 'relaylead/integration');
+  fs.writeFileSync(path.join(neighbour, 'x.txt'), 'x\n');
+  git(neighbour, 'add', '-A');
+  git(neighbour, 'commit', '-q', '-m', 'x');
+  const sha = git(dir, 'rev-parse', 'relaylead/demo-x/a');
+  taskWithWork(mission, 'a', { committed: true });
+
+  const stopped = await cli(['stop', 'demo']);
+
+  assert.strictEqual(stopped.code, 0, stopped.err);
+  assert.strictEqual(fs.existsSync(taskWorktree(dir, 'a')), false);
+  assert.strictEqual(fs.existsSync(neighbour), true);
+
+  const removed = await cli(['remove', 'demo', '--force']);
+
+  assert.strictEqual(removed.code, 0, removed.err);
+  assert.doesNotMatch(removed.out, /demo-x/);
+  assert.strictEqual(demoBranches(dir), '');
+  assert.strictEqual(fs.existsSync(neighbour), true);
+  assert.strictEqual(git(dir, 'rev-parse', 'relaylead/demo-x/a'), sha);
 });
 
 test('remove refuses a dirty worktree unless --force', async (t) => {

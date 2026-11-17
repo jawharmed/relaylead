@@ -6,6 +6,7 @@ const { run } = require('../core/cli');
 const { isAllowed } = require('../core/guard');
 const { loadProfile, loadMethod } = require('../core/profiles');
 const { readJson } = require('../core/store');
+const { t } = require('../core/messages');
 const { missionDir } = require('../core/paths');
 const fake = require('../adapters/fake');
 const { tmpDir, makeIo } = require('../fixtures/helpers');
@@ -56,6 +57,16 @@ test('catalog profiles parse with the expected fields', () => {
   for (const command of ['relaylead wait', 'relaylead task deliver', 'relaylead state set done']) {
     assert.ok(method.instructions.includes(command), `the code method should mention ${command}`);
   }
+});
+
+// The lead recognises a refusal by a git hook from the first words of the error, in both languages.
+test('the lead quotes the first words of the hook-failed error as they are', () => {
+  process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
+  const { instructions } = loadProfile('lead', { dir: tmpDir('relaylead-project-') });
+  const quoted = instructions.match(/the error starts with "([^"]+)", or "([^"]+)" in French/);
+  assert.ok(quoted, 'the lead instructions should quote the start of the hook-failed error');
+  assert.ok(t('hook-failed', {}, 'en').startsWith(quoted[1]), quoted[1]);
+  assert.ok(t('hook-failed', {}, 'fr').startsWith(quoted[2]), quoted[2]);
 });
 
 test('lead tools only allow its relaylead commands and read-only git', () => {

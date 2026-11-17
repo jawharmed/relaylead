@@ -541,6 +541,8 @@ test('a stop that could not stop every session keeps the folder', async (t) => {
   const refused = await cli(['launch', '--agent', 'fake', '--name', 'two', '--dir', dir]);
   assert.strictEqual(refused.code, 1);
   assert.match(refused.err, /busy with mission "one" \(stopped, stopping\)/);
+  const listed = await cli(['list']);
+  assert.match(listed.out, /^one {2}stopped, stopping {2}/m);
 
   const again = await cli(['stop', 'one']);
   assert.strictEqual(again.code, 0, again.err);

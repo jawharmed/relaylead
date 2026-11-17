@@ -13,7 +13,7 @@ const { writeJournal } = require('./guard');
 const { getAdapter } = require('../adapters');
 const { getDelivery } = require('../deliveries');
 const { sleep } = require('./timing');
-const { withMissionLock } = require('./mission-lock');
+const { withMissionLock, EMPTY_LOCK_STALE_MS } = require('./mission-lock');
 
 // States the lead may declare. 'stopped' is written by the core only.
 const STATES = ['starting', 'working', 'waiting', 'done'];
@@ -21,8 +21,6 @@ const BIN = path.join(__dirname, '..', 'bin', 'relaylead.js');
 const REAP_POLL_MS = 2000;
 // The states after which no session of the mission may run.
 const FINISHED = ['done', 'stopped'];
-// An empty or partly written folder lock this old was left by a launch that crashed.
-const EMPTY_LOCK_STALE_MS = 10 * 1000;
 // Past this age, the recorded pids of a mission may belong to unrelated processes.
 const PIDS_TRUSTED_MS = 60 * 60 * 1000;
 // How long the helper waits for the lead to end its turn after `state set done`; tests shorten it.
@@ -62,8 +60,7 @@ function isStale(lock, realDir) {
 
 function busyError(realDir, name) {
   const record = name === '?' ? { state: 'starting' } : readStateRecord(name);
-  const state = record.stopping ? `${record.state}, stopping` : record.state;
-  return codedError('dir-busy', { dir: realDir, mission: name, state });
+  return codedError('dir-busy', { dir: realDir, mission: name, state: shownState(record) });
 }
 
 // Milliseconds since the file was last written; Infinity once it is gone.
@@ -225,6 +222,11 @@ function readState(name) {
   return readStateRecord(name).state;
 }
 
+// The state as the user sees it: "stopped, stopping" while its sessions are still being stopped.
+function shownState(record) {
+  return record.stopping ? `${record.state}, stopping` : record.state;
+}
+
 // `stopping: true` keeps the folder locked while the sessions of a stopped or done mission are being
 // stopped. Only the core writes it.
 function writeState(name, { state, note, stopping }) {
@@ -238,7 +240,8 @@ function getState(name) {
   return readState(name);
 }
 
-// Returns 'skipped' when a done replayed was too old to stop its sessions again, null otherwise.
+// For `done`, returns 'stopped' once the sessions are stopped, or 'skipped' when a done replayed
+// was too old to stop its sessions again; null otherwise (any other state, or nothing left to stop).
 async function setState(name, state, note) {
   const mission = readMission(name);
   if (!STATES.includes(state)) throw codedError('bad-state', { state, states: STATES.join(', ') });
@@ -411,7 +414,7 @@ function listMissions() {
     missions.push({
       name: mission.name,
       dir: mission.dir,
-      state: readState(mission.name),
+      state: shownState(readStateRecord(mission.name)),
       lead: readJson(missionFile(mission.name, 'lead.json'), null),
     });
   }
@@ -548,8 +551,7 @@ async function removeMission(name, { force = false, onBranchDeleted } = {}) {
     const mission = readMission(name);
     const record = readStateRecord(name);
     if (!FINISHED.includes(record.state) || record.stopping) {
-      const state = record.stopping ? `${record.state}, stopping` : record.state;
-      throw codedError('mission-running', { mission: name, state });
+      throw codedError('mission-running', { mission: name, state: shownState(record) });
     }
     // Stopping by id again is harmless, and catches a session restarted since. A stop by pid is not
     // tried: the recorded pids may belong to unrelated processes by now.
