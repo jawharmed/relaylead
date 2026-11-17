@@ -386,6 +386,34 @@ test('the mission state folder is refused', () => {
   assert.deepStrictEqual(use('Bash', { command: 'relaylead task done a --mission demo' }), ALLOW);
 });
 
+// A relaylead home named `.relaylead` in a temp folder, its parent, and the state folder of mission `demo`.
+function stateLayout() {
+  const parent = tmpDir('relaylead-parent-');
+  const home = path.join(parent, '.relaylead');
+  return { parent, stateDir: path.join(home, 'missions', 'demo') };
+}
+
+test('a Glob pattern that may reach the mission state folder is refused', () => {
+  const { parent, stateDir } = stateLayout();
+  const project = tmpDir();
+  const glob = (tool_input) => checkToolUse({ tool_name: 'Glob', tool_input, cwd: project }, GUARD, stateDir);
+  const reason = 'access to the mission state folder';
+  assertDenied(glob({ pattern: path.join(stateDir, '*') }), reason);
+  assertDenied(glob({ pattern: '**/*.json', path: parent }), reason);
+  assert.deepStrictEqual(glob({ pattern: 'src/**/*.js' }), ALLOW);
+  // Glob gives only names: a pattern that names a secret reads nothing.
+  assert.deepStrictEqual(glob({ pattern: '**/.env' }), ALLOW);
+});
+
+test('a Grep glob naming a secret or the state folder is refused', () => {
+  const { parent, stateDir } = stateLayout();
+  const project = tmpDir();
+  const grep = (tool_input) => checkToolUse({ tool_name: 'Grep', tool_input, cwd: project }, GUARD, stateDir);
+  assertDenied(grep({ pattern: 'KEY', glob: '.env' }), 'access to secret file .env');
+  assertDenied(grep({ pattern: 'x', glob: '.relaylead/**', path: parent }), 'access to the mission state folder');
+  assert.deepStrictEqual(grep({ pattern: 'x', glob: '*.{ts,js}' }), ALLOW);
+});
+
 test('the mission state folder is refused under ~, $HOME or $RELAYLEAD_HOME', (t) => {
   const reason = 'access to the mission state folder';
   // Only paths are compared: nothing is read or written under the real home folder.

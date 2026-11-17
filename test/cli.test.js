@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
 const { run, commands } = require('../core/cli');
 const pkg = require('../package.json');
 const { tmpDir } = require('../fixtures/helpers');
@@ -70,6 +72,29 @@ test('--help after a command prints the help', async () => {
   assert.strictEqual(await run(['stop', '--help'], io), 0);
   assert.match(io.out.text, /^Usage: relaylead/);
   assert.match(io.out.text, /stop +stop a mission\n/);
+});
+
+test('an option value --help is not a request for help', async () => {
+  process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
+  const io = makeIo();
+  assert.strictEqual(await run(['state', 'set', 'working', '--note', '--help', '--mission', 'ghost'], io), 1);
+  assert.match(io.err.text, /no mission named "ghost"/);
+  assert.doesNotMatch(io.out.text, /Usage:/);
+});
+
+test('no-mission advises --mission only', async () => {
+  process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
+  const io = makeIo();
+  assert.strictEqual(await run(['task', 'list'], io), 1);
+  assert.ok(io.err.text.includes('--mission <name>'), io.err.text);
+  assert.ok(!io.err.text.includes('RELAYLEAD_MISSION'), io.err.text);
+
+  const project = tmpDir();
+  fs.writeFileSync(path.join(project, '.relaylead.json'), JSON.stringify({ language: 'fr' }));
+  const fr = { ...makeIo(), cwd: project };
+  assert.strictEqual(await run(['task', 'list'], fr), 1);
+  assert.ok(fr.err.text.includes('--mission <nom>'), fr.err.text);
+  assert.ok(!fr.err.text.includes('RELAYLEAD_MISSION'), fr.err.text);
 });
 
 test('an option may be written --name=value', async () => {

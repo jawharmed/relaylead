@@ -352,11 +352,16 @@ function isSecretName(name, guard) {
 }
 
 // True when a glob path may name something inside the state folder: each of its first segments
-// matches the state folder's (in the shell, `*` does not cross a `/`).
+// matches the state folder's (in the shell, `*` does not cross a `/`). A `**` segment crosses
+// folders: once the segments before it match the state folder's first ones, the path may reach it.
 function globMayReach(file, dir, stateDir) {
   const parts = path.resolve(dir || '', file).split(path.sep);
   const folder = path.resolve(stateDir).split(path.sep);
-  return parts.length >= folder.length && folder.every((segment, i) => shellGlobRegExp(parts[i]).test(segment));
+  for (let i = 0; i < folder.length; i++) {
+    if (parts[i] === '**') return true;
+    if (parts[i] === undefined || !shellGlobRegExp(parts[i]).test(folder[i])) return false;
+  }
+  return true;
 }
 
 // True when `word` names something in the state folder. `~user` may be this user's home, so it
@@ -488,6 +493,12 @@ function checkFile(file, dir, guard, stateDir) {
 }
 
 // `stateDir` is the mission's state folder: sessions change it only through the relaylead CLI.
+// Glob and Grep also name files by a glob, seen from their `path` (or `cwd`). Glob's `pattern` is
+// judged for the state folder only: Glob gives names and reads nothing. Grep's `glob` is judged
+// for the state folder and the secrets: Grep reads the files it names.
+// Known gap: a Grep without `glob` whose `path` is a parent of the state folder (the home folder,
+// say) searches it; refusing it would block every search in the home folder. To be taken up
+// again with the full guards (lot 3).
 function checkToolUse({ tool_name, tool_input, cwd }, guard, stateDir = null) {
   const input = tool_input || {};
   const dir = cwd || process.cwd();
@@ -495,6 +506,13 @@ function checkToolUse({ tool_name, tool_input, cwd }, guard, stateDir = null) {
   if (tool_name === 'Bash') reason = checkBash(String(input.command || ''), dir, guard, stateDir);
   const field = FILE_TOOLS.get(tool_name);
   if (field && input[field]) reason = checkFile(String(input[field]), dir, guard, stateDir);
+  const searched = input.path ? path.resolve(dir, expandHome(String(input.path))) : dir;
+  if (!reason && tool_name === 'Glob' && input.pattern) {
+    reason = checkFileWord(String(input.pattern), searched, { ...guard, secrets: [] }, stateDir);
+  }
+  if (!reason && tool_name === 'Grep' && input.glob) {
+    reason = checkFileWord(String(input.glob), searched, guard, stateDir);
+  }
   return reason ? { decision: 'deny', reason } : { decision: 'allow' };
 }
 
