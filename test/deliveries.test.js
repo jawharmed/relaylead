@@ -757,6 +757,29 @@ test('a git command that does not end fails the delivery in time', { skip: proce
   assert.strictEqual(fs.existsSync(path.join(missionDir('demo'), 'start.lock')), false);
 });
 
+// Puts on the PATH a git that hangs on each call whose arguments contain `call`, once it has run
+// `before` (shell, where $GIT is the real git); the other calls run the real git. Git's timeout
+// is 1 s. Returns a function that puts back the real git and its timeout, as is done after the
+// test. POSIX only (a shell script).
+function hangingGit(t, call, before) {
+  const bin = tmpDir('relaylead-git-');
+  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  fs.writeFileSync(
+    path.join(bin, 'git'),
+    ['#!/bin/sh', `GIT='${realGit}'`, 'case "$*" in', `  *"${call}"*) ${before}; exec sleep 30 ;;`, 'esac', 'exec "$GIT" "$@"', ''].join('\n'),
+    { mode: 0o755 },
+  );
+  const { PATH } = process.env;
+  process.env.PATH = bin + path.delimiter + PATH;
+  process.env.RELAYLEAD_GIT_TIMEOUT_MS = '1000';
+  const restore = () => {
+    process.env.PATH = PATH;
+    delete process.env.RELAYLEAD_GIT_TIMEOUT_MS;
+  };
+  t.after(restore);
+  return restore;
+}
+
 // Killed in the middle of a merge, git leaves the merge going and its index.lock behind: the
 // integration worktree would refuse every later delivery.
 test('a merge that does not end is cancelled', { skip: process.platform === 'win32', timeout: 30000 }, async (t) => {
@@ -764,33 +787,13 @@ test('a merge that does not end is cancelled', { skip: process.platform === 'win
   const dir = userRepo({ 'tasks/a.md': TASK_A });
   const mission = preparedMission(dir);
   finishedTask(mission, 'a');
-  const bin = tmpDir('relaylead-git-');
-  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
   // The merge stops before its commit, takes the index lock, then hangs.
-  fs.writeFileSync(
-    path.join(bin, 'git'),
-    [
-      '#!/bin/sh',
-      'case "$*" in',
-      `  *" merge --no-ff "*) '${realGit}' "$@" --no-commit; touch "$('${realGit}' rev-parse --git-path index.lock)"; exec sleep 30 ;;`,
-      'esac',
-      `exec '${realGit}' "$@"`,
-      '',
-    ].join('\n'),
-    { mode: 0o755 },
-  );
-  const { PATH } = process.env;
-  process.env.PATH = bin + path.delimiter + PATH;
-  process.env.RELAYLEAD_GIT_TIMEOUT_MS = '1000';
-  t.after(() => {
-    process.env.PATH = PATH;
-    delete process.env.RELAYLEAD_GIT_TIMEOUT_MS;
-  });
+  const realGit = hangingGit(t, ' merge --no-ff ', '"$GIT" "$@" --no-commit; touch "$("$GIT" rev-parse --git-path index.lock)"');
 
   const failed = await deliver('a');
   assert.notStrictEqual(failed.code, 0);
   assert.match(failed.err, /did not end within 1 s; the merge was cancelled/);
-  process.env.PATH = PATH;
+  realGit();
   const integration = integrationDir(dir);
   assert.strictEqual(git(integration, 'status', '--porcelain'), '');
   assert.strictEqual(fs.existsSync(path.resolve(integration, git(integration, 'rev-parse', '--git-path', 'MERGE_HEAD'))), false);
@@ -798,6 +801,96 @@ test('a merge that does not end is cancelled', { skip: process.platform === 'win
   const delivered = await deliver('a');
   assert.strictEqual(delivered.code, 0, delivered.err);
   assert.strictEqual(git(dir, 'show', 'relaylead/integration:a.txt'), 'a');
+});
+
+// Killed in the middle of the state line commit, git leaves its index.lock behind: every later git
+// command in the integration worktree would be refused.
+test('a state line commit that does not end leaves no index.lock behind', { skip: process.platform === 'win32', timeout: 30000 }, async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir);
+  finishedTask(mission, 'a');
+  const realGit = hangingGit(t, ' commit ', 'touch "$("$GIT" rev-parse --git-path index.lock)"');
+
+  const delivered = await deliver('a');
+  assert.strictEqual(delivered.code, 0, delivered.err);
+  assert.match(delivered.err, /did not end within 1 s/);
+  realGit();
+  const integration = integrationDir(dir);
+  assert.strictEqual(fs.existsSync(path.resolve(integration, git(integration, 'rev-parse', '--git-path', 'index.lock'))), false);
+
+  const replayed = await deliver('a');
+  assert.strictEqual(replayed.code, 0, replayed.err);
+  assert.strictEqual(git(dir, 'log', '-1', '--format=%s', 'relaylead/integration'), 'chore(relaylead): deliver a');
+});
+
+test('a launch after a mission that ended with an uncommitted state line commits it', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir);
+  finishedTask(mission, 'a');
+  writeHook(dir, 'pre-commit', ['echo "no commit today" >&2', 'exit 1']);
+  const delivered = await deliver('a');
+  assert.strictEqual(delivered.code, 0, delivered.err);
+  assert.match(delivered.err, /state line commit/);
+
+  writeMission('two', dir);
+  assert.throws(() => localMerge.prepareMission(readMission('two')), (err) => {
+    assert.strictEqual(err.code, 'launch-state-line-hook-failed');
+    assert.match(err.vars.output, /no commit today/);
+    return true;
+  });
+
+  removeHook(dir, 'pre-commit');
+  localMerge.prepareMission(readMission('two'));
+  assert.strictEqual(git(dir, 'log', '-1', '--format=%s', 'relaylead/integration'), 'chore(relaylead): deliver a');
+  assert.deepStrictEqual(listTasks('two').map((task) => [task.id, task.state]), [['a', 'delivered']]);
+});
+
+test('a launch refuses an integration worktree with stray changes', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  preparedMission(dir);
+  // A new task to bring in: without the check, the launch would merge it.
+  fs.writeFileSync(path.join(dir, 'tasks', 'b.md'), TASK_B);
+  git(dir, 'add', 'tasks');
+  git(dir, 'commit', '-q', '-m', 'task b');
+  fs.writeFileSync(path.join(integrationDir(dir), 'stray.txt'), 'left here\n');
+  const head = git(dir, 'rev-parse', 'relaylead/integration');
+
+  writeMission('two', dir);
+  assert.throws(() => localMerge.prepareMission(readMission('two')), (err) => {
+    assert.strictEqual(err.code, 'integration-dirty');
+    assert.ok(err.message.includes(integrationDir(dir)), err.message);
+    assert.match(err.vars.files, /stray\.txt/);
+    return true;
+  });
+  assert.strictEqual(git(dir, 'rev-parse', 'relaylead/integration'), head);
+});
+
+test('a state line that cannot be written after the merge is a coded error, and the next deliver finishes', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir);
+  finishedTask(mission, 'a');
+  const { markDone } = tasksDirSource;
+  tasksDirSource.markDone = () => {
+    tasksDirSource.markDone = markDone;
+    throw new Error('disk full');
+  };
+  t.after(() => {
+    tasksDirSource.markDone = markDone;
+  });
+
+  const failed = await deliver('a');
+  assert.strictEqual(failed.code, 1);
+  assert.match(failed.err, /is merged/);
+  assert.match(failed.err, /disk full/);
+
+  const delivered = await deliver('a');
+  assert.strictEqual(delivered.code, 0, delivered.err);
+  const merges = git(dir, 'log', '--merges', '--format=%s', 'relaylead/integration').split('\n');
+  assert.strictEqual(merges.filter((subject) => subject.includes('relaylead/demo/a')).length, 1, merges.join('\n'));
 });
 
 // A background gc or maintenance started by git may keep the output pipes open, and holds the
