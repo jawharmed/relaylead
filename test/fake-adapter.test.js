@@ -57,6 +57,7 @@ test('fake stop ends the session process and kills nothing by its pid', async (t
   await fake.stop({ ...session, pid: unrelated.pid });
   await waitFor(() => !isAlive(session.pid), 30000, 'the session process to end');
   assert.ok(isAlive(unrelated.pid));
+  assert.strictEqual(fs.existsSync(session.stopFile), false); // removed by the agent as it ended
 });
 
 test('an ended session is listed done without a pid, even when its pid now names another process', async (t) => {
@@ -69,6 +70,9 @@ test('an ended session is listed done without a pid, even when its pid now names
   recordSession('demo', { ...session, pid: unrelated.pid });
 
   assert.deepStrictEqual((await fake.list('demo')).map((s) => [s.state, s.pid]), [['done', null]]);
+  // A stop after the end leaves no stop file behind.
+  await fake.stop(session);
+  assert.strictEqual(fs.existsSync(session.stopFile), false);
 });
 
 test('fake stop reaches the session from another RELAYLEAD_HOME', async (t) => {

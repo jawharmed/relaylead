@@ -10,8 +10,8 @@ const { withWindowsRetry } = require('../../core/store');
 const AGENT = path.join(__dirname, 'agent.js');
 
 // The two files of a session's end (adapters/fake/watch-stop.js). The stop file asks the agent to
-// end; it is outside the mission folder, which a failed launch removes while its lead may still run.
-// The ended file says the agent has ended; it stays in
+// end; it is outside the mission folder, which a failed launch removes while its lead may still run,
+// and it is removed once the session has ended. The ended file says the agent has ended; it stays in
 // the mission folder, and goes with it. Both paths are chosen at launch and kept in the session
 // record (fields the core ignores), so a stop or a list made under another RELAYLEAD_HOME still finds
 // them; a session recorded without them (by a test) gets the paths of the current home.
@@ -79,6 +79,10 @@ async function stop(session) {
   const file = stopFile(session);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   withWindowsRetry(() => fs.writeFileSync(file, ''));
+  // Ended already, or just now (watch-stop.js), or without a process at all (its mission folder gone,
+  // or a session made by a test): no agent will remove the file, so it is removed here. A pid taken
+  // by another process only leaves the file behind.
+  if (fs.existsSync(endedFile(session)) || !isAlive(session.pid)) withWindowsRetry(() => fs.rmSync(file, { force: true }));
 }
 
 // Nothing to show: the call is logged so tests can check it happened.

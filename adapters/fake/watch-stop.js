@@ -9,12 +9,19 @@
 const fs = require('node:fs');
 const { isMainThread, workerData } = require('node:worker_threads');
 
-// Writes the ended file. Never throws: it also runs while the process exits.
-function markEnded({ endedFile }) {
+// Writes the ended file, then removes the stop file. In this order: a stop that writes its file
+// after the removal finds the ended file and removes its own file (adapters/fake/index.js), so no
+// stop file is left behind. Never throws: it also runs while the process exits.
+function markEnded({ stopFile, endedFile }) {
   try {
     fs.writeFileSync(endedFile, '');
   } catch {
     // The mission folder is gone: nobody will list the session.
+  }
+  try {
+    fs.rmSync(stopFile, { force: true });
+  } catch {
+    // Denied for a moment on Windows: the file only stays behind.
   }
 }
 
