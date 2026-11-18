@@ -400,6 +400,48 @@ test('the helper stops a lead that is done but still has a process', async (t) =
   await waitFor(() => !isAlive(lead.pid), 30000, 'the lead to be stopped');
 });
 
+// The list answers these rows in turn, then the last one again. Returns the reads made when the
+// lead was stopped, so a test sees when the helper gave up waiting.
+function listInTurn(t, lead, rows) {
+  let reads = 0;
+  const readsAtStop = [];
+  stub(t, 'list', () => async () => [{ ...lead, ...rows[Math.min(reads++, rows.length - 1)] }]);
+  stub(t, 'stop', (original) => async (session) => {
+    readsAtStop.push(reads);
+    return original(session);
+  });
+  return readsAtStop;
+}
+
+test('the helper stops a lead claude leaves working but idle after two idle reads', async (t) => {
+  const lead = await launchedLead(t);
+  const readsAtStop = listInTurn(t, lead, [{ state: 'working', idle: true }]);
+  process.env.RELAYLEAD_REAP_MAX_MS = '30000';
+  t.after(() => {
+    delete process.env.RELAYLEAD_REAP_MAX_MS;
+  });
+
+  await reapLead('demo');
+
+  assert.deepStrictEqual(readsAtStop, [2]);
+  await waitFor(() => !isAlive(lead.pid), 30000, 'the lead to be stopped');
+});
+
+test('the helper does not stop a lead on one idle read followed by a busy one', async (t) => {
+  const lead = await launchedLead(t);
+  const idle = { state: 'working', idle: true };
+  const busy = { state: 'working', idle: false };
+  const readsAtStop = listInTurn(t, lead, [idle, busy, idle, idle]);
+  process.env.RELAYLEAD_REAP_MAX_MS = '30000';
+  t.after(() => {
+    delete process.env.RELAYLEAD_REAP_MAX_MS;
+  });
+
+  await reapLead('demo');
+
+  assert.deepStrictEqual(readsAtStop, [4]);
+});
+
 test('the helper keeps polling when the list fails, then stops the lead at the deadline', async (t) => {
   const lead = await launchedLead(t);
   stub(t, 'list', () => async () => {
