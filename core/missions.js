@@ -436,12 +436,12 @@ async function reapLead(name) {
 // The helper's last act (`relaylead _reap`), however reapLead ended: reaper-ended.json, with its pid
 // and the time. Written by the helper alone; reaper.json, written by `state set done`, only says it
 // was started. Never into a mission folder removed meanwhile: a folder written again would keep the
-// name taken. Never throws: the helper is exiting.
+// name taken. Never throws: the helper is exiting, so every error is ignored, not only a missing folder.
 function markReaperEnded(name) {
   try {
     writeJson(missionFile(name, 'reaper-ended.json'), { pid: process.pid, endedAt: now() }, { createDir: false });
   } catch {
-    // The mission folder is gone: nobody will read it.
+    // The mission folder is gone (nobody will read the file), or the write failed: the helper ends anyway.
   }
 }
 
