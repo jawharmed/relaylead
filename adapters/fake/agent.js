@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { Worker } = require('node:worker_threads');
+const { markEnded } = require('./watch-stop');
 const { missionDir, slug } = require('../../core/paths');
 const { readJson } = require('../../core/store');
 const { DEFAULTS } = require('../../core/config');
@@ -149,21 +150,14 @@ function crew() {
   }, 1000);
 }
 
-// The adapter's stop writes RELAYLEAD_FAKE_STOP; the agent then ends its own process, as a signal
-// would. The file is watched from a thread of its own: the lead's thread waits on each command
-// (`relaylead wait` takes seconds). Its own pid cannot belong to another process.
-const WATCH_STOP = `
-const fs = require('node:fs');
-const { workerData } = require('node:worker_threads');
-setInterval(() => {
-  if (fs.existsSync(workerData)) process.kill(process.pid);
-}, 50);
-`;
-
+// The adapter's stop writes RELAYLEAD_FAKE_STOP: a thread of its own (watch-stop.js) then ends the
+// process. However the agent ends, it writes RELAYLEAD_FAKE_ENDED, which the adapter's list reads.
 function watchStop() {
-  if (!process.env.RELAYLEAD_FAKE_STOP) return;
+  const files = { stopFile: process.env.RELAYLEAD_FAKE_STOP, endedFile: process.env.RELAYLEAD_FAKE_ENDED };
+  if (!files.stopFile || !files.endedFile) return;
+  process.on('exit', () => markEnded(files));
   // unref: a crew member still ends by itself once its work is done.
-  new Worker(WATCH_STOP, { eval: true, workerData: process.env.RELAYLEAD_FAKE_STOP }).unref();
+  new Worker(path.join(__dirname, 'watch-stop.js'), { workerData: files }).unref();
 }
 
 // Any failure ends the agent, with its reason (and git's or relaylead's stderr) in the log.

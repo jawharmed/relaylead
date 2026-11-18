@@ -10,8 +10,8 @@ const { tmpDir, waitFor } = require('../fixtures/helpers');
 
 const fake = getAdapter('fake');
 
-// A crew session of mission demo, in a fresh home, without a task: it runs until stopped.
-async function launchSession(t) {
+// A crew session of mission demo, in a fresh home. Without a task in `env`, it runs until stopped.
+async function launchSession(t, env = {}) {
   process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
   const session = await fake.launch({
     mission: 'demo',
@@ -20,7 +20,7 @@ async function launchSession(t) {
     profile: null,
     prompt: '',
     cwd: tmpDir('relaylead-project-'),
-    env: {},
+    env,
     permissionMode: 'allowlist',
   });
   t.after(() => fake.stop(session));
@@ -57,4 +57,25 @@ test('fake stop ends the session process and kills nothing by its pid', async (t
   await fake.stop({ ...session, pid: unrelated.pid });
   await waitFor(() => !isAlive(session.pid), 30000, 'the session process to end');
   assert.ok(isAlive(unrelated.pid));
+});
+
+test('an ended session is listed done without a pid, even when its pid now names another process', async (t) => {
+  // With a task but no mission.json, the crew member fails after its second of work, and ends.
+  const session = await launchSession(t, { RELAYLEAD_TASK: 'a' });
+  recordSession('demo', session);
+  await waitFor(() => !isAlive(session.pid), 30000, 'the session process to end');
+  const unrelated = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  t.after(() => unrelated.kill());
+  recordSession('demo', { ...session, pid: unrelated.pid });
+
+  assert.deepStrictEqual((await fake.list('demo')).map((s) => [s.state, s.pid]), [['done', null]]);
+});
+
+test('fake stop reaches the session from another RELAYLEAD_HOME', async (t) => {
+  const session = await launchSession(t);
+  recordSession('demo', session);
+  process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
+
+  await fake.stop(session);
+  await waitFor(() => !isAlive(session.pid), 30000, 'the session process to end');
 });
