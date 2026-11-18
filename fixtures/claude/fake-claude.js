@@ -1,7 +1,9 @@
 // A fake `claude` CLI for the adapter tests. It replays the outputs recorded from Claude Code 2.1.325
 // (launch-*.txt and stop-*.txt next to this file) and keeps its sessions in FAKE_CLAUDE_STATE/sessions.json,
 // so `agents --json --all`, `stop`, `attach`, `--bg` and `--bg --resume` agree with each other.
-// Each session gets a real process (a small sleeper), so `stop` really ends something.
+// Each session gets a real process (a small sleeper), so `stop` really ends something: it writes the
+// sleeper's stop file, and the sleeper ends by itself. Nothing is killed by pid: on Windows, the pid
+// of a process that has ended soon belongs to another one, maybe of another test file.
 //
 // FAKE_CLAUDE_SCENARIO: a comma-separated list of these (default: normal)
 //   normal                  launches start working; a resume wakes the session if its process has ended
@@ -19,8 +21,8 @@
 //   hang-agents             `agents` never answers
 //   noisy                   every command also writes a warning on stderr
 //   agents-fail-after-wake  `agents` fails once a session has been woken
-// Every call is appended to FAKE_CLAUDE_STATE/calls.log (one JSON array of arguments per line), and
-// every process started to FAKE_CLAUDE_STATE/pids.log, so the tests can kill them all.
+// Every call is appended to FAKE_CLAUDE_STATE/calls.log (one JSON array of arguments per line). A test
+// ends every sleeper it started by writing FAKE_CLAUDE_STATE/stop-all.
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -31,10 +33,22 @@ const STATE_DIR = process.env.FAKE_CLAUDE_STATE;
 const SCENARIO = new Set((process.env.FAKE_CLAUDE_SCENARIO || 'normal').split(','));
 const SESSIONS_FILE = path.join(STATE_DIR, 'sessions.json');
 const WOKE_MARKER = path.join(STATE_DIR, 'woke');
+const STOP_ALL = path.join(STATE_DIR, 'stop-all');
 
-// The sleeper ends by itself after two minutes, so a crashed test leaves nothing behind for long.
-// On a stop it lingers 300 ms, like a real session finishing its last write (no signal handlers on Windows).
-const SLEEPER = "process.on('SIGTERM', () => setTimeout(() => process.exit(0), 300)); setTimeout(() => {}, 120000);";
+// Usage: node -e SLEEPER <own stop file> <stop-all file>. Once one of them exists (read every 50 ms),
+// it lingers 300 ms, like a real session finishing its last write, and ends. It also ends by itself
+// after two minutes, so a crashed test leaves nothing behind for long.
+const SLEEPER = `
+const fs = require('node:fs');
+const stopFiles = process.argv.slice(1);
+const lifetime = setTimeout(() => {}, 120000);
+const watch = setInterval(() => {
+  if (!stopFiles.some((file) => fs.existsSync(file))) return;
+  clearInterval(watch);
+  clearTimeout(lifetime);
+  setTimeout(() => {}, 300);
+}, 50);
+`;
 
 // Through core/store: the write is atomic and both sides retry when Windows denies the file for a moment.
 function readSessions() {
@@ -63,18 +77,28 @@ function isAlive(pid) {
   }
 }
 
+function stopFile(sleeper) {
+  return path.join(STATE_DIR, `stop-${sleeper}`);
+}
+
+// Returns the fields of a row for its process: `pid`, and `sleeper`, which names its stop file (not a
+// field of the real CLI). A new name for each sleeper: a woken session keeps its id, not its stop file.
 function startSleeper() {
-  const child = spawn(process.execPath, ['-e', SLEEPER], { detached: true, stdio: 'ignore', windowsHide: true });
+  const sleeper = crypto.randomBytes(4).toString('hex');
+  const child = spawn(process.execPath, ['-e', SLEEPER, stopFile(sleeper), STOP_ALL], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+  });
   child.unref();
-  appendLog('pids.log', `${child.pid}\n`);
-  return child.pid;
+  return { pid: child.pid, sleeper };
 }
 
 // Same fields as a recorded row of `claude agents --json --all`.
 function newSession(name, state, status) {
   const id = crypto.randomBytes(4).toString('hex');
   const session = {
-    pid: startSleeper(),
+    ...startSleeper(),
     id,
     cwd: process.cwd(),
     kind: 'background',
@@ -128,7 +152,7 @@ function resume(args) {
     process.stdout.write(copyOutput(copy, original ? original.id : 'unknown0'));
     return 0;
   }
-  Object.assign(original, { pid: startSleeper(), status: 'busy', state: 'working' });
+  Object.assign(original, { ...startSleeper(), status: 'busy', state: 'working' });
   writeSessions(sessions);
   writeJson(WOKE_MARKER, original.id);
   process.stdout.write(recorded('launch-wake.txt').replace('0f0b2950', original.id));
@@ -148,8 +172,9 @@ function stop(shortId) {
     process.stderr.write('Error: the background service did not answer\n');
     return 1;
   }
-  if (!SCENARIO.has('stuck-stop') && isAlive(session.pid)) process.kill(session.pid);
+  if (!SCENARIO.has('stuck-stop') && session.sleeper) fs.writeFileSync(stopFile(session.sleeper), '');
   delete session.pid;
+  delete session.sleeper;
   delete session.status;
   session.state = 'stopped';
   writeSessions(sessions);
