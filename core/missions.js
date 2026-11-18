@@ -13,7 +13,7 @@ const { writeJournal } = require('./guard');
 const { getAdapter } = require('../adapters');
 const { getDelivery } = require('../deliveries');
 const { sleep } = require('./timing');
-const { withMissionLock, EMPTY_LOCK_STALE_MS } = require('./mission-lock');
+const { withMissionLock, takeOverStaleLock, EMPTY_LOCK_STALE_MS } = require('./mission-lock');
 
 // States the lead may declare. 'stopped' is written by the core only.
 const STATES = ['starting', 'working', 'waiting', 'done'];
@@ -72,8 +72,29 @@ function ageOf(file) {
   }
 }
 
+// The mission that holds the folder lock, '?' while another launch is writing it; null once the
+// lock is gone or stale.
+function lockHolder(file, realDir) {
+  let lock;
+  try {
+    lock = readJson(file, null);
+  } catch {
+    lock = undefined;
+  }
+  if (lock === null) return null;
+  if (!lock || typeof lock.mission !== 'string' || !/^[a-z0-9-]+$/.test(lock.mission)) {
+    // Empty or partial file: another launch has just created it and is writing it, unless it is old.
+    return ageOf(file) <= EMPTY_LOCK_STALE_MS ? '?' : null;
+  }
+  return isStale(lock, realDir) ? null : lock.mission;
+}
+
 // Creating the file with 'wx' fails if it exists: of two launches at the same time, only one wins.
-function takeLock(realDir, mission) {
+// On Windows, a lock file being deleted cannot be created again for a moment (EPERM): it counts as
+// still there. A stale lock is deleted under the takeover guard of mission-lock.js, so two launches
+// that see the same stale lock never both delete it: the second one would delete the new lock of
+// the first one.
+async function takeLock(realDir, mission) {
   const file = lockFile(realDir);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -83,22 +104,11 @@ function takeLock(realDir, mission) {
       fs.closeSync(fd);
       return;
     } catch (err) {
-      if (err.code !== 'EEXIST') throw err;
+      if (err.code !== 'EEXIST' && !(process.platform === 'win32' && err.code === 'EPERM')) throw err;
     }
-    let lock;
-    try {
-      lock = readJson(file, null);
-    } catch {
-      lock = undefined;
-    }
-    if (lock === null) continue; // released in the meantime: try again
-    if (!lock || typeof lock.mission !== 'string' || !/^[a-z0-9-]+$/.test(lock.mission)) {
-      // Empty or partial file: another launch has just created it and is writing it, unless it is old.
-      if (ageOf(file) <= EMPTY_LOCK_STALE_MS) throw busyError(realDir, '?');
-    } else if (!isStale(lock, realDir)) {
-      throw busyError(realDir, lock.mission);
-    }
-    fs.rmSync(file, { force: true });
+    const holder = lockHolder(file, realDir);
+    if (holder) throw busyError(realDir, holder);
+    await takeOverStaleLock(file, () => !lockHolder(file, realDir));
   }
   throw busyError(realDir, '?');
 }
@@ -150,7 +160,7 @@ async function createMission({ name, dir, request, team, priority, agent, params
     config,
   };
 
-  takeLock(realDir, mission);
+  await takeLock(realDir, mission);
   let reserved = false;
   let lead = null;
   try {

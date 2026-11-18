@@ -85,15 +85,16 @@ async function removeQuietly(file) {
 
 // Only the holder of the .takeover file may delete a stale lock, after checking again that it is
 // stale. Otherwise two takers could both delete it, the second one deleting the lock the first
-// one has just created.
-async function takeOverStaleLock(file) {
+// one has just created. `isStale` tells whether the lock is stale (the folder lock of missions.js
+// has its own rule). Returns true once the stale lock is deleted.
+async function takeOverStaleLock(file, isStale = isStaleLock) {
   const guard = file + '.takeover';
   if (!tryCreateLock(guard, 'takeover')) {
     if (isStaleLock(guard)) await removeQuietly(guard);
     return false;
   }
   try {
-    return isStaleLock(file) && (await removeQuietly(file));
+    return isStale(file) && (await removeQuietly(file));
   } finally {
     await removeQuietly(guard);
   }
@@ -134,4 +135,4 @@ async function withMissionLock(name, command, action) {
   }
 }
 
-module.exports = { withMissionLock, EMPTY_LOCK_STALE_MS };
+module.exports = { withMissionLock, takeOverStaleLock, EMPTY_LOCK_STALE_MS };

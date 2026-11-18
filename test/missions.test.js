@@ -99,6 +99,38 @@ test('a stale lock is taken over', async (t) => {
   assert.strictEqual(fs.existsSync(lock), false);
 });
 
+test('a stale lock being taken over by another launch is left to it', async (t) => {
+  freshHome(t);
+  const dir = tmpDir('relaylead-project-');
+  const deadPid = spawnSync(process.execPath, ['-e', '']).pid;
+  const lock = lockFile(fs.realpathSync.native(dir));
+  writeJson(lock, { pid: deadPid, mission: 'crashed' });
+  // Another launch holds the takeover guard: it may have replaced the lock with its own by now.
+  writeJson(lock + '.takeover', { pid: process.pid, command: 'takeover', since: new Date().toISOString() });
+
+  const result = await cli(['launch', '--agent', 'fake', '--name', 'second', '--dir', dir]);
+
+  assert.strictEqual(result.code, 1);
+  assert.match(result.err, /busy/);
+  assert.strictEqual(readJson(lock).mission, 'crashed');
+  assert.strictEqual(fs.existsSync(lock + '.takeover'), true);
+});
+
+test('a takeover guard left by a dead launch does not block a later takeover', async (t) => {
+  freshHome(t);
+  const dir = tmpDir('relaylead-project-');
+  const deadPid = spawnSync(process.execPath, ['-e', '']).pid;
+  const lock = lockFile(fs.realpathSync.native(dir));
+  writeJson(lock, { pid: deadPid, mission: 'crashed' });
+  writeJson(lock + '.takeover', { pid: deadPid, command: 'takeover', since: new Date().toISOString() });
+
+  const result = await cli(['launch', '--agent', 'fake', '--name', 'after-crash', '--dir', dir]);
+
+  assert.strictEqual(result.code, 0, result.err);
+  assert.strictEqual(readJson(lock).mission, 'after-crash');
+  assert.strictEqual(fs.existsSync(lock + '.takeover'), false);
+});
+
 test('name defaults to the folder slug', async (t) => {
   freshHome(t);
   const dir = path.join(tmpDir('relaylead-project-'), 'My Project');
