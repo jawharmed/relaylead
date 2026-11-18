@@ -8,7 +8,7 @@ const { listSessions, isAlive } = require('../../core/sessions');
 const { readJson } = require('../../core/store');
 const { missionDir } = require('../../core/paths');
 const fake = require('../../adapters/fake');
-const { tmpDir, waitFor, userEnv } = require('../../fixtures/helpers');
+const { tmpDir, waitFor, sessionEnded, userEnv } = require('../../fixtures/helpers');
 const { git, gitRepo } = require('../../fixtures/git');
 const { missionReport } = require('../../fixtures/missions');
 
@@ -137,7 +137,7 @@ test('fake mission delivers two tasks with one answered question', { timeout: 3 
   // that stops the lead after `state set done`.
   const sessions = listSessions(mission);
   assert.strictEqual(sessions.length, 3, report());
-  await waitFor(() => sessions.every((session) => !isAlive(session.pid)), 15000, 'every session to end', report);
+  await waitFor(() => sessions.every(sessionEnded), 15000, 'every session to end', report);
   // `state set done` writes the state first, then starts the helper and records its pid: the
   // mission may be done before reaper.json exists.
   const reaperFile = path.join(missionDir(mission), 'reaper.json');

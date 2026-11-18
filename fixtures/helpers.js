@@ -31,6 +31,13 @@ async function waitFor(check, ms, what, explain) {
   }
 }
 
+// Whether a session of the fake agent has ended, judged on the file its agent writes as it ends
+// (adapters/fake/watch-stop.js), never on its pid: on Windows, the pid of an ended process soon names
+// another one, maybe of another test file, and the session would look alive.
+function sessionEnded(session) {
+  return fs.existsSync(session.endedFile);
+}
+
 // The environment of a person in a terminal: the tests may themselves run inside a mission session,
 // whose RELAYLEAD_MISSION and RELAYLEAD_TASK would make the CLI refuse the user's commands.
 function userEnv() {
@@ -40,4 +47,4 @@ function userEnv() {
   return env;
 }
 
-module.exports = { tmpDir, makeIo, waitFor, userEnv };
+module.exports = { tmpDir, makeIo, waitFor, sessionEnded, userEnv };

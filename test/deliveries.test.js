@@ -13,7 +13,7 @@ const fake = require('../adapters/fake');
 const localMerge = require('../deliveries/local-merge');
 const files = require('../deliveries/files');
 const tasksDirSource = require('../sources/tasks-dir');
-const { tmpDir, makeIo, waitFor } = require('../fixtures/helpers');
+const { tmpDir, makeIo, waitFor, sessionEnded } = require('../fixtures/helpers');
 const { writeMission, missionReport } = require('../fixtures/missions');
 const { git, gitRepo, recordingGit, lingeringGit } = require('../fixtures/git');
 const { needsPipes } = require('../core/run-file');
@@ -663,7 +663,7 @@ test('the fake lead logs a delivery that keeps failing, then stops', async (t) =
   fs.writeFileSync(path.join(integrationDir(dir), 'a.txt'), 'in the way\n');
 
   const lead = listSessions('demo').find((session) => session.role === 'lead');
-  await waitFor(() => !isAlive(lead.pid), 45000, 'the lead to stop', () => missionReport('demo'));
+  await waitFor(() => sessionEnded(lead), 45000, 'the lead to stop', () => missionReport('demo'));
 
   const log = fs.readFileSync(path.join(missionDir('demo'), `fake-lead-${lead.shortId}.log`), 'utf8');
   assert.strictEqual(log.match(/task deliver a failed/g).length, 3, log);
@@ -1045,7 +1045,7 @@ test('stop keeps the worktree of a crew session whose stop failed, and cleans th
   assert.strictEqual(stopped.code, 1);
   assert.match(stopped.err, /stop failed/);
   assert.match(stopped.err, /worktrees[\\/]a\b/);
-  assert.strictEqual(isAlive(second.pid), false);
+  assert.strictEqual(sessionEnded(second), true);
   assert.strictEqual(fs.existsSync(taskWorktree(dir, 'a')), true);
   assert.strictEqual(fs.existsSync(taskWorktree(dir, 'b')), false);
 });
@@ -1070,7 +1070,7 @@ test('a session still alive after the wait keeps the folder', async (t) => {
   assert.strictEqual(stopped.code, 1);
   assert.match(stopped.err, /still running/);
   assert.match(stopped.err, /relaylead stop: .*worktrees[\\/]a\b/);
-  assert.ok(isAlive(crew.pid));
+  assert.strictEqual(sessionEnded(crew), false);
   assert.strictEqual(readJson(path.join(missionDir('demo'), 'state.json')).stopping, true);
   assert.strictEqual(fs.existsSync(taskWorktree(dir, 'a')), true);
   const refused = await cli(['launch', '--agent', 'fake', '--name', 'two', '--dir', dir]);

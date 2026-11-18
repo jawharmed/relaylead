@@ -12,11 +12,11 @@ const { sleep } = require('../core/timing');
 const { askQuestion, answerQuestion } = require('../core/questions');
 const { writeJson } = require('../core/store');
 const { loadProfile } = require('../core/profiles');
-const { listSessions, isAlive } = require('../core/sessions');
+const { listSessions } = require('../core/sessions');
 const { readJson } = require('../core/store');
 const { missionDir } = require('../core/paths');
 const fake = require('../adapters/fake');
-const { makeIo, waitFor } = require('../fixtures/helpers');
+const { makeIo, waitFor, sessionEnded } = require('../fixtures/helpers');
 const { setupProject, writeMission, missionReport } = require('../fixtures/missions');
 
 // Counts the launches and keeps their specs, without changing what they do.
@@ -229,7 +229,7 @@ test('a stop during a launch stops the crew member', async (t) => {
   await stopMission('demo'); // the crew member is not in the registry yet
 
   await refused;
-  await waitFor(() => !isAlive(crew.pid), 30000, 'the crew member to be stopped');
+  await waitFor(() => sessionEnded(crew), 30000, 'the crew member to be stopped');
   assert.strictEqual(fs.existsSync(path.join(missionDir('demo'), 'tasks', 'a.json')), false);
 });
 
@@ -543,7 +543,7 @@ function tasksPath(...parts) {
 async function stopCrew(record) {
   const crew = listSessions('demo').find((session) => session.shortId === record.session);
   await fake.stop(crew);
-  await waitFor(() => !isAlive(crew.pid), 30000, 'the crew process to end');
+  await waitFor(() => sessionEnded(crew), 30000, 'the crew process to end');
 }
 
 // Task a started, its crew member stopped, then reported failed with `summary`.

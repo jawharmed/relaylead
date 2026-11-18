@@ -10,7 +10,7 @@ const { listSessions, recordSession, isAlive } = require('../core/sessions');
 const { readJson, writeJson } = require('../core/store');
 const { missionDir } = require('../core/paths');
 const fake = require('../adapters/fake');
-const { tmpDir, makeIo, waitFor, userEnv } = require('../fixtures/helpers');
+const { tmpDir, makeIo, waitFor, sessionEnded, userEnv } = require('../fixtures/helpers');
 const { freshHome, writeMission } = require('../fixtures/missions');
 
 const BIN = path.join(__dirname, '..', 'bin', 'relaylead.js');
@@ -160,12 +160,12 @@ test('stop stops every session of the mission', async (t) => {
     permissionMode: 'allowlist',
   });
   recordSession('demo', crew);
-  const pids = listSessions('demo').map((s) => s.pid);
-  assert.strictEqual(pids.length, 2);
+  const sessions = listSessions('demo');
+  assert.strictEqual(sessions.length, 2);
 
   const stopped = await cli(['stop', 'demo']);
   assert.strictEqual(stopped.code, 0, stopped.err);
-  await waitFor(() => pids.every((pid) => !isAlive(pid)), 30000, 'the sessions to end');
+  await waitFor(() => sessions.every(sessionEnded), 30000, 'the sessions to end');
 
   assert.strictEqual((await cli(['state', 'get', '--mission', 'demo'])).out.trim(), 'stopped');
   assert.strictEqual(fs.existsSync(lockFile(fs.realpathSync.native(dir))), false);
@@ -209,7 +209,9 @@ test('a failure after the lead started stops the lead and leaves nothing behind'
 
   const result = await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir]);
   assert.strictEqual(result.code, 1);
-  await waitFor(() => !isAlive(lead.pid), 30000, 'the lead to be stopped');
+  // Its ended file went with the mission folder: the agent removes its stop file (outside that
+  // folder) as it ends.
+  await waitFor(() => !fs.existsSync(lead.stopFile), 30000, 'the lead to be stopped');
   assert.strictEqual(fs.existsSync(path.join(missionDir('demo'), 'mission.json')), false);
   assert.strictEqual(fs.existsSync(lockFile(fs.realpathSync.native(dir))), false);
 });
@@ -312,7 +314,7 @@ test('done stops the remaining crew, then a helper stops the lead', async (t) =>
   });
   recordSession('demo', crew);
   const lead = readJson(path.join(missionDir('demo'), 'lead.json'));
-  const [leadPid] = listSessions('demo').filter((s) => s.shortId === lead.shortId).map((s) => s.pid);
+  const leadSession = listSessions('demo').find((s) => s.shortId === lead.shortId);
   const originalStop = fake.stop;
   const stopped = [];
   fake.stop = async (session) => {
@@ -330,8 +332,8 @@ test('done stops the remaining crew, then a helper stops the lead', async (t) =>
 
   assert.strictEqual(done.code, 0, done.err);
   assert.deepStrictEqual(stopped, [crew.shortId]);
-  await waitFor(() => !isAlive(crew.pid), 30000, 'the crew member to end');
-  await waitFor(() => !isAlive(leadPid), 30000, 'the helper to stop the lead');
+  await waitFor(() => sessionEnded(crew), 30000, 'the crew member to end');
+  await waitFor(() => sessionEnded(leadSession), 30000, 'the helper to stop the lead');
 });
 
 test('the helper exits at once when the lead is no longer working', { timeout: 20000 }, async (t) => {
@@ -341,7 +343,7 @@ test('the helper exits at once when the lead is no longer working', { timeout: 2
   await waitUntilWorking('demo');
   const [lead] = listSessions('demo');
   await fake.stop(lead); // like a fake lead that exits after `state set done`
-  await waitFor(() => !isAlive(lead.pid), 30000, 'the lead to end');
+  await waitFor(() => sessionEnded(lead), 30000, 'the lead to end');
   assert.strictEqual((await cli(['state', 'set', 'done', '--mission', 'demo'])).code, 0);
 
   const reaped = await cliProcess(['_reap', 'demo']);
@@ -356,7 +358,7 @@ test('done records the pid of the helper, which ends once the lead has ended', {
   await waitUntilWorking('demo');
   const [lead] = listSessions('demo');
   await fake.stop(lead);
-  await waitFor(() => !isAlive(lead.pid), 30000, 'the lead to end');
+  await waitFor(() => sessionEnded(lead), 30000, 'the lead to end');
 
   assert.strictEqual((await cli(['state', 'set', 'done', '--mission', 'demo'])).code, 0);
 
@@ -409,7 +411,7 @@ test('a failing crew stop does not keep the others running, and the folder stays
 
   assert.strictEqual(done.code, 1);
   assert.match(done.err, /stop failed/);
-  await waitFor(() => !isAlive(second.pid), 30000, 'the second crew member to end');
+  await waitFor(() => sessionEnded(second), 30000, 'the second crew member to end');
   assert.deepStrictEqual(lockSeen, [true, true]);
   assert.strictEqual(fs.existsSync(lock), true);
   assert.strictEqual((await cli(['state', 'get', '--mission', 'demo'])).out.trim(), 'done');
@@ -430,7 +432,7 @@ test('the helper stops a lead that is done but still has a process', async (t) =
 
   await reapLead('demo');
 
-  await waitFor(() => !isAlive(lead.pid), 30000, 'the lead to be stopped');
+  await waitFor(() => sessionEnded(lead), 30000, 'the lead to be stopped');
 });
 
 // The list answers these rows in turn, then the last one again. Returns the reads made when the
@@ -457,7 +459,7 @@ test('the helper stops a lead claude leaves working but idle after two idle read
   await reapLead('demo');
 
   assert.deepStrictEqual(readsAtStop, [2]);
-  await waitFor(() => !isAlive(lead.pid), 30000, 'the lead to be stopped');
+  await waitFor(() => sessionEnded(lead), 30000, 'the lead to be stopped');
 });
 
 test('the helper does not stop a lead on one idle read followed by a busy one', async (t) => {
@@ -502,7 +504,7 @@ test('the helper keeps polling when the list fails, then stops the lead at the d
 
   await reapLead('demo');
 
-  await waitFor(() => !isAlive(lead.pid), 30000, 'the lead to be stopped');
+  await waitFor(() => sessionEnded(lead), 30000, 'the lead to be stopped');
 });
 
 test('the helper writes to the journal when it cannot stop the lead', async (t) => {
@@ -570,7 +572,7 @@ test('done stops the crew sessions of the registry when the adapter list fails',
   assert.strictEqual(done.code, 0, done.err);
   assert.deepStrictEqual(stopped, [crew.shortId]);
   assert.ok(!stopped.includes(lead.shortId));
-  await waitFor(() => !isAlive(crew.pid), 30000, 'the crew member to end');
+  await waitFor(() => sessionEnded(crew), 30000, 'the crew member to end');
 });
 
 test('once done, the lead can no longer declare another state', async (t) => {
@@ -599,7 +601,7 @@ test('the lock follows the mission state, not the lead pid', async (t) => {
   await waitUntilWorking('one');
   const [lead] = listSessions('one');
   await fake.stop(lead); // the lead's process is gone, as when the agent's daemon restarts it elsewhere
-  await waitFor(() => !isAlive(lead.pid), 30000, 'the lead to end');
+  await waitFor(() => sessionEnded(lead), 30000, 'the lead to end');
 
   const refused = await cli(['launch', '--agent', 'fake', '--name', 'two', '--dir', dir]);
   assert.strictEqual(refused.code, 1);
@@ -667,7 +669,7 @@ test('a failed crew stop at done keeps the folder', async (t) => {
 
   const again = await cli(['state', 'set', 'done', '--mission', 'demo']);
   assert.strictEqual(again.code, 0, again.err);
-  await waitFor(() => !isAlive(crew.pid), 30000, 'the crew member to end');
+  await waitFor(() => sessionEnded(crew), 30000, 'the crew member to end');
   assert.strictEqual(stateRecord('demo').stopping, undefined);
   const second = await cli(['launch', '--agent', 'fake', '--name', 'two', '--dir', dir]);
   assert.strictEqual(second.code, 0, second.err);
@@ -888,7 +890,9 @@ test('remove waits for the end of state set done', async (t) => {
   assert.strictEqual(removed.code, 0, removed.err);
   assert.strictEqual((await done).code, 0);
   assert.deepStrictEqual(ended, ['done', 'remove']);
-  await waitFor(() => !isAlive(crew.pid), 30000, 'the crew member to end');
+  // Its ended file went with the mission folder: the agent removes its stop file (outside that
+  // folder) as it ends.
+  await waitFor(() => !fs.existsSync(crew.stopFile), 30000, 'the crew member to end');
   assert.strictEqual(fs.existsSync(missionDir('demo')), false);
 });
 
