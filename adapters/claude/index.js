@@ -122,14 +122,21 @@ function hasStarted(row) {
 
 // The row of a session once it has begun its first turn, or null after the timeout. claude may list
 // a working session before its pid (seen for a lead): within the same timeout, the row is read again
-// until it has one, and is returned without one at the end.
+// until it has one, and is returned without one at the end or when a read fails: it has started.
+// A done or failed row needs no pid: a failed one has no process.
 async function waitUntilStarted(shortId) {
   const deadline = Date.now() + startTimeoutMs();
   let started = null;
   for (;;) {
-    const row = await findRow(shortId);
+    let row;
+    try {
+      row = await findRow(shortId);
+    } catch (err) {
+      if (started) return started;
+      throw err;
+    }
     if (row && hasStarted(row)) {
-      if (row.pid || row.state !== 'working') return row;
+      if (row.pid || ['done', 'failed'].includes(row.state)) return row;
       started = row;
     }
     if (Date.now() >= deadline) return started;

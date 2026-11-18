@@ -12,6 +12,7 @@
 //   unknown-output          a launch answers something without an id
 //   never-started           a launch backgrounds a session left waiting for a prompt (recorded row)
 //   unknown-state           a launch backgrounds a session in a state this version does not know
+//   unknown-state-busy      the same, but running a turn
 //   done-at-launch          a launch backgrounds a session that is already done (its process lives on)
 //   working-idle            a launch backgrounds a session left working whose turn has ended (row seen after done)
 //   pid-late                a launch backgrounds a working session that the first `agents` lists without a pid
@@ -23,6 +24,7 @@
 //   hang-agents             `agents` never answers
 //   noisy                   every command also writes a warning on stderr
 //   agents-fail-after-wake  `agents` fails once a session has been woken
+//   agents-fail-after-one   `agents` answers once, then fails
 // Every call is appended to FAKE_CLAUDE_STATE/calls.log (one JSON array of arguments per line). A test
 // ends every sleeper it started by writing FAKE_CLAUDE_STATE/stop-all.
 const crypto = require('node:crypto');
@@ -35,6 +37,7 @@ const STATE_DIR = process.env.FAKE_CLAUDE_STATE;
 const SCENARIO = new Set((process.env.FAKE_CLAUDE_SCENARIO || 'normal').split(','));
 const SESSIONS_FILE = path.join(STATE_DIR, 'sessions.json');
 const WOKE_MARKER = path.join(STATE_DIR, 'woke');
+const LISTED_MARKER = path.join(STATE_DIR, 'listed');
 const STOP_ALL = path.join(STATE_DIR, 'stop-all');
 
 // Usage: node -e SLEEPER <own stop file> <stop-all file>. Once one of them exists (read every 50 ms),
@@ -128,6 +131,7 @@ function launch(args) {
   let session = newSession(name, 'working', 'busy');
   if (SCENARIO.has('never-started')) session = { ...session, status: 'idle', state: 'blocked' };
   if (SCENARIO.has('unknown-state')) session = { ...session, status: 'idle', state: 'starting' };
+  if (SCENARIO.has('unknown-state-busy')) session = { ...session, state: 'starting' };
   if (SCENARIO.has('done-at-launch')) session = { ...session, status: 'idle', state: 'done' };
   if (SCENARIO.has('working-idle')) session = { ...session, status: 'idle' };
   // `latePid` is not a field of the real CLI: the pid that the next `agents` shows.
@@ -196,6 +200,11 @@ function agents() {
     process.stderr.write('Error: the background service did not answer\n');
     return 1;
   }
+  if (SCENARIO.has('agents-fail-after-one') && fs.existsSync(LISTED_MARKER)) {
+    process.stderr.write('Error: the background service did not answer\n');
+    return 1;
+  }
+  writeJson(LISTED_MARKER, true);
   const sessions = readSessions();
   process.stdout.write(JSON.stringify(sessions) + '\n');
   if (sessions.some((session) => session.latePid)) {
