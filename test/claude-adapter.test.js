@@ -86,6 +86,21 @@ test('launch returns the session read from agents --json', async (t) => {
   assert.strictEqual(launchArgs[launchArgs.length - 1], 'Write the first file.');
 });
 
+// claude may list a session as started before it lists its pid: the registry needs that pid when
+// `claude agents` fails.
+test('launch waits for the pid of a session listed as started without one', async (t) => {
+  const { dir, state } = setup(t, 'pid-late');
+  const session = await claude.launch(spec(dir));
+  assert.ok(session.pid, 'the session should have its pid');
+  assert.strictEqual(session.pid, fakeSessions(state)[0].pid);
+
+  // A pid that never comes does not fail the launch.
+  process.env.FAKE_CLAUDE_SCENARIO = 'pid-never';
+  process.env.RELAYLEAD_CLAUDE_START_MS = '1000';
+  const withoutPid = await claude.launch(spec(dir, { name: 'demo/developer/2' }));
+  assert.deepStrictEqual([withoutPid.state, withoutPid.pid], ['working', null]);
+});
+
 test('list keeps the mission sessions; stop and attach use the short id', async (t) => {
   const { dir, state } = setup(t);
   const mine = await claude.launch(spec(dir));
