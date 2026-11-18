@@ -69,6 +69,18 @@ test('the lead quotes the first words of the hook-failed error as they are', () 
   assert.ok(t('hook-failed', {}, 'fr').startsWith(quoted[2]), quoted[2]);
 });
 
+// The user runs the command outside the mission folder: the lead quotes it with its --mission.
+test('the lead quotes the no-hooks command of the hook-failed error with its --mission', () => {
+  process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
+  const { instructions } = loadProfile('lead', { dir: tmpDir('relaylead-project-') });
+  const command = 'relaylead task deliver <id> --no-hooks --mission <mission>';
+  for (const lang of ['en', 'fr']) {
+    assert.ok(t('hook-failed', { id: '<id>', mission: '<mission>' }, lang).endsWith(command), lang);
+  }
+  assert.ok(instructions.includes(`\`${command}\``), 'the lead instructions should give the command with --mission');
+  assert.ok(instructions.includes('as it is, `--mission` included'), 'the lead should quote the command as it is');
+});
+
 test('lead tools only allow its relaylead commands and read-only git', () => {
   process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
   const { tools } = loadProfile('lead', { dir: tmpDir('relaylead-project-') });

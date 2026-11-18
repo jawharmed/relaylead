@@ -86,6 +86,40 @@ test('launch returns the session read from agents --json', async (t) => {
   assert.strictEqual(launchArgs[launchArgs.length - 1], 'Write the first file.');
 });
 
+// claude may list a session as started before it lists its pid: the registry needs that pid when
+// `claude agents` fails.
+test('launch waits for the pid of a session listed as started without one', async (t) => {
+  const { dir, state } = setup(t, 'pid-late');
+  const session = await claude.launch(spec(dir));
+  assert.ok(session.pid, 'the session should have its pid');
+  assert.strictEqual(session.pid, fakeSessions(state)[0].pid);
+
+  // A pid that never comes does not fail the launch, once the row has been read again for it.
+  process.env.FAKE_CLAUDE_SCENARIO = 'pid-never';
+  process.env.RELAYLEAD_CLAUDE_START_MS = '1000';
+  const before = calls(state).length;
+  const withoutPid = await claude.launch(spec(dir, { name: 'demo/developer/2' }));
+  assert.deepStrictEqual([withoutPid.state, withoutPid.pid], ['working', null]);
+  assert.ok(calls(state).slice(before).filter((args) => args[0] === 'agents').length >= 2);
+});
+
+// The session has started: a list that fails while its pid is awaited does not undo the launch.
+test('a list that fails while the pid is awaited keeps the session started', async (t) => {
+  const { dir, state } = setup(t, 'pid-never,agents-fail-after-one');
+  const session = await claude.launch(spec(dir));
+  assert.deepStrictEqual([session.state, session.pid], ['working', null]);
+  assert.strictEqual(fakeSessions(state)[0].state, 'working');
+  assert.ok(!calls(state).some((args) => args[0] === 'stop'), 'the session should not be stopped');
+});
+
+// Busy in a state this version does not know: started, so its pid is awaited too.
+test('launch waits for the pid of a busy session in an unknown state', async (t) => {
+  const { dir, state } = setup(t, 'unknown-state-busy,pid-late');
+  const session = await claude.launch(spec(dir));
+  assert.strictEqual(session.pid, fakeSessions(state)[0].pid);
+  assert.ok(session.pid, 'the session should have its pid');
+});
+
 test('list keeps the mission sessions; stop and attach use the short id', async (t) => {
   const { dir, state } = setup(t);
   const mine = await claude.launch(spec(dir));
