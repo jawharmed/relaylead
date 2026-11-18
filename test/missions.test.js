@@ -206,11 +206,17 @@ test('a failure after the lead started stops the lead and leaves nothing behind'
     fake.launch = originalLaunch;
     if (lead) return fake.stop(lead);
   });
+  const stopped = [];
+  stub(t, 'stop', (original) => async (session) => {
+    stopped.push(session.shortId);
+    return original(session);
+  });
 
   const result = await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir]);
   assert.strictEqual(result.code, 1);
-  // Its ended file went with the mission folder: the agent removes its stop file (outside that
-  // folder) as it ends.
+  // The stop wrote the lead's stop file. Its ended file went with the mission folder: the agent
+  // removes its stop file (outside that folder) as it ends.
+  assert.deepStrictEqual(stopped, [lead.shortId]);
   await waitFor(() => !fs.existsSync(lead.stopFile), 30000, 'the lead to be stopped');
   assert.strictEqual(fs.existsSync(path.join(missionDir('demo'), 'mission.json')), false);
   assert.strictEqual(fs.existsSync(lockFile(fs.realpathSync.native(dir))), false);
