@@ -13,7 +13,7 @@ const { writeJournal } = require('./guard');
 const { getAdapter } = require('../adapters');
 const { getDelivery } = require('../deliveries');
 const { sleep } = require('./timing');
-const { withMissionLock, EMPTY_LOCK_STALE_MS } = require('./mission-lock');
+const { withMissionLock, takeOverStaleLock, EMPTY_LOCK_STALE_MS } = require('./mission-lock');
 
 // States the lead may declare. 'stopped' is written by the core only.
 const STATES = ['starting', 'working', 'waiting', 'done'];
@@ -72,50 +72,82 @@ function ageOf(file) {
   }
 }
 
+// The folder lock: {state: 'gone'}, {state: 'stale'}, or {state: 'held', mission} where mission is
+// '?' while another launch is writing it.
+function readFolderLock(file, realDir) {
+  let lock;
+  try {
+    lock = readJson(file, null);
+  } catch {
+    lock = undefined;
+  }
+  if (lock === null) return { state: 'gone' };
+  if (!lock || typeof lock.mission !== 'string' || !/^[a-z0-9-]+$/.test(lock.mission)) {
+    // Empty or partial file: another launch has just created it and is writing it, unless it is old.
+    return ageOf(file) <= EMPTY_LOCK_STALE_MS ? { state: 'held', mission: '?' } : { state: 'stale' };
+  }
+  return isStale(lock, realDir) ? { state: 'stale' } : { state: 'held', mission: lock.mission };
+}
+
+// The check that takeOverStaleLock runs under its guard: a lock that is gone is not stale, so a
+// lock created right after the check is never deleted.
+function isStaleFolderLock(realDir) {
+  return readFolderLock(lockFile(realDir), realDir).state === 'stale';
+}
+
 // Creating the file with 'wx' fails if it exists: of two launches at the same time, only one wins.
-function takeLock(realDir, mission) {
+// On Windows, a lock file being deleted cannot be created again for a moment (EPERM): it counts as
+// still there, and is reported as is if it lasts. A stale lock is deleted under the takeover guard
+// of mission-lock.js, so two launches that see the same stale lock never both delete it: the second
+// one would delete the new lock of the first one. A takeover that does not delete the lock (guard
+// held by another launch, stale guard removed, lock still being deleted) waits a little before the
+// next attempt. The last attempt only tries 'wx': a takeover there would leave the folder free but
+// report it busy.
+async function takeLock(realDir, mission) {
   const file = lockFile(realDir);
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  for (let attempt = 0; attempt < 3; attempt++) {
+  let refused = null;
+  for (let attempt = 1; attempt <= 5; attempt++) {
     try {
       const fd = fs.openSync(file, 'wx');
       fs.writeSync(fd, JSON.stringify({ pid: process.pid, mission: mission.name, createdAt: mission.createdAt }));
       fs.closeSync(fd);
       return;
     } catch (err) {
-      if (err.code !== 'EEXIST') throw err;
+      if (err.code !== 'EEXIST' && !(process.platform === 'win32' && err.code === 'EPERM')) throw err;
+      refused = err.code === 'EPERM' ? err : null;
     }
+    const lock = readFolderLock(file, realDir);
+    if (lock.state === 'held') throw busyError(realDir, lock.mission);
+    if (attempt === 5) break; // the last attempt only tries 'wx'
+    if (lock.state === 'stale' && (await takeOverStaleLock(file, () => isStaleFolderLock(realDir)))) continue;
+    await sleep(20 * attempt);
+  }
+  throw refused || busyError(realDir, '?');
+}
+
+// Only the mission that holds the lock removes it: a newer mission, even of the same name, may have
+// taken it over. The removal goes under the takeover guard, after reading again that the lock is
+// ours: a launch that has just taken the lock over (our mission is over, so our lock is stale) holds
+// the guard, and its new lock must stay. While the guard is held, nothing is removed: the lock of a
+// finished mission is taken over by the next launch, and the lock of a launch that failed once its
+// process has ended. A second try follows the first one that fails: a stale guard, left by a taker
+// that died, is only removed by the first one, and the lock must not outlive its mission.
+async function releaseLock(realDir, mission) {
+  const file = lockFile(realDir);
+  const ours = () => {
     let lock;
     try {
       lock = readJson(file, null);
     } catch {
-      lock = undefined;
+      return false; // being written by another launch, so not ours
     }
-    if (lock === null) continue; // released in the meantime: try again
-    if (!lock || typeof lock.mission !== 'string' || !/^[a-z0-9-]+$/.test(lock.mission)) {
-      // Empty or partial file: another launch has just created it and is writing it, unless it is old.
-      if (ageOf(file) <= EMPTY_LOCK_STALE_MS) throw busyError(realDir, '?');
-    } else if (!isStale(lock, realDir)) {
-      throw busyError(realDir, lock.mission);
-    }
-    fs.rmSync(file, { force: true });
+    if (!lock || lock.mission !== mission.name) return false;
+    return !lock.createdAt || lock.createdAt === mission.createdAt;
+  };
+  for (let attempt = 1; attempt <= 2 && ours(); attempt++) {
+    if (await takeOverStaleLock(file, ours)) return;
   }
-  throw busyError(realDir, '?');
-}
-
-// Only the mission that holds the lock removes it: a newer mission, even of the same name, may have
-// taken it over.
-function releaseLock(realDir, mission) {
-  const file = lockFile(realDir);
-  let lock;
-  try {
-    lock = readJson(file, null);
-  } catch {
-    return; // being written by another launch, so not ours
-  }
-  if (!lock || lock.mission !== mission.name) return;
-  if (lock.createdAt && lock.createdAt !== mission.createdAt) return;
-  fs.rmSync(file, { force: true });
 }
 
 // mkdir without `recursive` fails if the folder exists: two launches cannot take the same name.
@@ -150,7 +182,7 @@ async function createMission({ name, dir, request, team, priority, agent, params
     config,
   };
 
-  takeLock(realDir, mission);
+  await takeLock(realDir, mission);
   let reserved = false;
   let lead = null;
   try {
@@ -186,7 +218,7 @@ async function createMission({ name, dir, request, team, priority, agent, params
     }
     // Retries: the stopped lead may still be finishing a write in the folder.
     if (reserved) fs.rmSync(missionDir(missionName), { recursive: true, force: true, maxRetries: 5 });
-    releaseLock(realDir, mission);
+    await releaseLock(realDir, mission);
     throw err;
   }
 }
@@ -473,7 +505,7 @@ async function stopAndFree(mission, record, stopAll) {
     throw firstError;
   }
   writeState(mission.name, { state: record.state, note: record.note });
-  releaseLock(mission.dir, mission);
+  await releaseLock(mission.dir, mission);
   return { outcome: skipped ? 'skipped' : 'stopped', warnings };
 }
 
@@ -574,7 +606,7 @@ async function removeMission(name, { force = false, onBranchDeleted } = {}) {
     const branches = fs.existsSync(mission.dir)
       ? getDelivery(mission.config.delivery.type).removeMission(mission, { force, onBranchDeleted })
       : [];
-    releaseLock(mission.dir, mission);
+    await releaseLock(mission.dir, mission);
     return branches;
   });
   // Retries: on Windows, a helper that has just ended may still hold a file for a moment.
@@ -595,4 +627,5 @@ module.exports = {
   attachLead,
   lockFile,
   releaseLock,
+  isStaleFolderLock,
 };
