@@ -101,7 +101,7 @@ test('list keeps the mission sessions; stop and attach use the short id', async 
   await claude.launch(spec(dir, { name: 'demo/developer/2' }));
   recordSession('demo', mine);
 
-  assert.deepStrictEqual((await claude.list('demo')).map((s) => [s.shortId, s.state]), [[mine.shortId, 'working']]);
+  assert.deepStrictEqual((await claude.list('demo')).map((s) => [s.shortId, s.state, s.idle]), [[mine.shortId, 'working', false]]);
   assert.strictEqual(await claude.attach(mine), 0);
   await claude.stop(mine);
   await claude.stop(mine);
@@ -114,6 +114,13 @@ test('list keeps the mission sessions; stop and attach use the short id', async 
     ['stop', mine.shortId],
     ['stop', 'deadbeef'],
   ]);
+});
+
+test('list says a session is idle from its status, and keeps its state', async (t) => {
+  const { dir } = setup(t, 'working-idle');
+  const session = await claude.launch(spec(dir));
+  recordSession('demo', session);
+  assert.deepStrictEqual((await claude.list('demo')).map((s) => [s.state, s.idle]), [['working', true]]);
 });
 
 test('list asks claude nothing when the mission has no session', async (t) => {

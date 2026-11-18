@@ -187,11 +187,14 @@ async function launch(spec) {
 }
 
 // The mission's sessions as claude reports them. A session claude does not list (yet) is left out:
-// the watcher gives it a grace period.
+// the watcher gives it a grace period. `idle` says claude runs no turn of the session: a session may
+// stay "working" once its turn has ended. Only the helper that stops the lead after `done` reads it.
 async function list(mission) {
   const known = new Set(listSessions(mission).map((session) => session.shortId));
   if (known.size === 0) return [];
-  return (await agentRows()).filter((row) => known.has(row.id)).map(mapState);
+  return (await agentRows())
+    .filter((row) => known.has(row.id))
+    .map((row) => ({ ...mapState(row), idle: row.status === 'idle' }));
 }
 
 // `claude stop` exits 0 even for a session already stopped. Any other exit is fine when the session
