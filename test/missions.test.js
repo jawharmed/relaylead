@@ -699,6 +699,23 @@ test('a mission does not release its lock while a takeover holds the guard', asy
   assert.strictEqual(fs.existsSync(lock + '.takeover'), true);
 });
 
+test('a takeover guard left by a dead taker does not keep a mission from releasing its lock', async (t) => {
+  freshHome(t);
+  const dir = fs.realpathSync.native(tmpDir('relaylead-project-'));
+  const lock = lockFile(dir);
+  const mission = { name: 'demo', createdAt: '2026-11-16T10:00:00.000Z' };
+  writeJson(lock, { pid: process.pid, mission: mission.name, createdAt: mission.createdAt });
+  // An empty guard this old was left by a taker that crashed before writing its pid.
+  fs.writeFileSync(lock + '.takeover', '');
+  const longAgo = new Date(Date.now() - 20 * 1000);
+  fs.utimesSync(lock + '.takeover', longAgo, longAgo);
+
+  await releaseLock(dir, mission);
+
+  assert.strictEqual(fs.existsSync(lock), false);
+  assert.strictEqual(fs.existsSync(lock + '.takeover'), false);
+});
+
 test('a mission releases its own lock and leaves no takeover guard', async (t) => {
   freshHome(t);
   const dir = fs.realpathSync.native(tmpDir('relaylead-project-'));

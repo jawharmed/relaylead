@@ -101,7 +101,8 @@ function isStaleFolderLock(realDir) {
 // of mission-lock.js, so two launches that see the same stale lock never both delete it: the second
 // one would delete the new lock of the first one. A takeover that does not delete the lock (guard
 // held by another launch, stale guard removed, lock still being deleted) waits a little before the
-// next attempt.
+// next attempt. The last attempt only tries 'wx': a takeover there would leave the folder free but
+// report it busy.
 async function takeLock(realDir, mission) {
   const file = lockFile(realDir);
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -118,6 +119,7 @@ async function takeLock(realDir, mission) {
     }
     const lock = readFolderLock(file, realDir);
     if (lock.state === 'held') throw busyError(realDir, lock.mission);
+    if (attempt === 5) break; // the last attempt only tries 'wx'
     if (lock.state === 'stale' && (await takeOverStaleLock(file, () => isStaleFolderLock(realDir)))) continue;
     await sleep(20 * attempt);
   }
@@ -129,7 +131,8 @@ async function takeLock(realDir, mission) {
 // ours: a launch that has just taken the lock over (our mission is over, so our lock is stale) holds
 // the guard, and its new lock must stay. While the guard is held, nothing is removed: the lock of a
 // finished mission is taken over by the next launch, and the lock of a launch that failed once its
-// process has ended.
+// process has ended. A second try follows the first one that fails: a stale guard, left by a taker
+// that died, is only removed by the first one, and the lock must not outlive its mission.
 async function releaseLock(realDir, mission) {
   const file = lockFile(realDir);
   const ours = () => {
@@ -142,7 +145,9 @@ async function releaseLock(realDir, mission) {
     if (!lock || lock.mission !== mission.name) return false;
     return !lock.createdAt || lock.createdAt === mission.createdAt;
   };
-  if (ours()) await takeOverStaleLock(file, ours);
+  for (let attempt = 1; attempt <= 2 && ours(); attempt++) {
+    if (await takeOverStaleLock(file, ours)) return;
+  }
 }
 
 // mkdir without `recursive` fails if the folder exists: two launches cannot take the same name.
