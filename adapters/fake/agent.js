@@ -2,6 +2,7 @@
 // Like a real session, it acts only through the relaylead CLI, never by writing state files.
 const fs = require('node:fs');
 const path = require('node:path');
+const { Worker } = require('node:worker_threads');
 const { missionDir, slug } = require('../../core/paths');
 const { readJson } = require('../../core/store');
 const { DEFAULTS } = require('../../core/config');
@@ -148,12 +149,30 @@ function crew() {
   }, 1000);
 }
 
+// The adapter's stop writes RELAYLEAD_FAKE_STOP; the agent then ends its own process, as a signal
+// would. The file is watched from a thread of its own: the lead's thread waits on each command
+// (`relaylead wait` takes seconds). Its own pid cannot belong to another process.
+const WATCH_STOP = `
+const fs = require('node:fs');
+const { workerData } = require('node:worker_threads');
+setInterval(() => {
+  if (fs.existsSync(workerData)) process.kill(process.pid);
+}, 50);
+`;
+
+function watchStop() {
+  if (!process.env.RELAYLEAD_FAKE_STOP) return;
+  // unref: a crew member still ends by itself once its work is done.
+  new Worker(WATCH_STOP, { eval: true, workerData: process.env.RELAYLEAD_FAKE_STOP }).unref();
+}
+
 // Any failure ends the agent, with its reason (and git's or relaylead's stderr) in the log.
 process.on('uncaughtException', (err) => {
   log(`crashed: ${err.stack}${err.stderr ? '\n' + err.stderr : ''}`);
   process.exit(1);
 });
 
+watchStop();
 const role = process.argv[2];
 if (role === 'lead') lead();
 else if (role === 'crew' && process.env.RELAYLEAD_TASK) crew();

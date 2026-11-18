@@ -3,20 +3,33 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const { missionDir } = require('../../core/paths');
+const { home, missionDir } = require('../../core/paths');
 const { listSessions, isAlive } = require('../../core/sessions');
 
 const AGENT = path.join(__dirname, 'agent.js');
 
+// The file that asks a session to end: its agent watches it and ends its own process. Outside the
+// mission folder, which a failed launch removes while its lead may still run.
+function stopFile(shortId) {
+  return path.join(home(), 'fake', `${shortId}.stop`);
+}
+
 async function launch(spec) {
   const hex = crypto.randomBytes(8).toString('hex');
   const sessionId = 'fake-' + hex;
+  const shortId = hex.slice(0, 8);
   // Where the agent writes its failures, so a test that times out can show them.
-  const log = path.join(missionDir(spec.mission), `fake-${spec.role}-${hex.slice(0, 8)}.log`);
+  const log = path.join(missionDir(spec.mission), `fake-${spec.role}-${shortId}.log`);
   const child = spawn(process.execPath, [AGENT, spec.role], {
     cwd: spec.cwd,
     // Like a real session, it gets no task from the process that launched it, only from spec.env.
-    env: { ...process.env, RELAYLEAD_TASK: undefined, ...spec.env, RELAYLEAD_FAKE_LOG: log },
+    env: {
+      ...process.env,
+      RELAYLEAD_TASK: undefined,
+      ...spec.env,
+      RELAYLEAD_FAKE_LOG: log,
+      RELAYLEAD_FAKE_STOP: stopFile(shortId),
+    },
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
@@ -29,7 +42,7 @@ async function launch(spec) {
   child.unref();
   return {
     sessionId,
-    shortId: hex.slice(0, 8),
+    shortId,
     name: spec.name,
     role: spec.role,
     state: 'working',
@@ -46,14 +59,13 @@ async function list(mission) {
   }));
 }
 
-// Only a live process is killed: a dead one's pid may already belong to another process.
+// Asks the session to end; its agent sees the file within 50 ms and ends its own process. Never
+// a kill by pid: once the agent has ended, Windows soon gives its pid to another process, which may
+// be this very `relaylead` command. A session that has already ended just leaves the file behind.
 async function stop(session) {
-  if (!isAlive(session.pid)) return;
-  try {
-    process.kill(session.pid);
-  } catch (err) {
-    if (err.code !== 'ESRCH') throw err;
-  }
+  const file = stopFile(session.shortId);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, '');
 }
 
 // Nothing to show: the call is logged so tests can check it happened.

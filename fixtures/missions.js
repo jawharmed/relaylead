@@ -10,7 +10,7 @@ const { listMissions } = require('../core/missions');
 const fake = require('../adapters/fake');
 const { tmpDir } = require('./helpers');
 
-// Taken now, so the cleanup still kills sessions when a test has replaced fake.stop.
+// Taken now, so the cleanup still stops sessions when a test has replaced fake.stop.
 const stopSession = fake.stop;
 
 const TASK_A = '---\ntitle: First task\n---\n\nWrite the first file.\n';
@@ -33,13 +33,13 @@ function setupProject(t, mission) {
   return dir;
 }
 
-// Fresh RELAYLEAD_HOME for a test that launches missions; every session they started is killed
+// Fresh RELAYLEAD_HOME for a test that launches missions; every session they started is stopped
 // afterwards. The project folders are not git repositories: missions deliver files (machine config).
 function freshHome(t) {
   const home = tmpDir('relaylead-home-');
   process.env.RELAYLEAD_HOME = home;
   writeJson(path.join(home, 'config.json'), { delivery: { type: 'files' } });
-  // Kill every recorded session directly: stopMission leaves a finished mission alone.
+  // Stop every recorded session directly: stopMission leaves a finished mission alone.
   t.after(async () => {
     process.env.RELAYLEAD_HOME = home;
     for (const mission of listMissions()) {
