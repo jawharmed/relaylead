@@ -1,7 +1,7 @@
 const path = require('node:path');
 const { t, codedError } = require('./messages');
 const { loadConfig } = require('./config');
-const { createMission, listMissions, stopMission, removeMission, getState, setState, reapLead, attachLead } = require('./missions');
+const { createMission, listMissions, stopMission, removeMission, getState, setState, reapLead, markReaperEnded, attachLead } = require('./missions');
 const { listTasks, startTask, retryTask, deliverTask, finishTask } = require('./tasks');
 const { waitForChanges } = require('./wait');
 const { askQuestion, answerQuestion, listQuestions } = require('./questions');
@@ -247,7 +247,12 @@ commands.answer = async (args, io) => {
 
 // Internal, not in the help: started by `state set done`, it stops the lead once its turn is over.
 commands._reap = async (args) => {
-  await reapLead(parseArgs(args).positional[0]);
+  const name = parseArgs(args).positional[0];
+  try {
+    await reapLead(name);
+  } finally {
+    markReaperEnded(name);
+  }
   return 0;
 };
 

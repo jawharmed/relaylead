@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { run } = require('../core/cli');
-const { listMissions, lockFile, releaseLock, isStaleFolderLock, reapLead } = require('../core/missions');
+const { listMissions, lockFile, releaseLock, isStaleFolderLock, reapLead, markReaperEnded } = require('../core/missions');
 const { takeOverStaleLock } = require('../core/mission-lock');
 const { listSessions, recordSession, isAlive } = require('../core/sessions');
 const { readJson, writeJson } = require('../core/store');
@@ -364,7 +364,17 @@ test('done records the pid of the helper, which ends once the lead has ended', {
 
   const reaper = readJson(path.join(missionDir('demo'), 'reaper.json'));
   assert.ok(Number.isInteger(reaper.pid), JSON.stringify(reaper));
-  await waitFor(() => !isAlive(reaper.pid), 15000, 'the helper to end');
+  // Written by the helper itself as it exits, with its own pid.
+  const ended = path.join(missionDir('demo'), 'reaper-ended.json');
+  await waitFor(() => readJson(ended, {}).pid === reaper.pid, 15000, 'the helper to end');
+});
+
+test('the end of a late helper does not write the removed mission folder again', async (t) => {
+  freshHome(t);
+
+  markReaperEnded('demo'); // as after `relaylead remove demo`
+
+  assert.strictEqual(fs.existsSync(missionDir('demo')), false);
 });
 
 // A crew session of mission demo that stays alive until stopped.

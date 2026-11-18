@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const { listSessions, isAlive } = require('../../core/sessions');
+const { listSessions } = require('../../core/sessions');
 const { readJson } = require('../../core/store');
 const { missionDir } = require('../../core/paths');
 const fake = require('../../adapters/fake');
@@ -139,11 +139,13 @@ test('fake mission delivers two tasks with one answered question', { timeout: 3 
   assert.strictEqual(sessions.length, 3, report());
   await waitFor(() => sessions.every(sessionEnded), 15000, 'every session to end', report);
   // `state set done` writes the state first, then starts the helper and records its pid: the
-  // mission may be done before reaper.json exists.
+  // mission may be done before reaper.json exists. The helper writes reaper-ended.json, with its
+  // pid, as it exits.
   const reaperFile = path.join(missionDir(mission), 'reaper.json');
   await waitFor(() => fs.existsSync(reaperFile), 15000, 'reaper.json', report);
   const reaper = readJson(reaperFile);
-  await waitFor(() => !isAlive(reaper.pid), 15000, 'the helper to end', report);
+  const endedFile = path.join(missionDir(mission), 'reaper-ended.json');
+  await waitFor(() => readJson(endedFile, {}).pid === reaper.pid, 15000, 'the helper to end', report);
 
   // Only the user's checkout and the integration worktree are left.
   const integrationDir = path.join(dir, '.relaylead', 'worktrees', '_integration');
