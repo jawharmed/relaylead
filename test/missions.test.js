@@ -4,7 +4,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { run } = require('../core/cli');
-const { listMissions, lockFile, releaseLock, reapLead } = require('../core/missions');
+const { listMissions, lockFile, releaseLock, isStaleFolderLock, reapLead } = require('../core/missions');
+const { takeOverStaleLock } = require('../core/mission-lock');
 const { listSessions, recordSession, isAlive } = require('../core/sessions');
 const { readJson, writeJson } = require('../core/store');
 const { missionDir } = require('../core/paths');
@@ -678,9 +679,61 @@ test('a lock of a newer mission of the same name is not released', async (t) => 
   const lock = lockFile(dir);
   writeJson(lock, { pid: process.pid, mission: 'demo', createdAt: '2026-11-16T10:00:00.000Z' });
 
-  releaseLock(dir, { name: 'demo', createdAt: '2026-11-16T09:00:00.000Z' });
+  await releaseLock(dir, { name: 'demo', createdAt: '2026-11-16T09:00:00.000Z' });
 
   assert.strictEqual(readJson(lock).createdAt, '2026-11-16T10:00:00.000Z');
+});
+
+test('a mission does not release its lock while a takeover holds the guard', async (t) => {
+  freshHome(t);
+  const dir = fs.realpathSync.native(tmpDir('relaylead-project-'));
+  const lock = lockFile(dir);
+  const mission = { name: 'demo', createdAt: '2026-11-16T10:00:00.000Z' };
+  writeJson(lock, { pid: process.pid, mission: mission.name, createdAt: mission.createdAt });
+  // The taker may have replaced the lock with its own by now: only it may delete the lock.
+  writeJson(lock + '.takeover', { pid: process.pid, command: 'takeover', since: new Date().toISOString() });
+
+  await releaseLock(dir, mission);
+
+  assert.strictEqual(readJson(lock).mission, 'demo');
+  assert.strictEqual(fs.existsSync(lock + '.takeover'), true);
+});
+
+test('a mission releases its own lock and leaves no takeover guard', async (t) => {
+  freshHome(t);
+  const dir = fs.realpathSync.native(tmpDir('relaylead-project-'));
+  const lock = lockFile(dir);
+  const mission = { name: 'demo', createdAt: '2026-11-16T10:00:00.000Z' };
+  writeJson(lock, { pid: process.pid, mission: mission.name, createdAt: mission.createdAt });
+
+  await releaseLock(dir, mission);
+
+  assert.strictEqual(fs.existsSync(lock), false);
+  assert.strictEqual(fs.existsSync(lock + '.takeover'), false);
+});
+
+test('a folder lock that is gone is not stale', (t) => {
+  freshHome(t);
+  const dir = fs.realpathSync.native(tmpDir('relaylead-project-'));
+
+  assert.strictEqual(isStaleFolderLock(dir), false);
+});
+
+test('a takeover that finds the folder lock gone does not delete the lock created right after', async (t) => {
+  freshHome(t);
+  const dir = fs.realpathSync.native(tmpDir('relaylead-project-'));
+  const lock = lockFile(dir);
+  fs.mkdirSync(path.dirname(lock), { recursive: true });
+
+  // The lock is gone when the taker checks it; another launch creates its own just after.
+  const taken = await takeOverStaleLock(lock, () => {
+    const stale = isStaleFolderLock(dir);
+    writeJson(lock, { pid: process.pid, mission: 'other', createdAt: new Date().toISOString() });
+    return stale;
+  });
+
+  assert.strictEqual(taken, false);
+  assert.strictEqual(readJson(lock).mission, 'other');
 });
 
 test('a lock naming a mission of another folder is taken over', async (t) => {
