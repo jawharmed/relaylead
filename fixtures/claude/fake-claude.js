@@ -11,6 +11,7 @@
 //   never-started           a launch backgrounds a session left waiting for a prompt (recorded row)
 //   unknown-state           a launch backgrounds a session in a state this version does not know
 //   done-at-launch          a launch backgrounds a session that is already done (its process lives on)
+//   working-idle            a launch backgrounds a session left working whose turn has ended (row seen after done)
 //   wake-copy               a resume always starts a copy (first recorded copy output)
 //   wake-copy-2             a resume always starts a copy (second recorded copy output)
 //   stuck-stop              `stop` marks the session stopped but its process keeps running
@@ -102,6 +103,7 @@ function launch(args) {
   if (SCENARIO.has('never-started')) session = { ...session, status: 'idle', state: 'blocked' };
   if (SCENARIO.has('unknown-state')) session = { ...session, status: 'idle', state: 'starting' };
   if (SCENARIO.has('done-at-launch')) session = { ...session, status: 'idle', state: 'done' };
+  if (SCENARIO.has('working-idle')) session = { ...session, status: 'idle' };
   writeSessions([...readSessions(), session]);
   process.stdout.write(recorded('launch-ok.txt').replace(/0f0b2950/g, session.id).replace('demo-mission/lead/1', name));
   return 0;
