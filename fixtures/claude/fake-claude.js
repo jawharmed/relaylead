@@ -2,8 +2,10 @@
 // (launch-*.txt and stop-*.txt next to this file) and keeps its sessions in FAKE_CLAUDE_STATE/sessions.json,
 // so `agents --json --all`, `stop`, `attach`, `--bg` and `--bg --resume` agree with each other.
 // Each session gets a real process (a small sleeper), so `stop` really ends something: it writes the
-// sleeper's stop file, and the sleeper ends by itself. Nothing is killed by pid: on Windows, the pid
-// of a process that has ended soon belongs to another one, maybe of another test file.
+// sleeper's stop file, and the sleeper ends by itself. As it exits, the sleeper writes its ended file
+// (FAKE_CLAUDE_STATE/ended-<sleeper>), which says it has ended. Nothing is killed, nor judged alive,
+// by pid: on Windows, the pid of a process that has ended soon belongs to another one, maybe of another
+// test file.
 //
 // FAKE_CLAUDE_SCENARIO: a comma-separated list of these (default: normal)
 //   normal                  launches start working; a resume wakes the session if its process has ended
@@ -40,12 +42,14 @@ const WOKE_MARKER = path.join(STATE_DIR, 'woke');
 const LISTED_MARKER = path.join(STATE_DIR, 'listed');
 const STOP_ALL = path.join(STATE_DIR, 'stop-all');
 
-// Usage: node -e SLEEPER <own stop file> <stop-all file>. Once one of them exists (read every 50 ms),
-// it lingers 300 ms, like a real session finishing its last write, and ends. It also ends by itself
-// after two minutes, so a crashed test leaves nothing behind for long.
+// Usage: node -e SLEEPER <own ended file> <own stop file> <stop-all file>. Once one of the stop files
+// exists (read every 50 ms), it lingers 300 ms, like a real session finishing its last write, and
+// ends. It also ends by itself after two minutes, so a crashed test leaves nothing behind for long.
+// However it ends, it writes its ended file as it exits.
 const SLEEPER = `
 const fs = require('node:fs');
-const stopFiles = process.argv.slice(1);
+const [endedFile, ...stopFiles] = process.argv.slice(1);
+process.on('exit', () => fs.writeFileSync(endedFile, ''));
 const lifetime = setTimeout(() => {}, 120000);
 const watch = setInterval(() => {
   if (!stopFiles.some((file) => fs.existsSync(file))) return;
@@ -72,25 +76,25 @@ function recorded(name) {
   return fs.readFileSync(path.join(__dirname, name), 'utf8');
 }
 
-function isAlive(pid) {
-  if (!pid) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return err.code === 'EPERM';
-  }
-}
-
 function stopFile(sleeper) {
   return path.join(STATE_DIR, `stop-${sleeper}`);
+}
+
+function endedFile(sleeper) {
+  return path.join(STATE_DIR, `ended-${sleeper}`);
+}
+
+// A row with a pid whose sleeper has not written its ended file. Like the real CLI, a row without a
+// pid has no process.
+function hasProcess(session) {
+  return Boolean(session.pid && session.sleeper) && !fs.existsSync(endedFile(session.sleeper));
 }
 
 // Returns the fields of a row for its process: `pid`, and `sleeper`, which names its stop file (not a
 // field of the real CLI). A new name for each sleeper: a woken session keeps its id, not its stop file.
 function startSleeper() {
   const sleeper = crypto.randomBytes(4).toString('hex');
-  const child = spawn(process.execPath, ['-e', SLEEPER, stopFile(sleeper), STOP_ALL], {
+  const child = spawn(process.execPath, ['-e', SLEEPER, endedFile(sleeper), stopFile(sleeper), STOP_ALL], {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
@@ -155,7 +159,7 @@ function resume(args) {
   const original = sessions.find((session) => session.sessionId === args[2]);
   const withoutOptions = args.length === 4 && args[0] === '--bg' && args[1] === '--resume';
   const forcedCopy = SCENARIO.has('wake-copy') || SCENARIO.has('wake-copy-2');
-  if (!original || forcedCopy || !withoutOptions || isAlive(original.pid)) {
+  if (!original || forcedCopy || !withoutOptions || hasProcess(original)) {
     const copy = newSession('resumed-copy', 'working', 'busy');
     writeSessions([...sessions, copy]);
     process.stdout.write(copyOutput(copy, original ? original.id : 'unknown0'));
