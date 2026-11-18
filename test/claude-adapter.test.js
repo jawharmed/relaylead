@@ -2,11 +2,12 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawn } = require('node:child_process');
 const claude = require('../adapters/claude');
 const { recordSession, isAlive } = require('../core/sessions');
 const { missionDir } = require('../core/paths');
 const { writeJson } = require('../core/store');
-const { tmpDir } = require('../fixtures/helpers');
+const { tmpDir, waitFor } = require('../fixtures/helpers');
 
 const FAKE = path.join(__dirname, '..', 'fixtures', 'claude', 'fake-claude.js');
 const PROFILE = { name: 'developer', model: 'sonnet', effort: 'low', tools: ['Read', 'Edit'], instructions: 'Be brief.' };
@@ -16,8 +17,9 @@ const ENV_KEYS = [
   'FAKE_CLAUDE_STATE', 'FAKE_CLAUDE_SCENARIO',
 ];
 
-// Fresh home, project folder and fake claude state. After the test, every process the fake
-// started is killed (a stopped row no longer shows its pid) and the environment is put back.
+// Fresh home, project folder and fake claude state. After the test, every process the fake started
+// is asked to end through its stop-all file, never killed by pid (a pid that has ended may belong to
+// another test's process by then), and the environment is put back.
 function setup(t, scenario = 'normal') {
   const saved = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
   const state = tmpDir('relaylead-fake-claude-');
@@ -28,9 +30,7 @@ function setup(t, scenario = 'normal') {
   const dir = fs.realpathSync.native(tmpDir('relaylead project '));
   writeJson(path.join(missionDir('demo'), 'mission.json'), { name: 'demo', dir, agent: 'claude', config: { attribution: null } });
   t.after(() => {
-    for (const pid of fakePids(state)) {
-      if (isAlive(pid)) process.kill(pid);
-    }
+    fs.writeFileSync(path.join(state, 'stop-all'), '');
     for (const key of ENV_KEYS) {
       if (saved[key] === undefined) delete process.env[key];
       else process.env[key] = saved[key];
@@ -42,14 +42,6 @@ function setup(t, scenario = 'normal') {
 function fakeSessions(state) {
   try {
     return JSON.parse(fs.readFileSync(path.join(state, 'sessions.json'), 'utf8'));
-  } catch {
-    return [];
-  }
-}
-
-function fakePids(state) {
-  try {
-    return fs.readFileSync(path.join(state, 'pids.log'), 'utf8').trim().split('\n').filter(Boolean).map(Number);
   } catch {
     return [];
   }
@@ -114,6 +106,19 @@ test('list keeps the mission sessions; stop and attach use the short id', async 
     ['stop', mine.shortId],
     ['stop', 'deadbeef'],
   ]);
+});
+
+test('stop ends the session process and kills nothing by its pid', async (t) => {
+  const { dir, state } = setup(t);
+  const session = await claude.launch(spec(dir));
+  // The row's pid now names an unrelated live process, as when Windows has given it to another one.
+  const unrelated = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  t.after(() => unrelated.kill());
+  writeJson(path.join(state, 'sessions.json'), fakeSessions(state).map((row) => ({ ...row, pid: unrelated.pid })));
+
+  await claude.stop(session);
+  await waitFor(() => !isAlive(session.pid), 10000, 'the session process to end');
+  assert.ok(isAlive(unrelated.pid));
 });
 
 test('list says a session is idle from its status, and keeps its state', async (t) => {
