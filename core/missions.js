@@ -362,11 +362,15 @@ async function spawnReaper(name) {
 }
 
 // The helper: waits until the lead has ended its last turn (10 min at most), then stops it. The turn
-// has ended when the lead is no longer working, or when the adapter says it is idle on two reads in
-// a row: claude may leave a lead "working" and idle after its turn, and a single idle read may be
-// passing (spike, point 2g). An adapter that gives no `idle` is judged on its state alone. A failing
-// list is tried again until the deadline and breaks a run of idle reads; at the deadline the lead is
-// stopped anyway. Nobody watches the helper, so a stop that fails is written to the mission's journal.
+// has ended when the lead is no longer working, or when the adapter says it is idle, with a process,
+// on two reads in a row: claude may leave a lead "working" and idle after its turn, and a single idle
+// read may be passing (spike, point 2g). A read without a pid does not count: after a relaunch by the
+// daemon, claude shows the lead working without a process for a few seconds (spike, point 4), and a
+// stop then could miss the relaunched lead. An unknown state counts as working, so a future state
+// that is idle with a process also stops the lead after two reads: acceptable once the lead is done.
+// An adapter that gives no `idle` is judged on its state alone. A failing list is tried again until
+// the deadline and breaks a run of idle reads; at the deadline the lead is stopped anyway. Nobody
+// watches the helper, so a stop that fails is written to the mission's journal.
 async function reapLead(name) {
   const mission = readMission(name);
   const adapter = getAdapter(mission.agent);
@@ -378,7 +382,7 @@ async function reapLead(name) {
       const session = (await adapter.list(name)).find((candidate) => candidate.shortId === lead.shortId);
       if (!session || session.state === 'stopped') return;
       if (session.state !== 'working') break;
-      idleReads = session.idle === true ? idleReads + 1 : 0;
+      idleReads = session.idle === true && session.pid ? idleReads + 1 : 0;
       if (idleReads === 2) break;
     } catch {
       // `claude agents` may fail for a moment: try again at the next turn.

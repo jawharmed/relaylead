@@ -442,6 +442,21 @@ test('the helper does not stop a lead on one idle read followed by a busy one', 
   assert.deepStrictEqual(readsAtStop, [4]);
 });
 
+test('the helper waits for the deadline when the idle lead has no process, as during a relaunch', async (t) => {
+  const lead = await launchedLead(t);
+  const readsAtStop = listInTurn(t, lead, [{ state: 'working', idle: true, pid: null }]);
+  process.env.RELAYLEAD_REAP_MAX_MS = '4500';
+  t.after(() => {
+    delete process.env.RELAYLEAD_REAP_MAX_MS;
+  });
+  const start = Date.now();
+
+  await reapLead('demo');
+
+  assert.ok(Date.now() - start >= 4500, 'stopped before the deadline');
+  assert.ok(readsAtStop[0] > 2, `stopped after ${readsAtStop[0]} reads`);
+});
+
 test('the helper keeps polling when the list fails, then stops the lead at the deadline', async (t) => {
   const lead = await launchedLead(t);
   stub(t, 'list', () => async () => {
