@@ -59,6 +59,8 @@ function sessionSettings({ mission, packageDir, profile, permissionMode, env = {
       PreToolUse: hookEntry(packageDir, 'pretool'),
       PermissionRequest: hookEntry(packageDir, 'permission'),
       PostToolUse: hookEntry(packageDir, 'posttool'),
+      Stop: hookEntry(packageDir, 'stop'),
+      StopFailure: hookEntry(packageDir, 'stopfailure'),
     },
     // Measures the context and its window; it shows nothing. Passed here, never in the user's settings.
     statusLine: { type: 'command', command: hookCommand(packageDir, 'statusline') },

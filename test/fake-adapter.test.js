@@ -8,7 +8,9 @@ const { recordSession, isAlive } = require('../core/sessions');
 const { missionDir } = require('../core/paths');
 const { readReadings } = require('../core/readings');
 const { tmpDir, waitFor, sessionEnded, killSession } = require('../fixtures/helpers');
-const { writeMission } = require('../fixtures/missions');
+const { setupProject, writeMission, missionReport } = require('../fixtures/missions');
+const { writeJson } = require('../core/store');
+const { sendMail } = require('../core/mailbox');
 
 const fake = getAdapter('fake');
 
@@ -285,4 +287,33 @@ test('a fake session that ends its turn writes a (stop) heartbeat', async (t) =>
   await waitFor(() => fs.existsSync(session.idleFile), 30000, 'the session to end its turn');
   const { at, ...heartbeat } = readReadings('demo', session.shortId).heartbeat;
   assert.deepStrictEqual(heartbeat, { tool: '(stop)', contextTokens: null, baseTokens: null });
+});
+
+test('a fake session takes its mail after each command', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  // Task a runs, with a crew member that does nothing: the lead loops on `wait --timeout 5`.
+  const crew = await fake.launch({
+    mission: 'demo', name: 'demo/developer/1', role: 'crew', profile: null, prompt: '', cwd: dir, env: {}, permissionMode: 'allowlist',
+  });
+  recordSession('demo', crew);
+  writeJson(path.join(missionDir('demo'), 'tasks', 'a.json'), {
+    id: 'a', profile: 'developer', state: 'running', session: crew.shortId, cwd: dir, branch: null, startedAt: new Date().toISOString(), attempt: 1,
+  });
+  const lead = await fake.launch({
+    mission: 'demo', name: 'demo/lead', role: 'lead', profile: null, prompt: '', cwd: dir, env: { RELAYLEAD_MISSION: 'demo' }, permissionMode: 'allowlist',
+  });
+  recordSession('demo', lead);
+  const explain = () => missionReport('demo');
+  await waitFor(() => readReadings('demo', lead.shortId).heartbeat, 30000, 'the first command of the lead', explain);
+
+  const file = sendMail('demo', lead.shortId, 'hello lead');
+  const read = path.join(path.dirname(file), 'read', path.basename(file));
+  await waitFor(() => fs.existsSync(read), 30000, 'the mail to be read', explain);
+  await waitFor(() => logText(lead).includes('mail: hello lead'), 5000, 'the mail in the log', explain);
+  assert.strictEqual(fs.existsSync(file), false);
+  // And again at a later command.
+  const later = sendMail('demo', lead.shortId, 'hello again');
+  await waitFor(() => !fs.existsSync(later), 30000, 'the second mail to be read', explain);
+  assert.ok(logText(lead).includes('mail: hello again'));
 });

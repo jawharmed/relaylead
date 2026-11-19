@@ -8,6 +8,7 @@ const { missionDir, slug } = require('../../core/paths');
 const { readJson } = require('../../core/store');
 const { DEFAULTS } = require('../../core/config');
 const { recordHeartbeat, readReadings } = require('../../core/readings');
+const { readMail, markRead } = require('../../core/mailbox');
 const { runFileSync } = require('../../core/run-file');
 
 const CLI = path.join(__dirname, '..', '..', 'bin', 'relaylead.js');
@@ -49,8 +50,23 @@ function commandHeartbeat() {
   heartbeat('Bash', before + (Number(process.env.RELAYLEAD_FAKE_TOKENS_PER_COMMAND) || 0));
 }
 
+// The session's mail, as its PostToolUse hook would pass it on: each message goes to the log, then
+// into read/. The agent does not act on it yet. Never fails the agent.
+function takeMail() {
+  const mission = process.env.RELAYLEAD_MISSION;
+  const shortId = process.env.RELAYLEAD_FAKE_SHORT_ID;
+  if (!mission || !shortId) return;
+  try {
+    const mail = readMail(mission, shortId);
+    for (const message of mail) log(`mail: ${message.text}`);
+    markRead(mission, shortId, mail.map((message) => message.file));
+  } catch (err) {
+    log(`mail failed: ${err.message}`);
+  }
+}
+
 // The env carries RELAYLEAD_MISSION and RELAYLEAD_HOME; no shell and no PATH lookup. A failed command
-// is still an action of the session: its heartbeat is written too.
+// is still an action of the session: its heartbeat is written and its mail taken too.
 function relaylead(...args) {
   try {
     return logged(`relaylead ${args.join(' ')}`, () =>
@@ -62,6 +78,7 @@ function relaylead(...args) {
     );
   } finally {
     commandHeartbeat();
+    takeMail();
   }
 }
 

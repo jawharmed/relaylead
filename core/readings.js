@@ -1,6 +1,7 @@
 // What the sessions measure of themselves, through their hooks and their status line: a heartbeat at
-// each action and the size of their context. One file per writer: heartbeats/<shortId>.json (hook
-// PostToolUse, Stop), context/<shortId>.json (the measuring status line). The thresholds are worked
+// each action, the size of their context and the failure that ended a turn. One file per writer:
+// heartbeats/<shortId>.json (hooks PostToolUse, Stop), context/<shortId>.json (the measuring status
+// line), failures/<shortId>.json (hook StopFailure). The thresholds are worked
 // out here too, by the watcher: the hooks only take readings, and stay fast.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -97,8 +98,13 @@ function writeReading(mission, folder, shortId, fields) {
   const reading = { at: new Date().toISOString() };
   for (const [key, value] of Object.entries(fields)) reading[key] = value != null ? value : previous[key] ?? null;
   reading.baseTokens = previous.baseTokens != null ? previous.baseTokens : reading.contextTokens;
+  writeInMission(file, reading);
+}
+
+// Throws when the mission folder is gone: only the reading's own folder is made.
+function writeInMission(file, data) {
   if (!fs.existsSync(path.dirname(file))) fs.mkdirSync(path.dirname(file));
-  writeJson(file, reading, { createDir: false });
+  writeJson(file, data, { createDir: false });
 }
 
 function recordHeartbeat(mission, shortId, { tool, contextTokens }) {
@@ -115,13 +121,23 @@ function recordStatusline(mission, shortId, input) {
   });
 }
 
-// The readings of a session, each null when absent or unreadable. The failure comes with the
-// StopFailure hook (Task 5).
+// `input` is what Claude Code gives the StopFailure hook: the kind of error (rate_limit for a usage
+// limit) and the last message, which tells when the limit resets. Only recorded here: the watcher
+// reads it.
+function recordFailure(mission, shortId, input) {
+  writeInMission(readingFile(mission, 'failures', shortId), {
+    at: new Date().toISOString(),
+    error: input.error || null,
+    message: input.last_assistant_message || null,
+  });
+}
+
+// The readings of a session, each null when absent or unreadable.
 function readReadings(mission, shortId) {
   return {
     heartbeat: readReading(readingFile(mission, 'heartbeats', shortId)),
     statusline: readReading(readingFile(mission, 'context', shortId)),
-    failure: null,
+    failure: readReading(readingFile(mission, 'failures', shortId)),
   };
 }
 
@@ -156,6 +172,7 @@ module.exports = {
   contextFromTranscript,
   recordHeartbeat,
   recordStatusline,
+  recordFailure,
   readReadings,
   contextOf,
 };
