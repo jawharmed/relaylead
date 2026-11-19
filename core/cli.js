@@ -1,10 +1,24 @@
 const path = require('node:path');
 const { t, codedError } = require('./messages');
 const { loadConfig } = require('./config');
-const { createMission, listMissions, stopMission, removeMission, getState, setState, reapLead, markReaperEnded, attachLead } = require('./missions');
+const {
+  createMission,
+  listMissions,
+  stopMission,
+  removeMission,
+  readMission,
+  getState,
+  setState,
+  reapLead,
+  markReaperEnded,
+  attachLead,
+} = require('./missions');
 const { listTasks, startTask, retryTask, deliverTask, finishTask } = require('./tasks');
 const { waitForChanges } = require('./wait');
 const { askQuestion, answerQuestion, listQuestions } = require('./questions');
+const { runPass, tendMission, stopPresent } = require('./watcher');
+const { watchLogSize, watchLogSince } = require('./watch-log');
+const { home } = require('./paths');
 const pkg = require('../package.json');
 
 // Options that take no value.
@@ -242,6 +256,39 @@ commands.answer = async (args, io) => {
   }
   const chosen = answerQuestion(mission, id, choice);
   io.out.write(t('questionAnswered', { id, choice: chosen }, language(io)));
+  return 0;
+};
+
+// `relaylead watcher run`: one full pass over the missions, or with --mission a pass over that one
+// alone, without the pass lock. Prints the lines the pass added to watcher.log.
+commands.watcher = async (args, io) => {
+  refuseInSession('watcher', io);
+  const { positional, options } = parseArgs(args);
+  if (positional.length !== 1 || positional[0] !== 'run' || options.mission === '') {
+    throw codedError('usage', { usage: 'relaylead watcher run [--mission <name>]' });
+  }
+  const lang = language(io);
+  const logSize = watchLogSize();
+  if (options.mission) {
+    readMission(options.mission); // mission-unknown
+    if (stopPresent()) {
+      io.out.write(t('watcherStopPresent', { home: home() }, lang));
+      return 0;
+    }
+    await tendMission(options.mission);
+  } else {
+    const result = await runPass();
+    if (result.outcome === 'stop') {
+      // STOP may have come during the pass: what it did before is printed too.
+      io.out.write(watchLogSince(logSize) + t('watcherStopPresent', { home: home() }, lang));
+      return 0;
+    }
+    if (result.outcome === 'busy') {
+      io.out.write(t('watcherBusy', result.holder, lang));
+      return 0;
+    }
+  }
+  io.out.write(watchLogSince(logSize));
   return 0;
 };
 
