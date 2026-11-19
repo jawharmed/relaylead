@@ -121,3 +121,19 @@ test('thresholds follow base + budget, capped by a measured window, and the hard
   assert.deepStrictEqual(thresholds('lead', null), [190000, 228000]);
   assert.deepStrictEqual(thresholds('crew', 1000000), [290000, 348000]);
 });
+
+test('an answer without input tokens is no reading of the transcript', () => {
+  const dir = tmpDir();
+  // A synthetic answer (an API error, a rate limit) has an empty usage: the answer before it counts.
+  const empty = JSON.stringify({
+    type: 'assistant',
+    isSidechain: false,
+    message: { usage: { input_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 0 } },
+  }) + '\n';
+  const after = path.join(dir, 'after.jsonl');
+  fs.writeFileSync(after, answerLine(50000) + empty);
+  assert.strictEqual(contextFromTranscript(after), 50000);
+  const only = path.join(dir, 'only.jsonl');
+  fs.writeFileSync(only, empty + answerLine(0));
+  assert.strictEqual(contextFromTranscript(only), null);
+});

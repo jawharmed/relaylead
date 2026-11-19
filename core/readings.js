@@ -23,9 +23,11 @@ function count(value) {
   return Number.isFinite(value) ? value : 0;
 }
 
-// The context of a usage: what the model read, cached or not.
+// The context of a usage: what the model read, cached or not. Null when it read nothing: a synthetic
+// answer (an API error, a rate limit) measures no context, and must not become the base.
 function inputTokens(usage) {
-  return count(usage.input_tokens) + count(usage.cache_read_input_tokens) + count(usage.cache_creation_input_tokens);
+  const total = count(usage.input_tokens) + count(usage.cache_read_input_tokens) + count(usage.cache_creation_input_tokens);
+  return total > 0 ? total : null;
 }
 
 function isObject(value) {
@@ -47,8 +49,8 @@ function tailLines(file) {
   }
 }
 
-// The context of the last answer of the main thread (a helper agent's answers are sidechains), or
-// null: no such answer in the end of the file, or no file.
+// The context of the last answer of the main thread that measures one (a helper agent's answers are
+// sidechains), or null: no such answer in the end of the file, or no file.
 function contextFromTranscript(file) {
   let lines;
   try {
@@ -65,7 +67,8 @@ function contextFromTranscript(file) {
     }
     if (!isObject(entry) || entry.isSidechain === true) continue;
     if (entry.type === 'assistant' && isObject(entry.message) && isObject(entry.message.usage)) {
-      return inputTokens(entry.message.usage);
+      const tokens = inputTokens(entry.message.usage);
+      if (tokens !== null) return tokens;
     }
   }
   return null;

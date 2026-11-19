@@ -217,3 +217,15 @@ test('the statusline records the window from the first call, then the context', 
   assert.strictEqual(runHook(STATUSLINE, 'not json', env), '\n');
   assert.deepStrictEqual(fs.readdirSync(path.join(home, 'missions', 'demo', 'context')), ['0123abcd.json']);
 });
+
+test('a status line with an empty usage is no reading, and sets no base', () => {
+  const home = missionHome({});
+  const env = { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'demo' };
+  const call = (usage) =>
+    runHook(STATUSLINE, { session_id: SESSION_ID, context_window: { context_window_size: 1000000, current_usage: usage } }, env);
+  call({ input_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 0 });
+  assert.deepStrictEqual([reading(home, 'context').contextTokens, reading(home, 'context').baseTokens], [null, null]);
+  call({ input_tokens: 2, cache_creation_input_tokens: 9505, cache_read_input_tokens: 33240 });
+  call({});
+  assert.deepStrictEqual([reading(home, 'context').contextTokens, reading(home, 'context').baseTokens], [42747, 42747]);
+});
