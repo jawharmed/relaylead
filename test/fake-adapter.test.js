@@ -86,3 +86,15 @@ test('fake stop reaches the session from another RELAYLEAD_HOME', async (t) => {
   await fake.stop(session);
   await waitFor(() => sessionEnded(session), 30000, 'the session process to end');
 });
+
+test('the fake adapter stops by id, harmlessly on a session already ended', async (t) => {
+  assert.strictEqual(fake.stopById, true);
+  const session = await launchSession(t);
+  recordSession('demo', session);
+
+  await fake.stop(session);
+  await waitFor(() => sessionEnded(session), 30000, 'the session process to end');
+  await fake.stop(session);
+
+  assert.strictEqual(fs.existsSync(session.stopFile), false);
+});

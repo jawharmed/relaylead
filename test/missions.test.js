@@ -253,6 +253,10 @@ test('a failing stop during the launch cleanup still cleans up and reports the f
 
 test('stop on a stopped or done mission kills nothing', async (t) => {
   freshHome(t);
+  fake.stopById = false; // an adapter that stops by pid, whose finished missions are left alone
+  t.after(() => {
+    fake.stopById = true;
+  });
   const originalStop = fake.stop;
   let stopCalls = 0;
   fake.stop = async (session) => {
@@ -546,10 +550,6 @@ test('stop runs again for an adapter that stops by id, and says when it had noth
     stopCalls++;
     return original(session);
   });
-  fake.stopById = true; // like the claude adapter: stopping a session again is harmless
-  t.after(() => {
-    delete fake.stopById;
-  });
 
   const first = await cli(['stop', 'demo']);
   assert.deepStrictEqual([first.code, first.out, stopCalls], [0, 'mission demo stopped\n', 1]);
@@ -557,8 +557,11 @@ test('stop runs again for an adapter that stops by id, and says when it had noth
   assert.deepStrictEqual([again.code, again.out, stopCalls], [0, 'mission demo stopped\n', 2]);
   assert.strictEqual((await cli(['state', 'get', '--mission', 'demo'])).out.trim(), 'stopped');
 
-  // The fake adapter stops by pid, which may belong to another process by now: nothing is done.
-  delete fake.stopById;
+  // An adapter that stops by pid, which may belong to another process by now: nothing is done.
+  fake.stopById = false;
+  t.after(() => {
+    fake.stopById = true;
+  });
   const refused = await cli(['stop', 'demo']);
   assert.deepStrictEqual([refused.code, refused.out, stopCalls], [0, 'mission demo is already stopped; nothing to do\n', 2]);
 });
@@ -815,6 +818,10 @@ test('an old stopping marker does not replay a stop by pid', async (t) => {
   stub(t, 'stop', () => async () => {
     stopCalls++;
   });
+  fake.stopById = false; // an adapter that stops by pid
+  t.after(() => {
+    fake.stopById = true;
+  });
 
   const result = await cli(['stop', 'demo']);
 
@@ -827,6 +834,43 @@ test('an old stopping marker does not replay a stop by pid', async (t) => {
   assert.strictEqual(stateRecord('demo').stopping, undefined);
   assert.strictEqual(stateRecord('demo').state, 'stopped');
   assert.strictEqual(fs.existsSync(lock), false);
+});
+
+test('remove stops the fake sessions by id', async (t) => {
+  freshHome(t);
+  writeMission('demo', tmpDir('relaylead-project-')); // no lead: the test plays it
+  await launchCrew(tmpDir('relaylead-project-'), 1);
+  // Written by the test, not by `state set done`: the crew session is left running.
+  writeJson(path.join(missionDir('demo'), 'state.json'), { state: 'done' });
+  // remove waits for each stop before deleting the mission folder: the session's ended file, which
+  // goes with that folder, is checked here while it is still there.
+  let stopCalls = 0;
+  stub(t, 'stop', (original) => async (session) => {
+    stopCalls++;
+    await original(session);
+    await waitFor(() => sessionEnded(session), 30000, 'the crew member to end');
+  });
+
+  const removed = await cli(['remove', 'demo']);
+
+  assert.strictEqual(removed.code, 0, removed.err);
+  assert.strictEqual(stopCalls, 1);
+  assert.strictEqual(fs.existsSync(missionDir('demo')), false);
+});
+
+test('an old stopping marker stops the fake sessions again by id', async (t) => {
+  freshHome(t);
+  writeMission('demo', tmpDir('relaylead-project-')); // no lead: the test plays it
+  const crew = await launchCrew(tmpDir('relaylead-project-'), 1);
+  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  writeJson(path.join(missionDir('demo'), 'state.json'), { state: 'stopped', stopping: true, updatedAt: twoHoursAgo });
+
+  const result = await cli(['stop', 'demo']);
+
+  assert.deepStrictEqual([result.code, result.out], [0, 'mission demo stopped\n'], result.err);
+  await waitFor(() => sessionEnded(crew), 30000, 'the crew member to end');
+  assert.strictEqual(stateRecord('demo').stopping, undefined);
+  assert.strictEqual(stateRecord('demo').state, 'stopped');
 });
 
 test('an empty folder lock older than 10 s is taken over', async (t) => {
@@ -852,10 +896,6 @@ test('stop of a done mission says it is done', async (t) => {
   freshHome(t);
   writeMission('demo', tmpDir('relaylead-project-')); // no lead: the test plays it
   assert.strictEqual((await cli(['state', 'set', 'done', '--mission', 'demo'])).code, 0);
-  fake.stopById = true; // the done mission's sessions are asked again
-  t.after(() => {
-    delete fake.stopById;
-  });
 
   const stopped = await cli(['stop', 'demo']);
 
