@@ -839,22 +839,22 @@ test('an old stopping marker does not replay a stop by pid', async (t) => {
 test('remove stops the fake sessions by id', async (t) => {
   freshHome(t);
   writeMission('demo', tmpDir('relaylead-project-')); // no lead: the test plays it
-  const crew = await launchCrew(tmpDir('relaylead-project-'), 1);
+  await launchCrew(tmpDir('relaylead-project-'), 1);
   // Written by the test, not by `state set done`: the crew session is left running.
   writeJson(path.join(missionDir('demo'), 'state.json'), { state: 'done' });
+  // remove waits for each stop before deleting the mission folder: the session's ended file, which
+  // goes with that folder, is checked here while it is still there.
   let stopCalls = 0;
   stub(t, 'stop', (original) => async (session) => {
     stopCalls++;
-    return original(session);
+    await original(session);
+    await waitFor(() => sessionEnded(session), 30000, 'the crew member to end');
   });
 
   const removed = await cli(['remove', 'demo']);
 
   assert.strictEqual(removed.code, 0, removed.err);
   assert.strictEqual(stopCalls, 1);
-  // Its ended file went with the mission folder: the agent removes its stop file (outside that
-  // folder) as it ends.
-  await waitFor(() => !fs.existsSync(crew.stopFile), 30000, 'the crew member to end');
   assert.strictEqual(fs.existsSync(missionDir('demo')), false);
 });
 
