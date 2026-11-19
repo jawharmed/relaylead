@@ -13,7 +13,7 @@ const FAKE = path.join(__dirname, '..', 'fixtures', 'claude', 'fake-claude.js');
 const PROFILE = { name: 'developer', model: 'sonnet', effort: 'low', tools: ['Read', 'Edit'], instructions: 'Be brief.' };
 const ENV_KEYS = [
   'RELAYLEAD_HOME', 'RELAYLEAD_CLAUDE', 'RELAYLEAD_CLAUDE_START_MS', 'RELAYLEAD_CLAUDE_WAKE_MS',
-  'RELAYLEAD_CLAUDE_COMMAND_MS', 'RELAYLEAD_CLAUDE_LAUNCH_MS',
+  'RELAYLEAD_CLAUDE_COMMAND_MS', 'RELAYLEAD_CLAUDE_LAUNCH_MS', 'RELAYLEAD_CLAUDE_WAKE_SETTLE_MS',
   'FAKE_CLAUDE_STATE', 'FAKE_CLAUDE_SCENARIO',
 ];
 
@@ -325,14 +325,31 @@ test('wake detects a copy and stops it', async (t) => {
   assert.deepStrictEqual(calls(state).at(-1), ['stop', copy.id]);
 });
 
-test('wake ignores the registry pid of a session claude lists without a process', async (t) => {
-  const { dir } = setup(t);
+// The `agents` calls made between the wake's stop and its resume: each is one round of the wait.
+function agentsCallsBeforeResume(state) {
+  const all = calls(state);
+  const resumeAt = all.findIndex((args) => args.includes('--resume'));
+  const stopAt = all.slice(0, resumeAt).map((args) => args[0]).lastIndexOf('stop');
+  assert.ok(stopAt !== -1 && resumeAt > stopAt, JSON.stringify(all));
+  return all.slice(stopAt, resumeAt).filter((args) => args[0] === 'agents').length;
+}
+
+test('wake waits for the registry pid of a session claude lists without a process, at most the short bound', async (t) => {
+  const { dir, state } = setup(t);
   const session = await claude.launch(spec(dir));
   await claude.stop(session);
-  // A stopped row has no pid; the old registry pid may now belong to another live process.
-  process.env.RELAYLEAD_CLAUDE_WAKE_MS = '500';
+  // A stopped row has no pid. The registry pid is waited for: the wake may be run again after one
+  // that gave up, while the process lingers. Here it belongs to another live process: it only costs
+  // the short bound, not the whole wait.
+  process.env.RELAYLEAD_CLAUDE_WAKE_SETTLE_MS = '300';
+  const start = Date.now();
+
   const woken = await claude.wake({ ...session, pid: process.pid }, 'hello');
+
   assert.strictEqual(woken.shortId, session.shortId);
+  // The first round sees no pid listed; the bound has not passed yet, so a later round resumes.
+  assert.ok(agentsCallsBeforeResume(state) >= 2, JSON.stringify(calls(state)));
+  assert.ok(Date.now() - start < 15000, `woken in ${Date.now() - start} ms`);
 });
 
 test('wake detects the other recorded copy output', async (t) => {
@@ -366,14 +383,57 @@ test('a wake that worked is not undone by a failing agents list', async (t) => {
   assert.strictEqual(woken.state, 'working');
 });
 
-test('wake gives up when the session process does not end', async (t) => {
-  const { dir, state } = setup(t);
-  const session = await claude.launch(spec(dir));
-  process.env.FAKE_CLAUDE_SCENARIO = 'stuck-stop';
-  process.env.RELAYLEAD_CLAUDE_WAKE_MS = '500';
-  await assert.rejects(claude.wake(session, 'hello'), (err) => {
-    assert.strictEqual(err.code, 'wake-timeout');
-    return true;
-  });
-  assert.strictEqual(calls(state).filter((args) => args.includes('--resume')).length, 0);
-});
+test(
+  'wake gives up when the session process does not end',
+  { skip: process.platform === 'win32' && 'POSIX only: on Windows, the wait for the process is bounded' },
+  async (t) => {
+    const { dir, state } = setup(t);
+    const session = await claude.launch(spec(dir));
+    process.env.FAKE_CLAUDE_SCENARIO = 'stuck-stop';
+    process.env.RELAYLEAD_CLAUDE_WAKE_MS = '500';
+    await assert.rejects(claude.wake(session, 'hello'), (err) => {
+      assert.strictEqual(err.code, 'wake-timeout');
+      return true;
+    });
+    // Run again, the wake finds the row without a pid: it waits for the registry pid all the same.
+    await assert.rejects(claude.wake(session, 'hello'), { code: 'wake-timeout' });
+    assert.strictEqual(calls(state).filter((args) => args.includes('--resume')).length, 0);
+  },
+);
+
+test(
+  'wake waits at most the settle bound on Windows',
+  { skip: process.platform !== 'win32' && 'Windows only: elsewhere, the wait for the process is not bounded' },
+  async (t) => {
+    const { dir, state } = setup(t);
+    const session = await claude.launch(spec(dir));
+    const [{ sleeper }] = fakeSessions(state);
+    // The row loses its pid at the stop, but the process keeps running (measured fact 1).
+    process.env.FAKE_CLAUDE_SCENARIO = 'stuck-stop';
+    process.env.RELAYLEAD_CLAUDE_WAKE_SETTLE_MS = '1000';
+    const start = Date.now();
+    const stoppedAt = whenRowLosesPid(state, session.shortId);
+
+    const woken = await claude.wake(session, 'hello');
+
+    // The time from the stop (seen by the test no sooner than it happened) to the end of the wake.
+    const sinceStop = Date.now() - (await stoppedAt);
+    assert.strictEqual(woken.shortId, session.shortId);
+    assert.ok(sinceStop >= 1000, `woken ${sinceStop} ms after the stop`);
+    assert.ok(agentsCallsBeforeResume(state) >= 2, JSON.stringify(calls(state)));
+    assert.strictEqual(sleeperEnded(state, sleeper), false); // resumed on the bound, process alive
+    assert.ok(Date.now() - start < 15000, `woken in ${Date.now() - start} ms`);
+  },
+);
+
+// Resolves with the time at which the fake claude's row of the session is first read without a pid,
+// read every 20 ms; with Infinity if it keeps its pid for 20 s.
+async function whenRowLosesPid(state, shortId) {
+  const deadline = Date.now() + 20000;
+  while (Date.now() < deadline) {
+    const row = fakeSessions(state).find((candidate) => candidate.id === shortId);
+    if (row && !row.pid) return Date.now();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return Infinity;
+}

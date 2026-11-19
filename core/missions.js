@@ -7,7 +7,7 @@ const { home, missionDir, slug } = require('./paths');
 const { writeJson, readJson } = require('./store');
 const { loadConfig } = require('./config');
 const { codedError } = require('./messages');
-const { recordSession, listSessions, isAlive } = require('./sessions');
+const { recordSession, listSessions, isAlive, settleBoundMs } = require('./sessions');
 const { loadProfile, loadMethod } = require('./profiles');
 const { writeJournal } = require('./guard');
 const { getAdapter } = require('../adapters');
@@ -28,6 +28,8 @@ const reapMaxMs = () => Number(process.env.RELAYLEAD_REAP_MAX_MS) || 10 * 60 * 1
 // How long a stop waits for the processes of the stopped sessions to end; tests shorten it.
 const stopWaitMs = () => Number(process.env.RELAYLEAD_STOP_WAIT_MS) || 30 * 1000;
 const STOP_POLL_MS = 250;
+// Past this age, the folder lock of a launch that has not written its mission.json holds nothing.
+const LAUNCH_LOCK_MAX_MS = 15 * 60 * 1000;
 
 function now() {
   return new Date().toISOString();
@@ -45,10 +47,10 @@ function lockFile(realDir) {
 
 // The lock follows its mission, not the lead's pid: an agent may restart a lead under another pid.
 // A lead gone for good is dealt with by `relaylead stop`.
-function isStale(lock, realDir) {
+function isStale(lock, file, realDir) {
   const mission = readJson(missionFile(lock.mission, 'mission.json'), null);
   // No mission yet: its launch is running, or crashed before writing it.
-  if (!mission) return !isAlive(lock.pid);
+  if (!mission) return !launchHolds(lock, file);
   // The name now belongs to a mission of another folder, or to a newer mission. A lock without
   // createdAt was written by an older relaylead: it belongs to the mission it names.
   if (mission.dir !== realDir) return true;
@@ -86,7 +88,14 @@ function readFolderLock(file, realDir) {
     // Empty or partial file: another launch has just created it and is writing it, unless it is old.
     return ageOf(file) <= EMPTY_LOCK_STALE_MS ? { state: 'held', mission: '?' } : { state: 'stale' };
   }
-  return isStale(lock, realDir) ? { state: 'stale' } : { state: 'held', mission: lock.mission };
+  return isStale(lock, file, realDir) ? { state: 'stale' } : { state: 'held', mission: lock.mission };
+}
+
+// Whether the launch that wrote this folder lock may still be running, before its mission.json: its
+// process lives and the lock is less than 15 min old. A launch takes a few minutes at most; past
+// that, its pid may belong to an unrelated process (Windows soon gives it to another one, #71).
+function launchHolds(lock, file) {
+  return isAlive(lock.pid) && ageOf(file) < LAUNCH_LOCK_MAX_MS;
 }
 
 // The check that takeOverStaleLock runs under its guard: a lock that is gone is not stale, so a
@@ -314,49 +323,88 @@ async function endMission(mission) {
     const crew = sessions.filter((session) => session.shortId !== lead.shortId && session.state !== 'stopped');
     return await stopSessionsAndWait(mission, crew);
   } finally {
-    await spawnReaper(mission.name);
+    await spawnReaper(mission.name, mission.createdAt);
   }
 }
 
-// Stops each session, then waits for the process of each stopped one to end. A stop that fails does
-// not keep the other sessions running. Returns {failed, alive, error}: the sessions whose stop
-// failed, those whose process still runs after the wait, and the first stop error.
+// Stops each session, then waits for each stopped one to end. A stop that fails does not keep the
+// other sessions running. Returns {failed, alive, error}: the sessions whose stop failed, those still
+// running after the wait, and the first stop error.
 async function stopSessionsAndWait(mission, sessions) {
   const adapter = getAdapter(mission.agent);
   // Taken before the stops: the adapter knows the current process of a session, which may have been
-  // restarted since it was recorded. A session it does not list has no process: its registry pid may
-  // by now belong to an unrelated process. Only when the list fails is the registry pid used.
+  // restarted since it was recorded.
   let listed = null;
   try {
     listed = await adapter.list(mission.name);
   } catch {
     // `claude agents` may fail for a moment: the registry pids will do
   }
+  const registry = listSessions(mission.name);
   const failed = [];
   const stopped = [];
   let error = null;
   for (const session of sessions) {
     try {
       await adapter.stop(session);
-      stopped.push({ session, pid: listed ? listedPid(listed, session) : session.pid });
+      stopped.push({ session, ...pidToWaitFor(listed, registry, session), unlistedAt: null });
     } catch (err) {
       failed.push(session);
       error = error || err;
     }
   }
   const giveUpAt = Date.now() + stopWaitMs();
-  let alive = stopped.filter((entry) => isAlive(entry.pid));
+  let alive = await stillRunning(adapter, mission, stopped, giveUpAt);
   while (alive.length > 0 && Date.now() < giveUpAt) {
     await sleep(STOP_POLL_MS);
-    alive = alive.filter((entry) => isAlive(entry.pid));
+    alive = await stillRunning(adapter, mission, alive, giveUpAt);
   }
   return { failed, alive: alive.map((entry) => entry.session), error };
 }
 
-// The pid the adapter lists for the session; null (no process) when it does not list it.
-function listedPid(listed, session) {
+// The stopped sessions that have not ended yet, read again from the adapter. A session has ended once
+// the adapter lists no process for it (first step) and the pid read before its stop is dead (second
+// step, measured fact 1). Before `giveUpAt`, the second step lasts at most the entry's `settleMs`,
+// after which the session counts as ended. A list that fails leaves this round to the pid alone.
+async function stillRunning(adapter, mission, entries, giveUpAt) {
+  let rows = null;
+  try {
+    rows = await adapter.list(mission.name);
+  } catch {
+    // `claude agents` may fail for a moment: the next round reads it again
+  }
+  const now = Date.now();
+  return entries.filter((entry) => {
+    if (!rows) return isAlive(entry.pid);
+    if (hasProcess(rows, entry.session)) {
+      entry.unlistedAt = null;
+      return true;
+    }
+    if (entry.unlistedAt === null) entry.unlistedAt = now;
+    if (!isAlive(entry.pid)) return false;
+    return now >= giveUpAt || now - entry.unlistedAt < entry.settleMs;
+  });
+}
+
+// Whether the adapter lists a process for the session. No row, or a row without a pid: the agent
+// knows no process, though the last one may still be ending.
+function hasProcess(rows, session) {
+  return rows.some((row) => row.shortId === session.shortId && Boolean(row.pid));
+}
+
+// {pid, settleMs}: the pid read before the stop, to wait for once the session is stopped, and how
+// long the second step may last (settleBoundMs). The pid the adapter lists for the session. A session
+// it does not list has no process: null. A row without a pid (a stop run again, or within the 1.5 s
+// when the row has lost its pid, measured fact 1): the registry pid, as a fallback that may by now
+// belong to an unrelated process, so with the short bound. When the list has failed: the registry
+// pid, with the whole wait, as before.
+function pidToWaitFor(listed, registry, session) {
+  const recorded = (registry.find((candidate) => candidate.shortId === session.shortId) || session).pid;
+  if (!listed) return { pid: recorded, settleMs: settleBoundMs(stopWaitMs()) };
   const row = listed.find((candidate) => candidate.shortId === session.shortId);
-  return row ? row.pid : null;
+  if (!row) return { pid: null, settleMs: 0 };
+  if (row.pid) return { pid: row.pid, settleMs: settleBoundMs(stopWaitMs()) };
+  return { pid: recorded, settleMs: settleBoundMs(stopWaitMs(), { fallback: true }) };
 }
 
 // The folders of these sessions. An adapter row may have no folder: the registry has it.
@@ -375,12 +423,15 @@ function cleanMission(mission, keepDirs) {
   return warnings;
 }
 
-// Runs `relaylead _reap <mission>` on its own: it outlives this command and the lead's turn.
-// No shell, so a path with spaces or quotes is passed as it is. Its pid is recorded in reaper.json;
-// the helper itself writes reaper-ended.json as it exits (markReaperEnded), so one can check that it
-// has ended without reading its pid, which Windows soon gives to another process.
-async function spawnReaper(name) {
-  const child = spawn(process.execPath, [BIN, '_reap', name], {
+// Runs `relaylead _reap <mission> <createdAt>` on its own: it outlives this command and the lead's
+// turn. The createdAt ties it to this mission: once the mission is removed and launched again under
+// the same name, the helper leaves the new one alone. No shell, so a path with spaces or quotes is
+// passed as it is. Its pid is recorded in reaper.json; the helper itself writes reaper-ended.json as
+// it exits (markReaperEnded), so one can check that it has ended without reading its pid, which
+// Windows soon gives to another process.
+async function spawnReaper(name, createdAt) {
+  const args = createdAt ? [BIN, '_reap', name, createdAt] : [BIN, '_reap', name];
+  const child = spawn(process.execPath, args, {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
@@ -403,8 +454,10 @@ async function spawnReaper(name) {
 // that is idle with a process also stops the lead after two reads: acceptable once the lead is done.
 // An adapter that gives no `idle` is judged on its state alone. A failing list is tried again until
 // the deadline and breaks a run of idle reads; at the deadline the lead is stopped anyway. Nobody
-// watches the helper, so a stop that fails is written to the mission's journal.
-async function reapLead(name) {
+// watches the helper, so a stop that fails is written to the mission's journal. A helper of an older
+// mission of the same name returns at once.
+async function reapLead(name, createdAt) {
+  if (!isMissionOf(name, createdAt)) return;
   const mission = readMission(name);
   const adapter = getAdapter(mission.agent);
   const lead = readJson(missionFile(name, 'lead.json'), {});
@@ -436,13 +489,23 @@ async function reapLead(name) {
 // The helper's last act (`relaylead _reap`), however reapLead ended: reaper-ended.json, with its pid
 // and the time. Written by the helper alone; reaper.json, written by `state set done`, only says it
 // was started. Never into a mission folder removed meanwhile: a folder written again would keep the
-// name taken. Never throws: the helper is exiting, so every error is ignored, not only a missing folder.
-function markReaperEnded(name) {
+// name taken; nor into a newer mission of the same name. Never throws: the helper is exiting, so every
+// error is ignored, not only a missing folder.
+function markReaperEnded(name, createdAt) {
   try {
+    if (!isMissionOf(name, createdAt)) return;
     writeJson(missionFile(name, 'reaper-ended.json'), { pid: process.pid, endedAt: now() }, { createDir: false });
   } catch {
     // The mission folder is gone (nobody will read the file), or the write failed: the helper ends anyway.
   }
+}
+
+// Whether mission.json is that of the mission created at `createdAt`. A helper started by an older
+// relaylead gives no createdAt: it acts on the mission of that name, as it did then.
+function isMissionOf(name, createdAt) {
+  if (!createdAt) return true;
+  const mission = readJson(missionFile(name, 'mission.json'), null);
+  return Boolean(mission) && mission.createdAt === createdAt;
 }
 
 // `relaylead show`: the user's terminal joins the lead's session. Resolves with its exit code.
@@ -564,7 +627,7 @@ async function stopSessions(mission, justStopped) {
   return result;
 }
 
-// Whether a launch of this mission is running: a folder lock names it and its process is alive.
+// Whether a launch of this mission is running: a folder lock names it and still holds (launchHolds).
 // The launch has reserved the mission folder but not written mission.json yet.
 function launchRunning(name) {
   const locks = path.join(home(), 'locks');
@@ -576,13 +639,14 @@ function launchRunning(name) {
     throw err;
   }
   return files.some((file) => {
+    const lockPath = path.join(locks, file);
     let lock;
     try {
-      lock = readJson(path.join(locks, file), null);
+      lock = readJson(lockPath, null);
     } catch {
       return false; // being written: not readable yet
     }
-    return Boolean(lock && lock.mission === name && isAlive(lock.pid));
+    return Boolean(lock && lock.mission === name && launchHolds(lock, lockPath));
   });
 }
 
