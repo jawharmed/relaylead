@@ -5,7 +5,7 @@ const { spawn } = require('node:child_process');
 const { missionDir } = require('../../core/paths');
 const { readJson } = require('../../core/store');
 const { t, codedError } = require('../../core/messages');
-const { listSessions, isAlive } = require('../../core/sessions');
+const { listSessions, isAlive, settleBoundMs } = require('../../core/sessions');
 const { MIN_VERSION, buildLaunchArgs, compareVersion } = require('./args');
 const { writeSessionSettings } = require('./settings');
 const { parseLaunchOutput, mapState } = require('./sessions');
@@ -232,18 +232,14 @@ async function attach(session) {
 }
 
 // Resuming a session whose process still runs, or with any option, starts a copy (spike): so stop,
-// wait for the process to end, then resume with nothing but the message, from the session folder.
+// wait for the session to end, then resume with nothing but the message, from the session folder.
 async function wake(session, message) {
   checkPrompt(message, 'message');
   const row = await findRow(session.shortId);
   // A row without a pid has no process: the registry pid may by now belong to another process.
   const pid = row ? row.pid : session.pid;
   await stop(session);
-  const deadline = Date.now() + wakeTimeoutMs();
-  while (isAlive(pid)) {
-    if (Date.now() >= deadline) throw codedError('wake-timeout', { shortId: session.shortId, seconds: wakeTimeoutMs() / 1000 });
-    await sleep(POLL_MS);
-  }
+  await waitUntilEnded(session, pid);
   const args = ['--bg', '--resume', session.sessionId, message];
   const { stdout, stderr } = await runClaude(args, { cwd: session.cwd, label: 'claude --bg --resume', timeoutMs: launchTimeoutMs() });
   const output = stdout + stderr;
@@ -255,6 +251,34 @@ async function wake(session, message) {
     throw await stopAfterFailure(err, result.shortId, 'copy-stopped');
   }
   return wokenSession(session);
+}
+
+// The end of a stopped session, in two steps: its row has no pid (or is gone), then `pid`, read
+// before the stop, has ended; the row loses its pid up to 1.5 s before the process ends (measured
+// fact 1). Within the wait of wakeTimeoutMs, the second step lasts at most settleBoundMs, which only
+// shortens it on Windows: on macOS the resume never starts before the process has ended, which would
+// start a copy. A read of the row that fails leaves that round to the pid alone. Fails with
+// wake-timeout once the wait is over.
+async function waitUntilEnded(session, pid) {
+  const deadline = Date.now() + wakeTimeoutMs();
+  const settleMs = settleBoundMs(wakeTimeoutMs());
+  let unlistedAt = null;
+  for (;;) {
+    let listed; // whether claude lists a process for the session; undefined when the read fails
+    try {
+      const row = await findRow(session.shortId);
+      listed = Boolean(row && row.pid);
+    } catch {
+      listed = undefined; // `claude agents` may fail for a moment
+    }
+    const now = Date.now();
+    if (listed) unlistedAt = null;
+    else if (listed === false && unlistedAt === null) unlistedAt = now;
+    if (!listed && !isAlive(pid)) return;
+    if (now >= deadline) throw codedError('wake-timeout', { shortId: session.shortId, seconds: wakeTimeoutMs() / 1000 });
+    if (listed === false && now - unlistedAt >= settleMs) return;
+    await sleep(POLL_MS);
+  }
 }
 
 // The woken session as claude lists it. The wake has worked: a failing list must not undo it.

@@ -34,6 +34,11 @@ function cliProcess(args) {
   });
 }
 
+// The createdAt of the mission, which the helper `relaylead _reap` is started with.
+function createdAtOf(name) {
+  return readJson(path.join(missionDir(name), 'mission.json')).createdAt;
+}
+
 async function waitUntilWorking(name) {
   await waitFor(
     async () => {
@@ -356,7 +361,7 @@ test('the helper exits at once when the lead is no longer working', { timeout: 2
   await waitFor(() => sessionEnded(lead), 30000, 'the lead to end');
   assert.strictEqual((await cli(['state', 'set', 'done', '--mission', 'demo'])).code, 0);
 
-  const reaped = await cliProcess(['_reap', 'demo']);
+  const reaped = await cliProcess(['_reap', 'demo', createdAtOf('demo')]);
 
   assert.deepStrictEqual([reaped.code, reaped.err], [0, '']);
 });
@@ -377,6 +382,20 @@ test('done records the pid of the helper, which ends once the lead has ended', {
   // Written by the helper itself as it exits, with its own pid.
   const ended = path.join(missionDir('demo'), 'reaper-ended.json');
   await waitFor(() => readJson(ended, {}).pid === reaper.pid, 15000, 'the helper to end');
+});
+
+test('an old reaper does nothing for a newer mission of the same name', { timeout: 20000 }, async (t) => {
+  const lead = await launchedLead(t);
+  // Without the check, the helper would stop the lead it sees working after 500 ms.
+  setEnv(t, 'RELAYLEAD_REAP_MAX_MS', '500');
+  const start = Date.now();
+
+  const reaped = await cliProcess(['_reap', 'demo', '2000-01-01T00:00:00.000Z']);
+
+  assert.deepStrictEqual([reaped.code, reaped.err], [0, '']);
+  assert.ok(Date.now() - start < 3000, `ended in ${Date.now() - start} ms`);
+  assert.strictEqual(fs.existsSync(lead.stopFile) || sessionEnded(lead), false, 'the lead was stopped');
+  assert.strictEqual(fs.existsSync(path.join(missionDir('demo'), 'reaper-ended.json')), false);
 });
 
 test('the end of a late helper does not write the removed mission folder again', async (t) => {
@@ -450,7 +469,7 @@ test('the helper stops a lead that is done but still has a process', async (t) =
   const lead = await launchedLead(t);
   stub(t, 'list', () => async () => [{ ...lead, state: 'done' }]);
 
-  await reapLead('demo');
+  await reapLead('demo', createdAtOf('demo'));
 
   await waitFor(() => sessionEnded(lead), 30000, 'the lead to be stopped');
 });
@@ -476,7 +495,7 @@ test('the helper stops a lead claude leaves working but idle after two idle read
     delete process.env.RELAYLEAD_REAP_MAX_MS;
   });
 
-  await reapLead('demo');
+  await reapLead('demo', createdAtOf('demo'));
 
   assert.deepStrictEqual(readsAtStop, [2]);
   await waitFor(() => sessionEnded(lead), 30000, 'the lead to be stopped');
@@ -492,7 +511,7 @@ test('the helper does not stop a lead on one idle read followed by a busy one', 
     delete process.env.RELAYLEAD_REAP_MAX_MS;
   });
 
-  await reapLead('demo');
+  await reapLead('demo', createdAtOf('demo'));
 
   assert.deepStrictEqual(readsAtStop, [4]);
 });
@@ -506,7 +525,7 @@ test('the helper waits for the deadline when the idle lead has no process, as du
   });
   const start = Date.now();
 
-  await reapLead('demo');
+  await reapLead('demo', createdAtOf('demo'));
 
   assert.ok(Date.now() - start >= 4500, 'stopped before the deadline');
   assert.ok(readsAtStop[0] > 2, `stopped after ${readsAtStop[0]} reads`);
@@ -522,7 +541,7 @@ test('the helper keeps polling when the list fails, then stops the lead at the d
     delete process.env.RELAYLEAD_REAP_MAX_MS;
   });
 
-  await reapLead('demo');
+  await reapLead('demo', createdAtOf('demo'));
 
   await waitFor(() => sessionEnded(lead), 30000, 'the lead to be stopped');
 });
@@ -534,7 +553,7 @@ test('the helper writes to the journal when it cannot stop the lead', async (t) 
     throw new Error('stop failed');
   });
 
-  await reapLead('demo');
+  await reapLead('demo', createdAtOf('demo'));
 
   const journal = fs.readFileSync(path.join(missionDir('demo'), 'journal.log'), 'utf8');
   assert.match(journal, new RegExp(`could not stop the lead ${lead.shortId}: stop failed`));
@@ -923,6 +942,100 @@ test('a session the adapter no longer lists has no process to wait for', async (
   assert.ok(isAlive(unrelated.pid));
 });
 
+// A live process with no link to the mission, ended by the test through its handle.
+function unrelatedProcess(t) {
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  const exited = new Promise((resolve) => child.once('exit', resolve));
+  t.after(() => child.kill());
+  return { pid: child.pid, end: () => (child.kill(), exited) };
+}
+
+// A crew session of mission demo recorded with `pid`. Like claude (measured fact 1), the adapter
+// lists it with that pid until it is stopped, then without one.
+function listedWithPidUntilStopped(t, pid) {
+  writeMission('demo', tmpDir('relaylead-project-')); // no lead: the test plays it
+  const session = { sessionId: 'fake-crew', shortId: 'crew0000', name: 'demo/developer/1', role: 'crew', pid };
+  recordSession('demo', session);
+  let stopped = false;
+  stub(t, 'list', () => async () => [{ ...session, state: stopped ? 'stopped' : 'working', pid: stopped ? null : pid }]);
+  stub(t, 'stop', () => async () => {
+    stopped = true;
+  });
+}
+
+// Sets the variable for the test.
+function setEnv(t, name, value) {
+  process.env[name] = value;
+  t.after(() => {
+    delete process.env[name];
+  });
+}
+
+test(
+  'a stop waits on the adapter list, not on a pid now used by another process',
+  { skip: process.platform !== 'win32' && 'Windows only: elsewhere, the wait for the pid is not bounded' },
+  async (t) => {
+    freshHome(t);
+    const unrelated = unrelatedProcess(t);
+    listedWithPidUntilStopped(t, unrelated.pid);
+    const start = Date.now();
+
+    const stopped = await cli(['stop', 'demo']);
+
+    assert.deepStrictEqual([stopped.code, stopped.out, stopped.err], [0, 'mission demo stopped\n', '']);
+    assert.ok(Date.now() - start < 8000, `stopped in ${Date.now() - start} ms`);
+    assert.ok(isAlive(unrelated.pid));
+  },
+);
+
+test(
+  'a stop is not over while the process from before lives, even once the list shows no pid',
+  { skip: process.platform === 'win32' && 'POSIX only: on Windows, the wait for the pid is bounded' },
+  async (t) => {
+    freshHome(t);
+    const lingering = unrelatedProcess(t);
+    listedWithPidUntilStopped(t, lingering.pid);
+    setEnv(t, 'RELAYLEAD_STOP_WAIT_MS', '600');
+
+    const refused = await cli(['stop', 'demo']);
+    assert.strictEqual(refused.code, 1);
+    assert.match(refused.err, /process is still running/);
+
+    await lingering.end();
+    const stopped = await cli(['stop', 'demo']);
+    assert.strictEqual(stopped.code, 0, stopped.err);
+  },
+);
+
+test('a stop judges on the pid only when the list fails', async (t) => {
+  // The adapter lists the session with its pid until it is stopped, then fails.
+  let session = null;
+  let stopped = false;
+  stub(t, 'list', () => async () => {
+    if (stopped) throw new Error('list failed');
+    return [{ ...session, state: 'working' }];
+  });
+  stub(t, 'stop', () => async () => {
+    stopped = true;
+  });
+  setEnv(t, 'RELAYLEAD_STOP_WAIT_MS', '300');
+  const stopWith = (pid) => {
+    freshHome(t);
+    writeMission('demo', tmpDir('relaylead-project-')); // no lead: the test plays it
+    session = { sessionId: 'fake-crew', shortId: 'crew0000', name: 'demo/developer/1', role: 'crew', pid };
+    recordSession('demo', session);
+    stopped = false;
+    return cli(['stop', 'demo']);
+  };
+
+  const alive = await stopWith(unrelatedProcess(t).pid);
+  assert.strictEqual(alive.code, 1);
+  assert.match(alive.err, /process is still running/);
+
+  const impossible = await stopWith(2147483646); // a pid that cannot exist
+  assert.deepStrictEqual([impossible.code, impossible.err], [0, '']);
+});
+
 test('remove waits for the end of state set done', async (t) => {
   freshHome(t);
   writeMission('demo', tmpDir('relaylead-project-')); // no lead: the test plays it
@@ -975,6 +1088,22 @@ test('remove leaves a mission folder being launched', async (t) => {
   assert.strictEqual(refused.code, 1);
   assert.match(refused.err, /busy/);
   assert.strictEqual(fs.existsSync(missionDir('demo')), true);
+});
+
+test('a launch lock older than 15 min does not hold a mission name, even with a live pid', async (t) => {
+  freshHome(t);
+  fs.mkdirSync(missionDir('demo'), { recursive: true }); // no mission.json
+  const dir = fs.realpathSync.native(tmpDir('relaylead-project-'));
+  const lock = lockFile(dir);
+  writeJson(lock, { pid: process.pid, mission: 'demo' }); // a pid that may now be another process
+  const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000);
+  fs.utimesSync(lock, twentyMinutesAgo, twentyMinutesAgo);
+
+  const removed = await cli(['remove', 'demo']);
+
+  assert.strictEqual(removed.code, 0, removed.err);
+  assert.strictEqual(fs.existsSync(missionDir('demo')), false);
+  assert.strictEqual(isStaleFolderLock(dir), true); // a launch may take the folder over
 });
 
 test('remove checks the mission name before removing anything', async (t) => {

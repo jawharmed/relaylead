@@ -13,7 +13,7 @@ const FAKE = path.join(__dirname, '..', 'fixtures', 'claude', 'fake-claude.js');
 const PROFILE = { name: 'developer', model: 'sonnet', effort: 'low', tools: ['Read', 'Edit'], instructions: 'Be brief.' };
 const ENV_KEYS = [
   'RELAYLEAD_HOME', 'RELAYLEAD_CLAUDE', 'RELAYLEAD_CLAUDE_START_MS', 'RELAYLEAD_CLAUDE_WAKE_MS',
-  'RELAYLEAD_CLAUDE_COMMAND_MS', 'RELAYLEAD_CLAUDE_LAUNCH_MS',
+  'RELAYLEAD_CLAUDE_COMMAND_MS', 'RELAYLEAD_CLAUDE_LAUNCH_MS', 'RELAYLEAD_CLAUDE_WAKE_SETTLE_MS',
   'FAKE_CLAUDE_STATE', 'FAKE_CLAUDE_SCENARIO',
 ];
 
@@ -366,14 +366,37 @@ test('a wake that worked is not undone by a failing agents list', async (t) => {
   assert.strictEqual(woken.state, 'working');
 });
 
-test('wake gives up when the session process does not end', async (t) => {
-  const { dir, state } = setup(t);
-  const session = await claude.launch(spec(dir));
-  process.env.FAKE_CLAUDE_SCENARIO = 'stuck-stop';
-  process.env.RELAYLEAD_CLAUDE_WAKE_MS = '500';
-  await assert.rejects(claude.wake(session, 'hello'), (err) => {
-    assert.strictEqual(err.code, 'wake-timeout');
-    return true;
-  });
-  assert.strictEqual(calls(state).filter((args) => args.includes('--resume')).length, 0);
-});
+test(
+  'wake gives up when the session process does not end',
+  { skip: process.platform === 'win32' && 'POSIX only: on Windows, the wait for the process is bounded' },
+  async (t) => {
+    const { dir, state } = setup(t);
+    const session = await claude.launch(spec(dir));
+    process.env.FAKE_CLAUDE_SCENARIO = 'stuck-stop';
+    process.env.RELAYLEAD_CLAUDE_WAKE_MS = '500';
+    await assert.rejects(claude.wake(session, 'hello'), (err) => {
+      assert.strictEqual(err.code, 'wake-timeout');
+      return true;
+    });
+    assert.strictEqual(calls(state).filter((args) => args.includes('--resume')).length, 0);
+  },
+);
+
+test(
+  'wake waits at most the settle bound on Windows',
+  { skip: process.platform !== 'win32' && 'Windows only: elsewhere, the wait for the process is not bounded' },
+  async (t) => {
+    const { dir } = setup(t);
+    const session = await claude.launch(spec(dir));
+    // The row loses its pid at the stop, but the process keeps running (measured fact 1).
+    process.env.FAKE_CLAUDE_SCENARIO = 'stuck-stop';
+    process.env.RELAYLEAD_CLAUDE_WAKE_SETTLE_MS = '400';
+    const start = Date.now();
+
+    const woken = await claude.wake(session, 'hello');
+
+    const elapsed = Date.now() - start;
+    assert.strictEqual(woken.shortId, session.shortId);
+    assert.ok(elapsed >= 400 && elapsed <= 5000, `woken in ${elapsed} ms`);
+  },
+);

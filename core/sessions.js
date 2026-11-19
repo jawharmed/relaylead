@@ -44,4 +44,14 @@ function isAlive(pid) {
   }
 }
 
-module.exports = { recordSession, listSessions, isAlive };
+// The end of a stopped session comes in two steps: the agent lists no process for it, then the pid
+// read before the stop has ended (the row loses its pid up to 1.5 s before the process ends). This is
+// how long the second step may last, out of a wait of `totalMs`: all of it on POSIX, where a pid is
+// not given to another process within seconds; at most 5 s on Windows, which soon gives it to another
+// one (#71). Past it, the session counts as ended.
+function settleBoundMs(totalMs) {
+  if (process.platform !== 'win32') return totalMs;
+  return Math.min(totalMs, Number(process.env.RELAYLEAD_CLAUDE_WAKE_SETTLE_MS) || 5000);
+}
+
+module.exports = { recordSession, listSessions, isAlive, settleBoundMs };

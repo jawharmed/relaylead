@@ -246,12 +246,14 @@ commands.answer = async (args, io) => {
 };
 
 // Internal, not in the help: started by `state set done`, it stops the lead once its turn is over.
+// The createdAt of its mission (absent when started by an older relaylead) keeps it off a newer
+// mission of the same name.
 commands._reap = async (args) => {
-  const name = parseArgs(args).positional[0];
+  const [name, createdAt] = parseArgs(args).positional;
   try {
-    await reapLead(name);
+    await reapLead(name, createdAt);
   } finally {
-    markReaperEnded(name);
+    markReaperEnded(name, createdAt);
   }
   return 0;
 };
