@@ -275,6 +275,22 @@ test('a mail read but not marked is passed on again', () => {
   assert.deepStrictEqual(readMailNames(home), []);
 });
 
+test('a hook whose output is closed before it is read exits 0 and leaves the mail unread', async () => {
+  const home = missionHome({});
+  process.env.RELAYLEAD_HOME = home;
+  sendMail('demo', '0123abcd', 'not read yet');
+  const env = { ...process.env, RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'demo' };
+  const child = spawn(process.execPath, [POSTTOOL], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+  // Closed before the hook writes, as when Claude Code gives the hook up.
+  child.stdout.destroy();
+  let stderr = '';
+  child.stderr.on('data', (chunk) => (stderr += chunk));
+  child.stdin.end(JSON.stringify({ session_id: SESSION_ID, tool_name: 'Bash' }));
+  const code = await new Promise((resolve) => child.on('close', resolve));
+  assert.deepStrictEqual([code, stderr], [0, '']);
+  assert.strictEqual(readMailNames(home).length, 1);
+});
+
 test('the stop hook keeps the turn going while mail waits', () => {
   const home = missionHome({});
   const env = { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'demo' };
