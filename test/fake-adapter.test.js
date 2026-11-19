@@ -61,8 +61,8 @@ test('fake stop ends the session process and kills nothing by its pid', async (t
   await waitFor(() => sessionEnded(session), 30000, 'the session process to end');
   // A child of this test that has not ended: its pid is still its own.
   assert.ok(isAlive(unrelated.pid));
-  // Removed by the agent as it ended, just after its ended file: the stop above saw the unrelated
-  // process alive and left the file.
+  // Removed by the agent as it ended, just after its ended file: the stop above read the pid of the
+  // registry, alive, and left the file.
   await waitFor(() => !fs.existsSync(session.stopFile), 5000, 'the agent to remove its stop file');
 });
 
@@ -118,12 +118,18 @@ async function listed(session) {
   return (await fake.list('demo')).find((row) => row.shortId === session.shortId);
 }
 
-test('a fake session that ended its turn is listed waiting and idle', async (t) => {
+// Done and idle with its process, as Claude lists a session that ended its turn; ended, it has none.
+async function turnEnded(session) {
+  const row = await listed(session);
+  return row.state === 'done' && row.idle === true && Boolean(row.pid);
+}
+
+test('a fake session that ended its turn is listed done and idle', async (t) => {
   const session = await launchIdleLead(t);
   await waitFor(() => fs.existsSync(session.idleFile), 30000, 'the session to end its turn');
 
   const row = await listed(session);
-  assert.deepStrictEqual([row.role, row.state, row.idle, row.pid], ['lead', 'waiting', true, session.pid]);
+  assert.deepStrictEqual([row.role, row.state, row.idle, row.pid], ['lead', 'done', true, session.pid]);
 });
 
 test('wake restarts a fake session under the same ids, with the message', async (t) => {
@@ -137,10 +143,40 @@ test('wake restarts a fake session under the same ids, with the message', async 
 
   assert.strictEqual(woken.shortId, session.shortId);
   assert.strictEqual(woken.sessionId, session.sessionId);
-  assert.notStrictEqual(woken.pid, session.pid);
   for (const field of ['idleFile', 'killedFile', 'logFile', 'env']) assert.deepStrictEqual(woken[field], session[field], field);
+  // A new process, proved by what it writes, not by its pid (Windows may give it the old one, #62):
+  // only the woken agent has the message.
   await waitFor(() => logText(session).includes('woken: hello'), 30000, 'the message in the log');
-  await waitFor(async () => (await listed(session)).state === 'waiting', 30000, 'the woken session to end its turn');
+  await waitFor(() => turnEnded(session), 30000, 'the woken session to end its turn');
+});
+
+test('a stop with the session from before its wake stops the woken session', async (t) => {
+  const session = await launchIdleLead(t);
+  await waitFor(() => fs.existsSync(session.idleFile), 30000, 'the session to end its turn');
+  const woken = await fake.wake(session, 'hello');
+  t.after(() => fake.stop(woken));
+  recordSession('demo', woken);
+  await waitFor(() => logText(session).includes('woken: hello'), 30000, 'the woken session to start');
+
+  // The old object names the old process, dead: the stop goes by the short id.
+  await fake.stop(session);
+  await waitFor(() => sessionEnded(session), 30000, 'the woken session to end');
+});
+
+test('a wake refuses a message claude would read as an option', async () => {
+  process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
+  const session = { sessionId: 'fake-00000000deadbeef', shortId: '00000000', name: 'demo/lead', role: 'lead', pid: 2147483646 };
+  const stop = fake.stop;
+  let stopped = false;
+  fake.stop = async () => {
+    stopped = true;
+  };
+  try {
+    await assert.rejects(fake.wake(session, '--help'), { code: 'bad-prompt' });
+  } finally {
+    fake.stop = stop;
+  }
+  assert.strictEqual(stopped, false);
 });
 
 test('a killed fake session is listed failed without a process', async (t) => {
@@ -177,6 +213,31 @@ test('wake resumes a killed fake session', async (t) => {
   await waitFor(() => logText(session).includes('woken: hello'), 30000, 'the message in the log');
 });
 
+test('wake resumes a fake session whose process died without a witness', async (t) => {
+  process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
+  fs.mkdirSync(missionDir('demo'), { recursive: true });
+  // Recorded by the test with a pid that cannot exist: dead, and nothing says so but its pid.
+  const dead = {
+    sessionId: 'fake-00000000deadbeef',
+    shortId: '00000000',
+    name: 'demo/developer/1',
+    role: 'crew',
+    pid: 2147483646,
+    cwd: tmpDir('relaylead-project-'),
+    logFile: path.join(missionDir('demo'), 'fake-crew-00000000.log'),
+  };
+  recordSession('demo', dead);
+
+  const started = Date.now();
+  const woken = await fake.wake(dead, 'hello');
+  t.after(() => fake.stop(woken));
+  recordSession('demo', woken);
+
+  // At once, not after the wait of RELAYLEAD_FAKE_WAKE_MS (10 s), and without a wake-timeout.
+  assert.ok(Date.now() - started < 5000);
+  await waitFor(() => logText(dead).includes('woken: hello'), 30000, 'the woken session to start');
+});
+
 test('wake gives up when the fake session does not end', async (t) => {
   const session = await launchIdleLead(t);
   await waitFor(() => fs.existsSync(session.idleFile), 30000, 'the session to end its turn');
@@ -191,5 +252,5 @@ test('wake gives up when the fake session does not end', async (t) => {
   }
   // Still the old process, judged on its own files, not on its pid.
   assert.strictEqual(sessionEnded(session), false);
-  assert.deepStrictEqual([(await listed(session)).state, fake.capabilities.includes('wake')], ['waiting', true]);
+  assert.deepStrictEqual([await turnEnded(session), fake.capabilities.includes('wake')], [true, true]);
 });

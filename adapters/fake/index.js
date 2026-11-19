@@ -43,6 +43,14 @@ function missionFile(session, field, extension) {
   return session[field] || path.join(missionDir(session.name.split('/')[0]), `fake-${session.shortId}.${extension}`);
 }
 
+// The pid of the session as the registry has it now, found by its short id: after a wake, an object
+// read before it still names the old process, dead. The given one when the registry has no record
+// of it (a stop made under another RELAYLEAD_HOME).
+function currentPid(session) {
+  const recorded = listSessions(session.name.split('/')[0]).find((candidate) => candidate.shortId === session.shortId);
+  return (recorded || session).pid;
+}
+
 function sessionFiles(session) {
   return { stopFile: stopFile(session), endedFile: endedFile(session), idleFile: idleFile(session), killedFile: killedFile(session) };
 }
@@ -88,13 +96,14 @@ async function launch(spec) {
 // A session is judged on the files of its end first: its pid may by now belong to another process,
 // which is not to be waited for. Killed (its witness) or ended (its agent wrote it): no process.
 // Then a dead pid is a sure proof (only a live pid can mislead, #62): failed, no process. Otherwise
-// the session lives, waiting once it has ended its turn, working before.
+// the session lives: done and idle with its process once it has ended its turn, as Claude lists it
+// (measured facts 1 and 2), working before.
 async function list(mission) {
   return listSessions(mission).map((session) => {
     if (fs.existsSync(killedFile(session))) return { ...session, state: 'failed', pid: null, idle: true };
     if (fs.existsSync(endedFile(session))) return { ...session, state: 'done', pid: null, idle: true };
     if (!isAlive(session.pid)) return { ...session, state: 'failed', pid: null, idle: true };
-    if (fs.existsSync(idleFile(session))) return { ...session, state: 'waiting', idle: true };
+    if (fs.existsSync(idleFile(session))) return { ...session, state: 'done', idle: true };
     return { ...session, state: 'working', idle: false };
   });
 }
@@ -102,7 +111,8 @@ async function list(mission) {
 // Asks the session to end; its agent sees the file within 50 ms and ends its own process. Never
 // a kill by pid: once the agent has ended, Windows soon gives its pid to another process, which may
 // be this very `relaylead` command. So a stop by id: run again on a session already ended, it only
-// writes and removes its file (stopById below).
+// writes and removes its file (stopById below); given the object of a session from before its wake,
+// it stops the woken one (currentPid).
 async function stop(session) {
   const file = stopFile(session);
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -110,17 +120,21 @@ async function stop(session) {
   // Ended already, or just now (watch-stop.js), killed, or without a process at all (its mission
   // folder gone, or a session made by a test): no agent will remove the file, so it is removed here.
   // A pid taken by another process only leaves the file behind.
-  const gone = fs.existsSync(endedFile(session)) || fs.existsSync(killedFile(session)) || !isAlive(session.pid);
+  const gone = fs.existsSync(endedFile(session)) || fs.existsSync(killedFile(session)) || !isAlive(currentPid(session));
   if (gone) withWindowsRetry(() => fs.rmSync(file, { force: true }));
 }
 
-// Like Claude's wake: stop the session, wait for its end (the ended file, or the killed witness, never
-// its pid), then start its agent again under the same ids and files, with the message in its env.
-// The stop is read from module.exports, so a test can replace it.
+// Like Claude's wake: refuse a message claude would read as an option, stop the session, wait for its
+// end (the ended file, the killed witness, or a dead pid: only a live pid can mislead, #62), then
+// start its agent again under the same ids and files, with the message in its env. So wake-timeout
+// only comes while the process may still run. The stop is read from module.exports, so a test can
+// replace it.
 async function wake(session, message) {
+  if (String(message).startsWith('-')) throw codedError('bad-prompt', { what: 'message' });
+  const pid = currentPid(session);
   await module.exports.stop(session);
   const deadline = Date.now() + wakeTimeoutMs();
-  while (!fs.existsSync(endedFile(session)) && !fs.existsSync(killedFile(session))) {
+  while (!fs.existsSync(endedFile(session)) && !fs.existsSync(killedFile(session)) && isAlive(pid)) {
     if (Date.now() >= deadline) throw codedError('wake-timeout', { shortId: session.shortId, seconds: wakeTimeoutMs() / 1000 });
     await sleep(50);
   }
@@ -133,9 +147,9 @@ async function wake(session, message) {
     RELAYLEAD_FAKE_LOG: session.logFile,
     RELAYLEAD_FAKE_WAKE_MESSAGE: message,
   };
-  const pid = await startAgent(session.role, session.cwd, env, { ...files, shortId: session.shortId });
+  const newPid = await startAgent(session.role, session.cwd, env, { ...files, shortId: session.shortId });
   // Every field of the record is kept: the core records the session again with what this returns.
-  return { ...session, pid, state: 'working', idle: false };
+  return { ...session, pid: newPid, state: 'working', idle: false };
 }
 
 // Nothing to show: the call is logged so tests can check it happened.
