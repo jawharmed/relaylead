@@ -260,3 +260,55 @@ test('wait reads the task files often but asks the adapter at most every 2.5 s',
   assert.deepStrictEqual(await wait(3), []);
   assert.ok(listCalls >= 1 && listCalls <= 2, `${listCalls} calls to list in 3 s`);
 });
+
+test('a wait left running by a replaced lead stops without touching anything', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  const nameLead = (session) =>
+    writeJson(path.join(missionDir('demo'), 'lead.json'), { shortId: 'aaaa1111', sessionName: session, startedAt: new Date().toISOString() });
+  nameLead('demo/lead/1');
+  const env = { RELAYLEAD_MISSION: 'demo', RELAYLEAD_ROLE: 'lead', RELAYLEAD_SESSION: 'demo/lead/1' };
+  assert.strictEqual(await run(['wait', '--timeout', '0'], makeIo({ env })), 0);
+  const before = fs.readFileSync(snapshotFile(), 'utf8');
+  const stamp = fs.statSync(snapshotFile()).mtimeMs;
+
+  const io = makeIo({ env });
+  const waiting = run(['wait', '--timeout', '5'], io);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  // Replaced, and something changes: the wait must not report it.
+  nameLead('demo/lead/2');
+  const replacedAt = Date.now();
+  fs.writeFileSync(path.join(dir, 'tasks', 'c.md'), '---\ntitle: Third task\n---\n\nWrite the third file.\n');
+
+  assert.strictEqual(await waiting, 1);
+  assert.ok(Date.now() - replacedAt < 2000, 'the wait must end within 2 s');
+  assert.match(io.err.text, /no longer the lead of mission "demo": demo\/lead\/2 took over/);
+  assert.strictEqual(fs.readFileSync(snapshotFile(), 'utf8'), before);
+  assert.strictEqual(fs.statSync(snapshotFile()).mtimeMs, stamp);
+});
+
+test('a lead replaced while its wait stops a crew member does not save the snapshot', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  const nameLead = (session) =>
+    writeJson(path.join(missionDir('demo'), 'lead.json'), { shortId: 'aaaa1111', sessionName: session, startedAt: new Date().toISOString() });
+  nameLead('demo/lead/1');
+  const env = { RELAYLEAD_MISSION: 'demo', RELAYLEAD_ROLE: 'lead', RELAYLEAD_SESSION: 'demo/lead/1' };
+  await startTask('demo', { id: 'a' });
+  assert.strictEqual(await run(['wait', '--timeout', '0'], makeIo({ env })), 0);
+  const before = fs.readFileSync(snapshotFile(), 'utf8');
+
+  // The handover comes while the wait stops the crew member whose task is done.
+  const originalStop = fake.stop;
+  fake.stop = async (session) => {
+    nameLead('demo/lead/2');
+    return originalStop(session);
+  };
+  t.after(() => {
+    fake.stop = originalStop;
+  });
+  const io = makeIo({ env });
+  assert.strictEqual(await run(['wait', '--timeout', '20'], io), 1);
+  assert.match(io.err.text, /demo\/lead\/2 took over/);
+  assert.strictEqual(fs.readFileSync(snapshotFile(), 'utf8'), before);
+});

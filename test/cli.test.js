@@ -5,6 +5,11 @@ const path = require('node:path');
 const { run, commands } = require('../core/cli');
 const pkg = require('../package.json');
 const { tmpDir } = require('../fixtures/helpers');
+const { setupProject, writeMission } = require('../fixtures/missions');
+const { withMissionLock } = require('../core/mission-lock');
+const { listSessions } = require('../core/sessions');
+const { readJson, writeJson } = require('../core/store');
+const { missionDir } = require('../core/paths');
 
 // A writable-like object that keeps everything written to it.
 function capture() {
@@ -118,4 +123,113 @@ test('deliver --no-hooks is refused from inside a session', async () => {
     code: 'not-from-a-session',
     vars: { command: 'task deliver --no-hooks' },
   });
+});
+
+// The environment of a lead session: its mission, its role and its name.
+function leadEnv(session) {
+  return { RELAYLEAD_MISSION: 'demo', RELAYLEAD_ROLE: 'lead', RELAYLEAD_SESSION: session };
+}
+
+function missionFile(file) {
+  return path.join(missionDir('demo'), file);
+}
+
+function nameLead(session) {
+  writeJson(missionFile('lead.json'), { sessionId: `fake-${session}`, shortId: 'aaaa1111', sessionName: session, startedAt: new Date().toISOString() });
+}
+
+const DRIVING = [
+  ['state', 'set', 'working'],
+  ['task', 'start', 'a'],
+  ['question', 'ask', '--key', 'k', '--text', 'Which one?', '--option', 'x', '--option', 'y'],
+  ['wait', '--timeout', '0'],
+];
+
+test('a replaced lead can no longer drive the mission', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  nameLead('demo/lead/2');
+
+  for (const args of [...DRIVING, ['task', 'retry', 'a'], ['task', 'deliver', 'a']]) {
+    const io = makeIo(leadEnv('demo/lead/1'));
+    assert.strictEqual(await run(args, io), 1, args.join(' '));
+    assert.match(io.err.text, /this session \(demo\/lead\/1\) is no longer the lead of mission "demo": demo\/lead\/2 took over/);
+  }
+  for (const file of ['state.json', path.join('tasks', 'a.json'), 'questions', 'wait-snapshot.json']) {
+    assert.strictEqual(fs.existsSync(missionFile(file)), false, file);
+  }
+  assert.deepStrictEqual(listSessions('demo'), []);
+
+  for (const args of DRIVING) {
+    const io = makeIo(leadEnv('demo/lead/2'));
+    assert.strictEqual(await run(args, io), 0, `${args.join(' ')}: ${io.err.text}`);
+  }
+  assert.strictEqual(readJson(missionFile('state.json')).state, 'working');
+  assert.strictEqual(readJson(missionFile(path.join('tasks', 'a.json'))).state, 'running');
+  assert.strictEqual(fs.existsSync(missionFile('wait-snapshot.json')), true);
+});
+
+test('the lead of a launch that failed is refused', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  nameLead('demo/lead/1');
+  writeJson(missionFile('lead-launch.json'), { n: 2, name: 'demo/lead/2', at: new Date().toISOString(), failed: true });
+
+  const io = makeIo(leadEnv('demo/lead/2'));
+  assert.strictEqual(await run(['state', 'set', 'working'], io), 1);
+  assert.match(io.err.text, /demo\/lead\/1 took over/);
+  assert.strictEqual(fs.existsSync(missionFile('state.json')), false);
+});
+
+test('a start queued behind a handover is refused once the lead is replaced', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  nameLead('demo/lead/1');
+  let release;
+  const holding = withMissionLock('demo', 'hand-over', () => new Promise((resolve) => (release = resolve)));
+
+  // Its first check passes: lead.json still names it. It then waits for the mission lock.
+  const io = makeIo(leadEnv('demo/lead/1'));
+  const start = run(['task', 'start', 'a'], io);
+  nameLead('demo/lead/2');
+  release();
+  await holding;
+
+  assert.strictEqual(await start, 1);
+  assert.match(io.err.text, /demo\/lead\/2 took over/);
+  assert.deepStrictEqual(listSessions('demo'), []);
+  assert.strictEqual(fs.existsSync(missionFile(path.join('tasks', 'a.json'))), false);
+});
+
+test('while a new lead is being launched, the old one can no longer drive the mission', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  writeJson(missionFile('lead.json'), {
+    sessionId: 'fake-demo/lead/1',
+    shortId: 'aaaa1111',
+    sessionName: 'demo/lead/1',
+    startedAt: new Date(Date.now() - 60 * 1000).toISOString(),
+  });
+  const reservation = { n: 2, name: 'demo/lead/2', at: new Date().toISOString() };
+  writeJson(missionFile('lead-launch.json'), reservation);
+
+  // Restarted by its agent, the old lead replays its command: refused, the new one has the mission.
+  const old = makeIo(leadEnv('demo/lead/1'));
+  assert.strictEqual(await run(['state', 'set', 'done'], old), 1);
+  assert.match(old.err.text, /this session \(demo\/lead\/1\) is no longer the lead of mission "demo": demo\/lead\/2 took over/);
+  assert.strictEqual(fs.existsSync(missionFile('state.json')), false);
+
+  // The launch failed: the old lead has the mission back.
+  writeJson(missionFile('lead-launch.json'), { ...reservation, failed: true });
+  const back = makeIo(leadEnv('demo/lead/1'));
+  assert.strictEqual(await run(['state', 'set', 'working'], back), 0, back.err.text);
+});
+
+test('a lead without its session name is told so', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  nameLead('demo/lead/1');
+  const io = makeIo({ RELAYLEAD_MISSION: 'demo', RELAYLEAD_ROLE: 'lead' });
+  assert.strictEqual(await run(['state', 'set', 'working'], io), 1);
+  assert.match(io.err.text, /this session \(-\) is no longer the lead/);
 });

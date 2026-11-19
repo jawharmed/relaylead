@@ -142,6 +142,7 @@ const messages = {
     'not-from-a-session': '"relaylead {command}" belongs to the user; a mission session cannot run it',
     'not-your-task': 'this session works on task "{own}"; it cannot finish task "{id}"',
     'not-for-crew': 'a crew member cannot start, retry or deliver tasks; finish your own task with: relaylead task done {own}',
+    'not-current-lead': 'this session ({session}) is no longer the lead of mission "{mission}": {current} took over; end your turn',
     questionAnswered: 'question {id} answered: {choice}\n',
     'bad-question': 'cannot ask the question: {detail}',
     'bad-task-id':
@@ -310,6 +311,7 @@ const messages = {
     'not-from-a-session': '« relaylead {command} » appartient à l\'utilisateur ; une session de mission ne peut pas le lancer',
     'not-your-task': 'cette session travaille sur la tâche « {own} » ; elle ne peut pas terminer la tâche « {id} »',
     'not-for-crew': 'un équipier ne peut ni lancer, ni relancer, ni livrer de tâche ; terminez votre propre tâche avec : relaylead task done {own}',
+    'not-current-lead': 'cette session ({session}) n\'est plus le lead de la mission « {mission} » : {current} a pris le relais ; terminez votre tour',
     questionAnswered: 'question {id} répondue : {choice}\n',
     'bad-question': 'impossible de poser la question : {detail}',
     'bad-task-id':

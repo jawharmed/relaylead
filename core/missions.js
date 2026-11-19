@@ -14,6 +14,7 @@ const { getDelivery } = require('../deliveries');
 const { sleep } = require('./timing');
 const { spawnDetached } = require('./detached');
 const { withMissionLock, takeOverStaleLock, EMPTY_LOCK_STALE_MS } = require('./mission-lock');
+const { watchLog } = require('./watch-log');
 
 // States the lead may declare. 'stopped' is written by the core only.
 const STATES = ['starting', 'working', 'waiting', 'done'];
@@ -177,8 +178,8 @@ async function createMission({ name, dir, request, team, priority, agent, params
   const adapter = getAdapter(agent || config.agent);
   const delivery = getDelivery(config.delivery.type);
   // Read before anything is created: an unknown profile or method leaves nothing behind.
-  const leadProfile = loadProfile('lead', { dir: realDir });
-  const method = loadMethod(config.method, { dir: realDir });
+  loadProfile('lead', { dir: realDir });
+  loadMethod(config.method, { dir: realDir });
   const mission = {
     name: missionName,
     dir: realDir,
@@ -192,7 +193,6 @@ async function createMission({ name, dir, request, team, priority, agent, params
 
   await takeLock(realDir, mission);
   let reserved = false;
-  let lead = null;
   try {
     reserveName(missionName);
     reserved = true;
@@ -200,43 +200,85 @@ async function createMission({ name, dir, request, team, priority, agent, params
     delivery.prepareMission(mission);
     writeJson(missionFile(missionName, 'mission.json'), mission);
 
-    lead = await adapter.launch({
-      mission: missionName,
-      name: `${missionName}/lead/1`,
-      role: 'lead',
-      profile: leadProfile,
-      prompt: leadPrompt(method, mission),
-      cwd: realDir,
-      env: { RELAYLEAD_MISSION: missionName, RELAYLEAD_HOME: home() },
-      permissionMode: config.permissionMode,
-    });
-    writeJson(missionFile(missionName, 'lead.json'), {
-      sessionId: lead.sessionId,
-      shortId: lead.shortId,
-      sessionName: lead.name,
-      startedAt: now(),
-    });
-    recordSession(missionName, lead);
+    await launchLead(mission);
     return mission;
   } catch (err) {
-    try {
-      if (lead) await adapter.stop(lead); // no orphan session
-    } catch {
-      // Keep cleaning up, and report the first error: it says what went wrong.
-    }
-    // Retries: the stopped lead may still be finishing a write in the folder.
+    // A lead launched, then failed, was stopped by launchLead. Retries: it may still be finishing a
+    // write in the folder.
     if (reserved) fs.rmSync(missionDir(missionName), { recursive: true, force: true, maxRetries: 5 });
     await releaseLock(realDir, mission);
     throw err;
   }
 }
 
+// The number of the next lead: past every lead of the registry and past the last one reserved, even
+// by a launch that failed or crashed before recording its session. A name is never given twice.
+function nextLeadNumber(name) {
+  const named = new RegExp(`^${name}/lead/(\\d+)$`);
+  const numbers = listSessions(name).map((session) => Number((named.exec(session.name) || [])[1]) || 0);
+  const reserved = readJson(missionFile(name, 'lead-launch.json'), {});
+  return Math.max(0, ...numbers, Number(reserved.n) || 0) + 1;
+}
+
+// Launches a lead and makes it the current one (lead.json). The caller holds the mission lock (the
+// folder lock at the first launch). Its name is reserved in lead-launch.json before the launch, so
+// the new lead is the current one from its first command on: claude's launch returns only once its
+// first turn has started. A launch that throws is marked failed there, and a session it could not
+// stop (err.orphan) goes to the watcher's log. A failure once launched stops the session it started.
+// `section` (## Restart, ## Handover) comes before the mission in the lead's first message.
+async function launchLead(mission, { section } = {}) {
+  const name = mission.name;
+  const adapter = getAdapter(mission.agent);
+  const n = nextLeadNumber(name);
+  const reservation = { n, name: `${name}/lead/${n}`, at: now() };
+  writeJson(missionFile(name, 'lead-launch.json'), reservation);
+  const failed = () => writeJson(missionFile(name, 'lead-launch.json'), { ...reservation, failed: true });
+  let lead;
+  try {
+    lead = await adapter.launch({
+      mission: name,
+      name: reservation.name,
+      role: 'lead',
+      profile: loadProfile('lead', { dir: mission.dir }),
+      prompt: leadPrompt(loadMethod(mission.config.method, { dir: mission.dir }), mission, section),
+      cwd: mission.dir,
+      env: { RELAYLEAD_MISSION: name, RELAYLEAD_HOME: home(), RELAYLEAD_ROLE: 'lead', RELAYLEAD_SESSION: reservation.name },
+      permissionMode: mission.config.permissionMode,
+    });
+  } catch (err) {
+    failed();
+    if (err.orphan) watchLog(name, 'orphan-session', err.orphan);
+    throw err;
+  }
+  // Recorded first: lead.json, written last, never names a session that is not in the registry.
+  try {
+    recordSession(name, lead);
+    writeJson(missionFile(name, 'lead.json'), {
+      sessionId: lead.sessionId,
+      shortId: lead.shortId,
+      sessionName: lead.name,
+      startedAt: now(),
+    });
+  } catch (err) {
+    try {
+      await adapter.stop(lead); // no orphan session
+    } catch {
+      // Report the first error: it says what went wrong.
+    }
+    failed();
+    throw err;
+  }
+  return lead;
+}
+
 // The lead's first message: the method to follow, then this mission. The lead profile's own
-// instructions go with the profile (the adapter passes them as a system prompt).
-function leadPrompt(method, mission) {
+// instructions go with the profile (the adapter passes them as a system prompt). A relaunched lead
+// gets `section` before the mission.
+function leadPrompt(method, mission, section) {
   return [
     method.instructions.trim(),
     '',
+    ...(section ? [section.trim(), ''] : []),
     '## This mission',
     '',
     `Mission: ${mission.name}`,
@@ -245,6 +287,42 @@ function leadPrompt(method, mission) {
     'Request from the user:',
     mission.request || 'No request was given: carry out the tasks listed by `relaylead task list`.',
   ].join('\n');
+}
+
+// Null when the session running a command may drive the mission; otherwise the not-current-lead
+// error. Only a lead is checked (RELAYLEAD_ROLE, set at launch; a lead launched before it was set is
+// not checked). There is one current lead. While a launch runs (reserved in lead-launch.json, not
+// failed, after the lead of lead.json started, or before any), it is the lead being launched, and the
+// lead of lead.json no longer is: claude's launch returns only once the first turn of the new lead has
+// started, and that turn already runs commands, while an old lead restarted by its agent replays its
+// last command (measured fact 4). A launch that failed gives the mission back to the lead of lead.json.
+function currentLeadError(name, env) {
+  if (!env || env.RELAYLEAD_ROLE !== 'lead') return null;
+  if (!fs.existsSync(missionFile(name, 'mission.json'))) return null; // the command says mission-unknown
+  const lead = readJson(missionFile(name, 'lead.json'), null);
+  const launch = readJson(missionFile(name, 'lead-launch.json'), null);
+  const launching = launch && !launch.failed && (!lead || Date.parse(launch.at) > Date.parse(lead.startedAt));
+  const current = launching ? launch.name : lead && lead.sessionName;
+  const session = env.RELAYLEAD_SESSION;
+  if (session && session === current) return null;
+  return codedError('not-current-lead', { session: session || '-', mission: name, current: current || '-' });
+}
+
+// Launches a session unless the mission is over, and stops it if a stop came during the launch.
+// `launch` records the session; `stop(session)` stops it. A stop is written before its sessions are
+// stopped, so a session recorded before this second read is stopped by the stop, and one recorded
+// after it is stopped here.
+async function launchWhileOpen(name, launch, stop) {
+  const before = readStateRecord(name);
+  if (before.state === 'done') throw codedError('mission-done', { mission: name });
+  if (before.state === 'stopped' || before.stopping) throw codedError('mission-stopped', { mission: name });
+  const session = await launch();
+  const after = readStateRecord(name);
+  if (after.state === 'stopped' || after.stopping) {
+    await stop(session);
+    throw codedError(after.state === 'done' ? 'mission-done' : 'mission-stopped', { mission: name });
+  }
+  return session;
 }
 
 function readMission(name) {
@@ -680,6 +758,9 @@ async function removeMission(name, { force = false, onBranchDeleted } = {}) {
 
 module.exports = {
   createMission,
+  launchLead,
+  launchWhileOpen,
+  currentLeadError,
   listMissions,
   stopMission,
   stopSessionsAndWait,

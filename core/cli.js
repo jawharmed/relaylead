@@ -9,6 +9,7 @@ const {
   readMission,
   getState,
   setState,
+  currentLeadError,
   reapLead,
   markReaperEnded,
   attachLead,
@@ -78,6 +79,13 @@ function language(io) {
 // to the user alone.
 function refuseInSession(command, io) {
   if (io.env.RELAYLEAD_MISSION) throw codedError('not-from-a-session', { command });
+}
+
+// A lead replaced by a relaunch or a handover may still run commands: those that drive the mission
+// are refused to it (currentLeadError). A crew member or the user is not checked.
+function refuseReplacedLead(mission, io) {
+  const refused = currentLeadError(mission, io.env);
+  if (refused) throw refused;
 }
 
 // Each sub-command is (args, io) -> Promise<exit code>.
@@ -184,6 +192,7 @@ commands.state = async (args, io) => {
   if (action === 'get') {
     io.out.write(getState(mission) + '\n');
   } else {
+    refuseReplacedLead(mission, io);
     const outcome = await setState(mission, state, options.note);
     if (outcome === 'skipped') io.out.write(t('missionStopSkipped', { mission }, language(io)));
   }
@@ -206,17 +215,18 @@ commands.task = async (args, io) => {
   // The configuration is frozen in mission.json: only the user may deliver without the git hooks.
   if (action === 'deliver' && options['no-hooks']) refuseInSession('task deliver --no-hooks', io);
   const mission = missionName(options, io);
+  if (['start', 'retry', 'deliver'].includes(action)) refuseReplacedLead(mission, io);
   if (action === 'list') {
     io.out.write(JSON.stringify(listTasks(mission), null, 2) + '\n');
   } else if (action === 'start') {
-    const record = await startTask(mission, { id, profile: options.profile });
+    const record = await startTask(mission, { id, profile: options.profile, env: io.env });
     io.out.write(JSON.stringify(record, null, 2) + '\n');
   } else if (action === 'retry') {
-    const record = await retryTask(mission, { id, profile: options.profile });
+    const record = await retryTask(mission, { id, profile: options.profile, env: io.env });
     io.out.write(JSON.stringify(record, null, 2) + '\n');
   } else if (action === 'deliver') {
     const runHooks = options['no-hooks'] ? false : undefined;
-    const { outcome, warnings } = await deliverTask(mission, id, { runHooks });
+    const { outcome, warnings } = await deliverTask(mission, id, { runHooks, env: io.env });
     for (const warning of warnings) io.err.write(`relaylead task: ${t(warning.code, warning.vars, language(io))}\n`);
     io.out.write(t(outcome === 'delivered' ? 'taskDelivered' : 'taskAlreadyDelivered', { id }, language(io)));
   } else {
@@ -233,9 +243,16 @@ commands.wait = async (args, io) => {
   if (timeout !== undefined && !(timeout >= 0)) {
     throw codedError('usage', { usage: 'relaylead wait [--timeout seconds] [--mission name]' });
   }
-  await waitForChanges(missionName(options, io), timeout, (changes) => {
-    io.out.write(JSON.stringify({ changes }, null, 2) + '\n');
-  });
+  const mission = missionName(options, io);
+  refuseReplacedLead(mission, io);
+  await waitForChanges(
+    mission,
+    timeout,
+    (changes) => {
+      io.out.write(JSON.stringify({ changes }, null, 2) + '\n');
+    },
+    { env: io.env },
+  );
   return 0;
 };
 
@@ -243,7 +260,9 @@ commands.question = async (args, io) => {
   const { positional, options, lists } = parseArgs(args);
   const [action, mission] = positional;
   if (action === 'ask') {
-    const { id } = askQuestion(missionName(options, io), {
+    const name = missionName(options, io);
+    refuseReplacedLead(name, io);
+    const { id } = askQuestion(name, {
       key: options.key,
       text: options.text,
       context: options.context,

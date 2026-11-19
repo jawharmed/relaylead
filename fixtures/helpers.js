@@ -74,11 +74,14 @@ function killSession(session) {
 }
 
 // The environment of a person in a terminal: the tests may themselves run inside a mission session,
-// whose RELAYLEAD_MISSION and RELAYLEAD_TASK would make the CLI refuse the user's commands.
+// whose RELAYLEAD_MISSION and RELAYLEAD_TASK would make the CLI refuse the user's commands, and whose
+// RELAYLEAD_ROLE and RELAYLEAD_SESSION (a lead's) would get not-current-lead.
 function userEnv() {
   const env = { ...process.env };
   delete env.RELAYLEAD_MISSION;
   delete env.RELAYLEAD_TASK;
+  delete env.RELAYLEAD_ROLE;
+  delete env.RELAYLEAD_SESSION;
   return env;
 }
 
