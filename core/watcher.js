@@ -197,7 +197,9 @@ async function tendMission(name) {
     throw err;
   }
   if (!decision) return [];
-  // An action marked afterLock takes the mission lock itself (a stop of the mission).
+  // An action marked afterLock takes the mission lock itself (a stop of the mission). It runs once
+  // watch.json is written, so what it changes in `watch` is lost, and without reading createdAt
+  // again: no action that writes into the mission folder (mail) may be one.
   for (const action of decision.actions.filter((one) => one.afterLock)) await act(name, action, decision.watch);
   return decision.actions;
 }
@@ -207,6 +209,8 @@ async function tendMission(name) {
 async function tendLocked(name, createdAt) {
   const mission = readJson(missionFile(name, 'mission.json'), null);
   if (!mission || mission.createdAt !== createdAt) return null;
+  // STOP may have come while this pass waited for the lock.
+  if (stopPresent()) return null;
   const record = readState(name);
   if (FINISHED.includes(record.state) && !record.stopping) return null;
   const obs = await module.exports.observe(name);
@@ -312,12 +316,18 @@ function rotateLog() {
   } catch {
     return;
   }
-  if (size > LOG_MAX_BYTES) withWindowsRetry(() => fs.renameSync(watchLogFile(), `${watchLogFile()}.1`));
+  if (size <= LOG_MAX_BYTES) return;
+  try {
+    withWindowsRetry(() => fs.renameSync(watchLogFile(), `${watchLogFile()}.1`));
+  } catch {
+    // The log is a record only: the pass goes on, and the next one moves it.
+  }
 }
 
 // A full pass: {outcome: 'done', missions} where missions counts the missions to watch, or
-// {outcome: 'stop'} while STOP is present, {outcome: 'busy', holder} while another pass holds the
-// lock, both with missions 0. tendMission is read from module.exports, so a test can replace it.
+// {outcome: 'stop'} while STOP is present, also when it comes during the pass (read again before
+// each mission), {outcome: 'busy', holder} while another pass holds the lock, both with missions 0.
+// tendMission is read from module.exports, so a test can replace it.
 async function runPass() {
   if (stopPresent()) return { outcome: 'stop', missions: 0 };
   const lock = { pid: process.pid, since: new Date().toISOString() };
@@ -326,6 +336,7 @@ async function runPass() {
     rotateLog();
     let missions = 0;
     for (const name of missionNames()) {
+      if (stopPresent()) return { outcome: 'stop', missions: 0 };
       try {
         if (needsWatching(name)) missions++;
         await module.exports.tendMission(name);

@@ -153,15 +153,18 @@ function logFailures(obs, watch, log) {
   }
 }
 
-// Rules 6 and 7, and the time the lead was first seen lost. A lead seen with a process gets a whole
-// grace at its next loss.
+// Rules 6 and 7, and the time the lead was first seen lost. The time is cleared as soon as the lead
+// is seen again in any state that is not lost (a whole grace at each loss), even without a process:
+// a lead listed stopped would otherwise keep the date of an older loss, and be absent at once at its
+// next one. A lead still missing from the list keeps it: that is what keeps the absent lead of a
+// waiting mission idle, instead of going back and forth between restarting and idle.
 function watchLead(obs, watch, log) {
   const row = leadRow(obs);
   const status = leadStatus(obs);
   const shortId = obs.lead.shortId;
-  if (row && row.pid) {
+  if (!isLost(row)) {
     watch.leadLostSince = null;
-  } else if (isLost(row)) {
+  } else {
     if (!watch.leadLostSince) {
       if (status === 'restarting') log(`lead-restarting ${shortId}`); // rule 6
       watch.leadLostSince = iso(obs.now);

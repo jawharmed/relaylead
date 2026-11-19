@@ -264,7 +264,7 @@ commands.answer = async (args, io) => {
 commands.watcher = async (args, io) => {
   refuseInSession('watcher', io);
   const { positional, options } = parseArgs(args);
-  if (positional.length !== 1 || positional[0] !== 'run') {
+  if (positional.length !== 1 || positional[0] !== 'run' || options.mission === '') {
     throw codedError('usage', { usage: 'relaylead watcher run [--mission <name>]' });
   }
   const lang = language(io);
@@ -279,7 +279,8 @@ commands.watcher = async (args, io) => {
   } else {
     const result = await runPass();
     if (result.outcome === 'stop') {
-      io.out.write(t('watcherStopPresent', { home: home() }, lang));
+      // STOP may have come during the pass: what it did before is printed too.
+      io.out.write(watchLogSince(logSize) + t('watcherStopPresent', { home: home() }, lang));
       return 0;
     }
     if (result.outcome === 'busy') {

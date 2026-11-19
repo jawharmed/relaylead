@@ -278,6 +278,25 @@ test('a lead working without a process is restarting during the grace, then abse
   );
 });
 
+test('a lead seen again, even without a process, gets a whole grace at its next loss', () => {
+  const grace = restartGraceMs();
+  const readings = { [LEAD]: { heartbeat: { at: iso(T0 - 10 * MINUTE) } } };
+  // A waiting mission whose lead is not listed: restarting, then idle once the grace is over.
+  let watch = emptyWatch();
+  for (const now of [T0, T0 + grace + 1000]) {
+    watch = decide(observation({ now, watch, rows: [], record: { state: 'waiting' }, readings })).watch;
+  }
+  assert.strictEqual(leadStatus(observation({ now: T0 + grace + 1000, watch, rows: [], record: { state: 'waiting' }, readings })), 'idle');
+  // Listed again, stopped and without a process: still idle, and no longer lost.
+  const later = T0 + 60 * MINUTE;
+  watch = decide(observation({ now: later, watch, rows: [row(leadRecord, { state: 'done', pid: null })], record: { state: 'waiting' }, readings })).watch;
+  assert.strictEqual(watch.leadLostSince, null);
+  // Lost again once the mission works: a whole grace, and its line.
+  const lost = observation({ now: later + 1000, watch, rows: [row(leadRecord, { pid: null })], readings });
+  assert.strictEqual(leadStatus(lost), 'restarting');
+  assert.deepStrictEqual(logs(decide(lost).actions), [`lead-restarting ${LEAD}`]);
+});
+
 test('an unlisted lead with a recent heartbeat is restarting, not absent', () => {
   const grace = restartGraceMs();
   const now = T0 + grace + 1000;

@@ -10,10 +10,12 @@ function watchLogFile() {
   return path.join(home(), 'watcher.log');
 }
 
-// Never throws: the log is a record only, the action is already decided.
+// Never throws: the log is a record only, the action is already decided. One line per action: a
+// detail that spans lines (an error quoting a command's output) is joined into one.
 function watchLog(mission, action, detail) {
   try {
-    const line = `${new Date().toISOString()} ${mission || '-'} ${action}${detail ? ` ${detail}` : ''}\n`;
+    const text = `${action}${detail ? ` ${detail}` : ''}`.replace(/\s+/g, ' ').trim();
+    const line = `${new Date().toISOString()} ${mission || '-'} ${text}\n`;
     fs.mkdirSync(home(), { recursive: true });
     withWindowsRetry(() => fs.appendFileSync(watchLogFile(), line));
   } catch {

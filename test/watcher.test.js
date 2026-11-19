@@ -149,6 +149,39 @@ test('a pass stops an extra lead and logs it', async (t) => {
   assert.match(logText(), /^\S+ demo stop-extra-lead \S+\n$/);
 });
 
+test('STOP written during a pass stops it before the next action and the next mission', async (t) => {
+  freshHome(t);
+  const stops = stubAgent(t);
+  missionWithExtraLead('first');
+  missionWithExtraLead('second');
+  const { observe } = watcher;
+  watcher.observe = async (name) => {
+    const obs = await observe(name);
+    fs.writeFileSync(path.join(home(), 'STOP'), ''); // the user writes STOP during the first observation
+    return obs;
+  };
+  t.after(() => {
+    watcher.observe = observe;
+  });
+
+  const { code, out } = await watcherRun();
+  assert.strictEqual(code, 0);
+  assert.strictEqual(out, msg('watcherStopPresent', { home: home() }));
+  assert.deepStrictEqual(stops, []);
+  assert.strictEqual(logText(), '');
+});
+
+test('a detail on several lines is logged on one', async (t) => {
+  freshHome(t);
+  stubAgent(t);
+  missionWithExtraLead('demo');
+  fake.list = async () => {
+    throw new Error('claude agents failed:\n  some output\n');
+  };
+  await watcher.runPass();
+  assert.match(logText(), /^\S+ demo list-failed claude agents failed: some output\n$/);
+});
+
 test('a pass keeps what it saw of the lead in watch.json', async (t) => {
   freshHome(t);
   const { current } = missionWithExtraLead('demo');
@@ -361,7 +394,9 @@ test('watcher run is refused in a session and needs a known mission', async () =
   assert.strictEqual(code, 1);
   assert.strictEqual(err, `relaylead watcher: ${msg('mission-unknown', { mission: 'ghost' })}\n`);
 
-  const usage = await watcherRun('now');
-  assert.strictEqual(usage.code, 1);
-  assert.match(usage.err, /usage: relaylead watcher run \[--mission <name>\]/);
+  for (const args of [['now'], ['--mission=']]) {
+    const usage = await watcherRun(...args);
+    assert.strictEqual(usage.code, 1, args.join(' '));
+    assert.match(usage.err, /usage: relaylead watcher run \[--mission <name>\]/);
+  }
 });
