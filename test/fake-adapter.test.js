@@ -6,23 +6,30 @@ const { spawn } = require('node:child_process');
 const { getAdapter } = require('../adapters');
 const { recordSession, isAlive } = require('../core/sessions');
 const { missionDir } = require('../core/paths');
+const { readReadings } = require('../core/readings');
 const { tmpDir, waitFor, sessionEnded, killSession } = require('../fixtures/helpers');
+const { writeMission } = require('../fixtures/missions');
 
 const fake = getAdapter('fake');
 
 // A session of mission demo (a crew member by default), in a fresh home. Without a task in `env`, it
-// runs until stopped.
-async function launchSession(t, env = {}, role = 'crew') {
+// runs until stopped. With `mission`, mission.json is written first, for a project without a task.
+async function launchSession(t, env = {}, role = 'crew', { mission = false } = {}) {
   process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
   // Made by the core before any launch: the agent writes its files there.
   fs.mkdirSync(missionDir('demo'), { recursive: true });
+  const cwd = tmpDir('relaylead-project-');
+  if (mission) {
+    fs.mkdirSync(path.join(cwd, 'tasks'));
+    writeMission('demo', cwd);
+  }
   const session = await fake.launch({
     mission: 'demo',
     name: role === 'lead' ? 'demo/lead' : 'demo/developer/1',
     role,
     profile: null,
     prompt: '',
-    cwd: tmpDir('relaylead-project-'),
+    cwd,
     env,
     permissionMode: 'allowlist',
   });
@@ -253,4 +260,29 @@ test('wake gives up when the fake session does not end', async (t) => {
   // Still the old process, judged on its own files, not on its pid.
   assert.strictEqual(sessionEnded(session), false);
   assert.deepStrictEqual([await turnEnded(session), fake.capabilities.includes('wake')], [true, true]);
+});
+
+test('a fake session writes a heartbeat at each relaylead command', async (t) => {
+  const env = { RELAYLEAD_MISSION: 'demo', RELAYLEAD_FAKE_TOKENS_PER_COMMAND: '1000' };
+  const session = await launchSession(t, env, 'lead', { mission: true });
+  recordSession('demo', session);
+  const heartbeat = () => readReadings('demo', session.shortId).heartbeat;
+  // `state set`, then `task list`: no task, the lead waits to be stopped.
+  await waitFor(() => (heartbeat() || {}).contextTokens >= 42000, 30000, 'two heartbeats', () => logText(session));
+  assert.deepStrictEqual([heartbeat().tool, heartbeat().baseTokens], ['Bash', 41000]);
+
+  // Woken, the lead keeps its count under the same short id.
+  const woken = await fake.wake(session, 'hello');
+  t.after(() => fake.stop(woken));
+  recordSession('demo', woken);
+  await waitFor(() => heartbeat().contextTokens >= 44000, 30000, 'the woken lead to go on counting', () => logText(session));
+  assert.strictEqual(heartbeat().baseTokens, 41000);
+});
+
+test('a fake session that ends its turn writes a (stop) heartbeat', async (t) => {
+  const session = await launchSession(t, { RELAYLEAD_MISSION: 'demo', RELAYLEAD_FAKE_END_FIRST_TURN: '1' }, 'lead');
+  recordSession('demo', session);
+  await waitFor(() => fs.existsSync(session.idleFile), 30000, 'the session to end its turn');
+  const { at, ...heartbeat } = readReadings('demo', session.shortId).heartbeat;
+  assert.deepStrictEqual(heartbeat, { tool: '(stop)', contextTokens: null, baseTokens: null });
 });

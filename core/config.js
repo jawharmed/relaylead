@@ -21,6 +21,9 @@ const DEFAULTS = {
     allow: [],
   },
   attribution: null,
+  // Thresholds of a session's context: soft = its first reading + the budget of its role, capped at
+  // capPercent of its window when the window is measured; hard = soft + hardPercent (core/readings.js).
+  context: { budgets: { lead: 150000, crew: 250000 }, capPercent: 40, hardPercent: 20 },
 };
 
 function isPlainObject(value) {
@@ -57,4 +60,4 @@ function resolveSecret(ref) {
   throw new Error('secrets must be references: use env:NAME or file:path');
 }
 
-module.exports = { DEFAULTS, loadConfig, resolveSecret };
+module.exports = { DEFAULTS, deepMerge, loadConfig, resolveSecret };

@@ -97,3 +97,15 @@ test('the session environment passes the write retry budget on', (t) => {
   delete process.env.RELAYLEAD_WRITE_RETRY_MS;
   assert.ok(!('RELAYLEAD_WRITE_RETRY_MS' in settingsFor().env));
 });
+
+test('the session settings add the heartbeat hook and the measuring status line', () => {
+  const dir = path.join('C:', 'Program Files', 'relay lead');
+  const settings = settingsFor({ packageDir: dir });
+  assert.deepStrictEqual(settings.hooks.PostToolUse, [
+    { hooks: [{ type: 'command', command: `"${process.execPath}" "${path.join(dir, 'core', 'hooks', 'posttool.js')}"` }] },
+  ]);
+  assert.deepStrictEqual(settings.statusLine, {
+    type: 'command',
+    command: `"${process.execPath}" "${path.join(dir, 'core', 'hooks', 'statusline.js')}"`,
+  });
+});

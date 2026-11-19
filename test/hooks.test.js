@@ -152,3 +152,80 @@ test('permission hook answers even with a wrong-shaped guard', () => {
   const tools = journal(home).trim().split('\n').map((line) => line.split(' ')[1]);
   assert.deepStrictEqual(tools, ['Bash', 'unknown', 'unknown']);
 });
+
+const POSTTOOL = path.join(__dirname, '..', 'core', 'hooks', 'posttool.js');
+const STATUSLINE = path.join(__dirname, '..', 'core', 'hooks', 'statusline.js');
+const TRANSCRIPT = path.join(__dirname, '..', 'fixtures', 'claude', 'transcript.jsonl');
+const SESSION_ID = '0123abcd-4567-89ef-0123-456789abcdef';
+
+function reading(home, folder) {
+  return JSON.parse(fs.readFileSync(path.join(home, 'missions', 'demo', folder, '0123abcd.json'), 'utf8'));
+}
+
+test('the posttool hook records a heartbeat and keeps the first reading as base', () => {
+  const home = missionHome({});
+  const env = { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'demo' };
+  const later = path.join(tmpDir(), 'later.jsonl');
+  fs.writeFileSync(later, JSON.stringify({ type: 'assistant', message: { usage: { input_tokens: 60000 } } }) + '\n');
+
+  const call = (transcript) => runHook(POSTTOOL, { session_id: SESSION_ID, tool_name: 'Bash', transcript_path: transcript }, env);
+  assert.strictEqual(call(TRANSCRIPT), '');
+  assert.deepStrictEqual([reading(home, 'heartbeats').contextTokens, reading(home, 'heartbeats').baseTokens], [42366, 42366]);
+  assert.strictEqual(call(later), '');
+  const { at, ...heartbeat } = reading(home, 'heartbeats');
+  assert.deepStrictEqual(heartbeat, { tool: 'Bash', contextTokens: 60000, baseTokens: 42366 });
+  assert.match(at, /^\d{4}-\d\d-\d\dT\S+Z$/);
+  // A transcript not readable yet keeps the last context.
+  call(path.join(tmpDir(), 'missing.jsonl'));
+  assert.strictEqual(reading(home, 'heartbeats').contextTokens, 60000);
+});
+
+test('the posttool hook writes nothing without a mission or a session id', () => {
+  const home = missionHome({});
+  const input = { session_id: SESSION_ID, tool_name: 'Bash', transcript_path: TRANSCRIPT };
+  assert.strictEqual(runHook(POSTTOOL, input, { RELAYLEAD_HOME: home }), '');
+  assert.strictEqual(runHook(POSTTOOL, input, { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: '../demo' }), '');
+  const env = { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'demo' };
+  assert.strictEqual(runHook(POSTTOOL, { ...input, session_id: undefined }, env), '');
+  assert.strictEqual(runHook(POSTTOOL, { ...input, session_id: 'fake-0123abcd' }, env), '');
+  assert.strictEqual(runHook(POSTTOOL, 'not json', env), '');
+  assert.strictEqual(fs.existsSync(path.join(home, 'missions', 'demo', 'heartbeats')), false);
+  // A mission whose folder is gone is not made again.
+  assert.strictEqual(runHook(POSTTOOL, input, { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'gone' }), '');
+  assert.strictEqual(fs.existsSync(path.join(home, 'missions', 'gone')), false);
+});
+
+test('the statusline records the window from the first call, then the context', () => {
+  const home = missionHome({});
+  const env = { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'demo' };
+  const first = { session_id: SESSION_ID, context_window: { context_window_size: 1000000, current_usage: null } };
+  // A blank line: the session is never shown, its status line only measures.
+  assert.strictEqual(runHook(STATUSLINE, first, env), '\n');
+  const { at, ...before } = reading(home, 'context');
+  assert.deepStrictEqual(before, { contextTokens: null, windowTokens: 1000000, baseTokens: null });
+  assert.match(at, /^\d{4}-\d\d-\d\dT\S+Z$/);
+
+  const usage = { input_tokens: 2, cache_creation_input_tokens: 9505, cache_read_input_tokens: 33240, output_tokens: 153 };
+  runHook(STATUSLINE, { session_id: SESSION_ID, context_window: { context_window_size: 1000000, current_usage: usage } }, env);
+  const { at: _at, ...after } = reading(home, 'context');
+  assert.deepStrictEqual(after, { contextTokens: 42747, windowTokens: 1000000, baseTokens: 42747 });
+
+  // A later call without usage keeps the context; one without a session id writes nothing.
+  runHook(STATUSLINE, first, env);
+  assert.strictEqual(reading(home, 'context').contextTokens, 42747);
+  assert.strictEqual(runHook(STATUSLINE, { context_window: first.context_window }, env), '\n');
+  assert.strictEqual(runHook(STATUSLINE, 'not json', env), '\n');
+  assert.deepStrictEqual(fs.readdirSync(path.join(home, 'missions', 'demo', 'context')), ['0123abcd.json']);
+});
+
+test('a status line with an empty usage is no reading, and sets no base', () => {
+  const home = missionHome({});
+  const env = { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'demo' };
+  const call = (usage) =>
+    runHook(STATUSLINE, { session_id: SESSION_ID, context_window: { context_window_size: 1000000, current_usage: usage } }, env);
+  call({ input_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 0 });
+  assert.deepStrictEqual([reading(home, 'context').contextTokens, reading(home, 'context').baseTokens], [null, null]);
+  call({ input_tokens: 2, cache_creation_input_tokens: 9505, cache_read_input_tokens: 33240 });
+  call({});
+  assert.deepStrictEqual([reading(home, 'context').contextTokens, reading(home, 'context').baseTokens], [42747, 42747]);
+});

@@ -7,6 +7,7 @@ const { markEnded } = require('./watch-stop');
 const { missionDir, slug } = require('../../core/paths');
 const { readJson } = require('../../core/store');
 const { DEFAULTS } = require('../../core/config');
+const { recordHeartbeat, readReadings } = require('../../core/readings');
 const { runFileSync } = require('../../core/run-file');
 
 const CLI = path.join(__dirname, '..', '..', 'bin', 'relaylead.js');
@@ -25,15 +26,43 @@ function log(text) {
   }
 }
 
-// The env carries RELAYLEAD_MISSION and RELAYLEAD_HOME; no shell and no PATH lookup.
+// The session's heartbeat, as its PostToolUse and Stop hooks would write it. Never fails the agent,
+// and nothing without a mission (some adapter tests have none).
+function heartbeat(tool, contextTokens) {
+  const mission = process.env.RELAYLEAD_MISSION;
+  const shortId = process.env.RELAYLEAD_FAKE_SHORT_ID;
+  if (!mission || !shortId) return;
+  try {
+    recordHeartbeat(mission, shortId, { tool, contextTokens });
+  } catch (err) {
+    log(`heartbeat failed: ${err.message}`);
+  }
+}
+
+// The context grows by RELAYLEAD_FAKE_TOKENS_PER_COMMAND (0 by default: flat) at each command, from
+// the last heartbeat of this short id (a woken lead goes on counting), else from
+// RELAYLEAD_FAKE_BASE_TOKENS (a new session).
+function commandHeartbeat() {
+  const mission = process.env.RELAYLEAD_MISSION;
+  const last = mission ? readReadings(mission, process.env.RELAYLEAD_FAKE_SHORT_ID).heartbeat : null;
+  const before = last && Number.isFinite(last.contextTokens) ? last.contextTokens : Number(process.env.RELAYLEAD_FAKE_BASE_TOKENS) || 40000;
+  heartbeat('Bash', before + (Number(process.env.RELAYLEAD_FAKE_TOKENS_PER_COMMAND) || 0));
+}
+
+// The env carries RELAYLEAD_MISSION and RELAYLEAD_HOME; no shell and no PATH lookup. A failed command
+// is still an action of the session: its heartbeat is written too.
 function relaylead(...args) {
-  return logged(`relaylead ${args.join(' ')}`, () =>
-    runFileSync(process.execPath, [CLI, ...args], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-    }),
-  );
+  try {
+    return logged(`relaylead ${args.join(' ')}`, () =>
+      runFileSync(process.execPath, [CLI, ...args], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      }),
+    );
+  } finally {
+    commandHeartbeat();
+  }
 }
 
 // Like a real crew member's git (gc and maintenance left as they are), but the agent does not wait
@@ -60,8 +89,9 @@ function idle() {
 }
 
 // End the turn but stay alive, like a Claude session that is done and idle: the adapter's list reads
-// the file RELAYLEAD_FAKE_IDLE, never the pid.
+// the file RELAYLEAD_FAKE_IDLE, never the pid. The heartbeat of its Stop hook comes first.
 function endTurn() {
+  heartbeat('(stop)', null);
   fs.writeFileSync(process.env.RELAYLEAD_FAKE_IDLE, '');
   log('turn ended');
   idle();
