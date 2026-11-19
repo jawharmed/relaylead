@@ -1080,6 +1080,10 @@ test('a session still alive after the wait keeps the folder', async (t) => {
 
 test('a stop with nothing to do still cleans', async (t) => {
   freshHome(t);
+  fake.stopById = false; // an adapter that stops by pid, whose finished missions are left alone
+  t.after(() => {
+    fake.stopById = true;
+  });
   const dir = userRepo({ 'tasks/a.md': TASK_A });
   const mission = preparedMission(dir);
   writeJson(path.join(missionDir('demo'), 'state.json'), { state: 'stopped', updatedAt: new Date().toISOString() });
@@ -1109,6 +1113,10 @@ test('done cleans the task worktrees and notes the kept ones in the journal', as
 
 test('a skipped stop keeps the worktree of a session whose recorded process still runs', async (t) => {
   freshHome(t);
+  fake.stopById = false; // an adapter that stops by pid: an old stopping marker skips the stop
+  t.after(() => {
+    fake.stopById = true;
+  });
   const dir = userRepo({ 'tasks/a.md': TASK_A });
   const mission = preparedMission(dir);
   await crewIn(taskWithWork(mission, 'a', { committed: true }), 1); // a live process, as far as the pid tells

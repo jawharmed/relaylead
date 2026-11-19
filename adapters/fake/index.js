@@ -74,7 +74,8 @@ async function list(mission) {
 
 // Asks the session to end; its agent sees the file within 50 ms and ends its own process. Never
 // a kill by pid: once the agent has ended, Windows soon gives its pid to another process, which may
-// be this very `relaylead` command.
+// be this very `relaylead` command. So a stop by id: run again on a session already ended, it only
+// writes and removes its file (stopById below).
 async function stop(session) {
   const file = stopFile(session);
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -98,6 +99,7 @@ async function attach(session) {
 module.exports = {
   name: 'fake',
   capabilities: ['launch', 'list', 'stop', 'attach'],
+  stopById: true,
   launch,
   list,
   stop,
