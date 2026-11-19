@@ -10,6 +10,7 @@ const { listSessions, recordSession, isAlive } = require('../core/sessions');
 const { readJson, writeJson } = require('../core/store');
 const { missionDir } = require('../core/paths');
 const fake = require('../adapters/fake');
+const { t: msg } = require('../core/messages');
 const { tmpDir, makeIo, waitFor, sessionEnded, userEnv } = require('../fixtures/helpers');
 const { freshHome, writeMission } = require('../fixtures/missions');
 
@@ -146,6 +147,36 @@ test('name defaults to the folder slug', async (t) => {
   assert.strictEqual(result.code, 0, result.err);
   assert.strictEqual(result.out.trim(), 'my-project');
   assert.strictEqual(readJson(path.join(missionDir('my-project'), 'mission.json')).dir, fs.realpathSync.native(dir));
+});
+
+test('launch starts the watcher when autoStart is on, says so on stderr, and not otherwise', async (t) => {
+  freshHome(t);
+  const home = process.env.RELAYLEAD_HOME;
+  const loopFile = path.join(home, 'watcher-loop.json');
+  const saved = process.env.RELAYLEAD_WATCHER;
+  t.after(async () => {
+    process.env.RELAYLEAD_HOME = home;
+    await cli(['watcher', 'stop']);
+    if (saved === undefined) delete process.env.RELAYLEAD_WATCHER;
+    else process.env.RELAYLEAD_WATCHER = saved;
+  });
+  const launch = (name) => cli(['launch', '--agent', 'fake', '--name', name, '--dir', tmpDir('relaylead-project-')]);
+
+  // RELAYLEAD_WATCHER=off, as for the whole test suite: no loop.
+  process.env.RELAYLEAD_WATCHER = 'off';
+  assert.deepStrictEqual(await launch('muted'), { code: 0, out: 'muted\n', err: '' });
+  assert.strictEqual(fs.existsSync(loopFile), false);
+
+  delete process.env.RELAYLEAD_WATCHER;
+  writeJson(path.join(home, 'config.json'), { delivery: { type: 'files' }, watcher: { autoStart: false } });
+  assert.deepStrictEqual(await launch('quiet'), { code: 0, out: 'quiet\n', err: '' });
+  assert.strictEqual(fs.existsSync(loopFile), false);
+
+  writeJson(path.join(home, 'config.json'), { delivery: { type: 'files' } });
+  assert.deepStrictEqual(await launch('demo'), { code: 0, out: 'demo\n', err: msg('watcherStarted', { seconds: 300 }) });
+  assert.ok(readJson(loopFile).beatAt, 'the loop has written its file');
+  // Already running: nothing more is said.
+  assert.deepStrictEqual(await launch('again'), { code: 0, out: 'again\n', err: '' });
 });
 
 test('stop stops every session of the mission', async (t) => {

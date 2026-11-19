@@ -3,6 +3,23 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
+// A test file run alone (`node --test test/missions.test.js`) starts no watcher loop either, as under
+// `npm test` (fixtures/run-tests.js). Its loops end with it: the file named by RELAYLEAD_TEST_RUN_FILE
+// goes when this process exits (core/watcher.js, loopMustEnd).
+if (process.env.RELAYLEAD_WATCHER === undefined) process.env.RELAYLEAD_WATCHER = 'off';
+if (!process.env.RELAYLEAD_TEST_RUN_FILE) {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'relaylead-run-'));
+  process.env.RELAYLEAD_TEST_RUN_FILE = path.join(folder, 'running');
+  fs.writeFileSync(process.env.RELAYLEAD_TEST_RUN_FILE, '');
+  process.on('exit', () => {
+    try {
+      fs.rmSync(folder, { recursive: true, force: true });
+    } catch {
+      // left in the temporary folder
+    }
+  });
+}
+
 function tmpDir(prefix = 'relaylead-') {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }

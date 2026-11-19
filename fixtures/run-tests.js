@@ -2,14 +2,33 @@
 // file's results only when the file ends: a file that hangs would block the run, and the CI job,
 // without a word. After RELAYLEAD_TEST_WATCHDOG_MINUTES (10 by default), the watchdog lists the
 // processes still running (the test files, relaylead, git) and stops the run, which then fails.
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { spawn, execFileSync } = require('node:child_process');
 
 const minutes = Number(process.env.RELAYLEAD_TEST_WATCHDOG_MINUTES) || 10;
 const posix = process.platform !== 'win32';
 
+// RELAYLEAD_WATCHER=off: no launch of the whole run starts the watcher's loop, nor a targeted pass;
+// only the tests of the loop remove it, for their own duration. A loop runs detached, out of the
+// process group stopped below: RELAYLEAD_TEST_RUN_FILE names a file that lives as long as the run,
+// and a loop started under it ends once the file is gone (core/watcher.js), even after a crash.
+const testRunFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'relaylead-run-')), 'running');
+fs.writeFileSync(testRunFile, '');
+const env = { ...process.env, RELAYLEAD_WATCHER: 'off', RELAYLEAD_TEST_RUN_FILE: testRunFile };
+
+function endTestRun() {
+  try {
+    fs.rmSync(path.dirname(testRunFile), { recursive: true, force: true });
+  } catch {
+    // left in the temporary folder: the loops then end with the stops of their own tests
+  }
+}
+
 // Its own process group on POSIX, so the whole run (the test files and what they started) can be
 // stopped at once.
-const runner = spawn(process.execPath, ['--test', ...process.argv.slice(2)], { stdio: 'inherit', detached: posix });
+const runner = spawn(process.execPath, ['--test', ...process.argv.slice(2)], { stdio: 'inherit', detached: posix, env });
 
 function stopRunner() {
   try {
@@ -42,6 +61,7 @@ const watchdog = setTimeout(() => {
   process.stderr.write(`Test files still running:\n${[...files].join('\n') || '(unknown)'}\n`);
   process.stderr.write(`Processes:\n${processes}\n`);
   stopRunner();
+  endTestRun();
   process.exit(1);
 }, minutes * 60 * 1000);
 
@@ -49,11 +69,13 @@ const watchdog = setTimeout(() => {
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => {
     stopRunner();
+    endTestRun();
     process.exit(1);
   });
 }
 
 runner.on('exit', (code) => {
   clearTimeout(watchdog);
+  endTestRun();
   process.exit(code === null ? 1 : code);
 });

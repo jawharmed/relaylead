@@ -24,6 +24,9 @@ const DEFAULTS = {
   // Thresholds of a session's context: soft = its first reading + the budget of its role, capped at
   // capPercent of its window when the window is measured; hard = soft + hardPercent (core/readings.js).
   context: { budgets: { lead: 150000, crew: 250000 }, capPercent: 40, hardPercent: 20 },
+  // The watcher (core/watcher.js), read from the machine file alone: autoStart, its loop started by
+  // `relaylead launch`; helpers, its targeted passes; everySeconds, the time between two passes of the loop.
+  watcher: { autoStart: true, helpers: true, everySeconds: 300 },
 };
 
 function isPlainObject(value) {
@@ -47,6 +50,20 @@ function loadConfig({ dir, params } = {}) {
   return deepMerge(deepMerge(deepMerge(structuredClone(DEFAULTS), machine), project), params || {});
 }
 
+// The watcher's settings, read from the machine file at each call. RELAYLEAD_WATCHER=off (set for the
+// whole test suite) turns off both the loop started by launch and the targeted passes. everySeconds is
+// a whole number of at least 1, otherwise 300.
+function watcherSettings() {
+  const { watcher } = loadConfig();
+  const off = process.env.RELAYLEAD_WATCHER === 'off';
+  const every = watcher.everySeconds;
+  return {
+    autoStart: !off && watcher.autoStart !== false,
+    helpers: !off && watcher.helpers !== false,
+    everySeconds: Number.isInteger(every) && every >= 1 ? every : DEFAULTS.watcher.everySeconds,
+  };
+}
+
 // Secrets are never stored in config: only "env:NAME" or "file:path" references.
 function resolveSecret(ref) {
   if (typeof ref === 'string' && ref.startsWith('env:')) {
@@ -60,4 +77,4 @@ function resolveSecret(ref) {
   throw new Error('secrets must be references: use env:NAME or file:path');
 }
 
-module.exports = { DEFAULTS, deepMerge, loadConfig, resolveSecret };
+module.exports = { DEFAULTS, deepMerge, loadConfig, watcherSettings, resolveSecret };
