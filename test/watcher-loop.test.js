@@ -47,8 +47,20 @@ function explain() {
   return `watcher-loop.json: ${JSON.stringify(readLoop())}\nwatcher.log:\n${logText()}`;
 }
 
+// Sets an environment variable for the duration of the test (undefined: removes it).
+function setEnv(t, name, value) {
+  const saved = process.env[name];
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+  t.after(() => {
+    if (saved === undefined) delete process.env[name];
+    else process.env[name] = saved;
+  });
+}
+
 // A fresh RELAYLEAD_HOME whose loop passes every second, RELAYLEAD_WATCHER removed for the test.
-// Afterwards, the watcher is stopped and every loop the test started directly has exited.
+// Afterwards, the watcher is stopped, its loop has removed its file, and every loop the test started
+// directly has exited.
 function loopHome(t) {
   const dir = tmpDir('relaylead-home-');
   process.env.RELAYLEAD_HOME = dir;
@@ -59,6 +71,7 @@ function loopHome(t) {
   t.after(async () => {
     process.env.RELAYLEAD_HOME = dir;
     await watcher.stopWatcher();
+    await waitFor(() => !fs.existsSync(loopFile()), 30000, 'the loop to end after the test', explain);
     await Promise.all(loops.map((loop) => loop.exited));
     if (saved === undefined) delete process.env.RELAYLEAD_WATCHER;
     else process.env.RELAYLEAD_WATCHER = saved;
@@ -71,6 +84,31 @@ function missionToWatch(name = 'demo') {
   const dir = tmpDir('relaylead-project-');
   fs.mkdirSync(path.join(dir, 'tasks'));
   writeMission(name, dir);
+}
+
+// Mission demo held with an extra lead that does not end: its process is this test's, alive
+// throughout. Each pass tries to stop it, writes stop-extra-lead, waits RELAYLEAD_STOP_WAIT_MS, then
+// writes error stop-session.
+function heldMission() {
+  missionToWatch();
+  const record = (name, pid) => {
+    const hex = crypto.randomBytes(8).toString('hex');
+    const session = { sessionId: `fake-${hex}`, shortId: hex.slice(0, 8), name, role: 'lead', pid, cwd: tmpDir('relaylead-cwd-') };
+    recordSession('demo', session);
+    return session;
+  };
+  const current = record('demo/lead/1', DEAD_PID);
+  record('demo/lead/9', process.pid);
+  writeJson(path.join(missionDir('demo'), 'lead.json'), {
+    sessionId: current.sessionId,
+    shortId: current.shortId,
+    sessionName: current.name,
+    startedAt: new Date().toISOString(),
+  });
+}
+
+function countInLog(text) {
+  return logText().split(text).length - 1;
 }
 
 // `relaylead watcher loop` started by the test, which sees it exit (never judged on its pid).
@@ -161,7 +199,8 @@ test('two loops started at once leave one', async (t) => {
   missionToWatch();
   const both = [spawnLoop(loops), spawnLoop(loops)];
 
-  await new Promise((resolve) => setTimeout(resolve, 3000));
+  await waitFor(() => both.some((loop) => loop.ended), 10000, 'one of the loops to end', explain);
+  await new Promise((resolve) => setTimeout(resolve, 1500));
   const running = both.filter((loop) => !loop.ended);
   assert.strictEqual(running.length, 1, explain());
   assert.strictEqual(readLoop().pid, running[0].child.pid);
@@ -169,32 +208,11 @@ test('two loops started at once leave one', async (t) => {
 
 test('stop leaves no loop running', async (t) => {
   loopHome(t);
-  const savedWait = process.env.RELAYLEAD_STOP_WAIT_MS;
-  process.env.RELAYLEAD_STOP_WAIT_MS = '200';
-  t.after(() => {
-    if (savedWait === undefined) delete process.env.RELAYLEAD_STOP_WAIT_MS;
-    else process.env.RELAYLEAD_STOP_WAIT_MS = savedWait;
-  });
-  // A mission held with an extra lead that does not end: its process is this test's, alive
-  // throughout. Each pass tries to stop it and writes a line.
-  missionToWatch();
-  const record = (name, pid) => {
-    const hex = crypto.randomBytes(8).toString('hex');
-    const session = { sessionId: `fake-${hex}`, shortId: hex.slice(0, 8), name, role: 'lead', pid, cwd: tmpDir('relaylead-cwd-') };
-    recordSession('demo', session);
-    return session;
-  };
-  const current = record('demo/lead/1', DEAD_PID);
-  record('demo/lead/9', process.pid);
-  writeJson(path.join(missionDir('demo'), 'lead.json'), {
-    sessionId: current.sessionId,
-    shortId: current.shortId,
-    sessionName: current.name,
-    startedAt: new Date().toISOString(),
-  });
+  setEnv(t, 'RELAYLEAD_STOP_WAIT_MS', '200');
+  heldMission();
 
   assert.strictEqual(await watcher.startWatcher(), 'started');
-  await waitFor(() => (logText().match(/stop-extra-lead/g) || []).length >= 2, 15000, 'two passes on the extra lead', explain);
+  await waitFor(() => countInLog('stop-extra-lead') >= 2, 15000, 'two passes on the extra lead', explain);
   assert.strictEqual((await cli('watcher', 'stop')).out, msg('watcherStopped', {}));
 
   const log = logText();
@@ -204,6 +222,25 @@ test('stop leaves no loop running', async (t) => {
     assert.strictEqual(logText(), log);
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
+});
+
+test('a start during the last pass of a stopped loop lifts the stop', async (t) => {
+  loopHome(t);
+  // Each pass lasts 12 s, longer than the 10 s a stop waits for the loop to end.
+  setEnv(t, 'RELAYLEAD_STOP_WAIT_MS', '12000');
+  heldMission();
+  assert.strictEqual(await watcher.startWatcher(), 'started');
+  await waitFor(() => countInLog('stop-extra-lead') >= 1, 10000, 'a pass on the extra lead', explain);
+
+  assert.strictEqual(await watcher.stopWatcher(), 'requested');
+  const started = await cli('watcher', 'start');
+  assert.ok([msg('watcherAlreadyRunning', { since: readLoop().startedAt }), msg('watcherStarted', { seconds: 1 })].includes(started.out), started.out);
+  assert.strictEqual(fs.existsSync(loopStopFile()), false);
+
+  // The pass in progress ends; a loop still runs and passes again.
+  await waitFor(() => countInLog('error stop-session') >= 1, 20000, 'the long pass to end', explain);
+  await waitFor(() => countInLog('stop-extra-lead') >= 2, 10000, 'another pass', explain);
+  assert.strictEqual(watcher.watcherRunning().running, true, explain());
 });
 
 test('a stale stop file does not kill a new loop', async (t) => {
@@ -285,15 +322,29 @@ test('a loop started by the tests ends once their run is over', async (t) => {
   missionToWatch();
   const runFile = path.join(tmpDir('relaylead-run-'), 'running');
   fs.writeFileSync(runFile, '');
-  const saved = process.env.RELAYLEAD_TEST_RUN_FILE;
-  process.env.RELAYLEAD_TEST_RUN_FILE = runFile;
-  t.after(() => {
-    process.env.RELAYLEAD_TEST_RUN_FILE = saved;
-  });
+  setEnv(t, 'RELAYLEAD_TEST_RUN_FILE', runFile);
   const loop = spawnLoop(loops);
   await nextPass(null);
 
   fs.rmSync(runFile);
+  await waitFor(() => loop.ended, 10000, 'the loop to end', explain);
+  assert.strictEqual(fs.existsSync(loopFile()), false);
+});
+
+test('a loop started by the tests ends once their run no longer refreshes its file', async (t) => {
+  const loops = loopHome(t);
+  missionToWatch();
+  const runFile = path.join(tmpDir('relaylead-run-'), 'running');
+  fs.writeFileSync(runFile, '');
+  setEnv(t, 'RELAYLEAD_TEST_RUN_FILE', runFile);
+  const loop = spawnLoop(loops);
+  const first = await nextPass(null);
+  await nextPass(first);
+  assert.strictEqual(loop.ended, false, 'a file refreshed less than 60 s ago keeps the loop');
+
+  // The run was killed (Ctrl-C, kill -9): its file stays, no longer refreshed.
+  const old = new Date(Date.now() - 61 * 1000);
+  fs.utimesSync(runFile, old, old);
   await waitFor(() => loop.ended, 10000, 'the loop to end', explain);
   assert.strictEqual(fs.existsSync(loopFile()), false);
 });

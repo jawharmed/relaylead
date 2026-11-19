@@ -157,6 +157,7 @@ test('launch starts the watcher when autoStart is on, says so on stderr, and not
   t.after(async () => {
     process.env.RELAYLEAD_HOME = home;
     await cli(['watcher', 'stop']);
+    await waitFor(() => !fs.existsSync(loopFile), 30000, 'the loop to end after the test');
     if (saved === undefined) delete process.env.RELAYLEAD_WATCHER;
     else process.env.RELAYLEAD_WATCHER = saved;
   });

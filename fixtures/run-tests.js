@@ -12,10 +12,20 @@ const posix = process.platform !== 'win32';
 
 // RELAYLEAD_WATCHER=off: no launch of the whole run starts the watcher's loop, nor a targeted pass;
 // only the tests of the loop remove it, for their own duration. A loop runs detached, out of the
-// process group stopped below: RELAYLEAD_TEST_RUN_FILE names a file that lives as long as the run,
-// and a loop started under it ends once the file is gone (core/watcher.js), even after a crash.
+// process group stopped below: RELAYLEAD_TEST_RUN_FILE names a file refreshed every 10 s while the
+// run lives, and a loop started under it ends once the file is gone or 60 s old (core/watcher.js),
+// even after this runner is killed.
 const testRunFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'relaylead-run-')), 'running');
 fs.writeFileSync(testRunFile, '');
+const refresh = setInterval(() => {
+  try {
+    const now = new Date();
+    fs.utimesSync(testRunFile, now, now);
+  } catch {
+    // the next refresh tries again
+  }
+}, 10 * 1000);
+refresh.unref();
 const env = { ...process.env, RELAYLEAD_WATCHER: 'off', RELAYLEAD_TEST_RUN_FILE: testRunFile };
 
 function endTestRun() {
