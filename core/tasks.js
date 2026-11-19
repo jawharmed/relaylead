@@ -7,7 +7,7 @@ const { home, missionDir, slug } = require('./paths');
 const { writeJson, readJson, withWindowsRetry } = require('./store');
 const { codedError } = require('./messages');
 const { DEFAULTS } = require('./config');
-const { readMission, getState, stopSessionsAndWait } = require('./missions');
+const { readMission, getState, stopSessionsAndWait, launchWhileOpen, currentLeadError } = require('./missions');
 const { recordSession, listSessions } = require('./sessions');
 const { loadProfile } = require('./profiles');
 const { listQuestions } = require('./questions');
@@ -159,9 +159,20 @@ function crewPrompt(task, cwd, branch, question, attempt, previousSummary) {
 }
 
 // Idempotent: a running task is returned as it is, so a replayed start launches nobody.
-async function startTask(name, { id, profile = 'developer' }) {
+// `env` is the caller's: see checkCurrentLead.
+async function startTask(name, { id, profile = 'developer', env }) {
   const mission = readMission(name); // before the lock, which lives in the mission folder
-  return withMissionLock(name, `task start ${id}`, () => launchCrew(mission, id, profile));
+  return withMissionLock(name, `task start ${id}`, () => {
+    checkCurrentLead(name, env);
+    return launchCrew(mission, id, profile);
+  });
+}
+
+// Checked again under the mission lock: a command that waited for the lock while a relaunch or a
+// handover replaced its lead is refused once it gets the lock.
+function checkCurrentLead(name, env) {
+  const refused = currentLeadError(name, env);
+  if (refused) throw refused;
 }
 
 function checkMissionOpen(name) {
@@ -196,21 +207,38 @@ async function launchCrew(mission, id, profile, { attempt = 1, previousSummary =
   const { cwd, branch } = getDelivery(mission.config.delivery.type).prepareTask(mission, task);
   const number = listSessions(name).filter((s) => s.name.startsWith(`${name}/${profile}/`)).length + 1;
   const adapter = getAdapter(mission.agent);
-  const session = await adapter.launch({
-    mission: name,
-    name: `${name}/${profile}/${number}`,
-    role: 'crew',
-    profile: crewProfile,
-    prompt: crewPrompt(task, cwd, branch, question, attempt, previousSummary),
-    cwd,
-    env: { RELAYLEAD_MISSION: name, RELAYLEAD_HOME: home(), RELAYLEAD_TASK: id, RELAYLEAD_ATTEMPT: String(attempt) },
-    permissionMode: mission.config.permissionMode,
-  });
+  const sessionName = `${name}/${profile}/${number}`;
+  const launch = async () => {
+    const launched = await adapter.launch({
+      mission: name,
+      name: sessionName,
+      role: 'crew',
+      profile: crewProfile,
+      prompt: crewPrompt(task, cwd, branch, question, attempt, previousSummary),
+      cwd,
+      env: {
+        RELAYLEAD_MISSION: name,
+        RELAYLEAD_HOME: home(),
+        RELAYLEAD_TASK: id,
+        RELAYLEAD_ATTEMPT: String(attempt),
+        RELAYLEAD_ROLE: 'crew',
+        RELAYLEAD_SESSION: sessionName,
+      },
+      permissionMode: mission.config.permissionMode,
+    });
+    try {
+      recordSession(name, launched);
+    } catch (err) {
+      await adapter.stop(launched); // no orphan session
+      throw err;
+    }
+    return launched;
+  };
+  // The state is read again once the session is recorded: a stop either finds it in the registry or
+  // is seen there.
+  const session = await launchWhileOpen(name, launch, (launched) => adapter.stop(launched));
   const record = { id, profile, state: 'running', session: session.shortId, cwd, branch, startedAt: now(), attempt };
   try {
-    recordSession(name, session);
-    // Checked once the session is recorded: a stop either finds it in the registry or is seen here.
-    if (getState(name) === 'stopped') throw codedError('mission-stopped', { mission: name });
     writeJson(taskFile(name, id), record);
   } catch (err) {
     await adapter.stop(session); // no orphan session
@@ -222,9 +250,10 @@ async function launchCrew(mission, id, profile, { attempt = 1, previousSummary =
 // Launches a new crew member on a failed task, as attempt n + 1. Idempotent: a retried task that is
 // running is returned as it is. An attempt counted but never launched (a launch that failed, or a
 // crash before it) is launched again with the same number, past the limit.
-async function retryTask(name, { id, profile }) {
+async function retryTask(name, { id, profile, env }) {
   const mission = readMission(name); // before the lock, which lives in the mission folder
   return withMissionLock(name, `task retry ${id}`, async () => {
+    checkCurrentLead(name, env);
     checkMissionOpen(name);
     const tasks = listTasks(name);
     const task = findTask(name, id, tasks);
@@ -281,10 +310,12 @@ function archiveAttempt(name, id, attempt, record) {
 // Delivers a done task. Returns {outcome: 'delivered' or 'already-delivered', warnings}. A task
 // already delivered is finished again: that completes a delivery that was interrupted.
 // runHooks false skips the git hooks whatever the mission's configuration (the user's --no-hooks).
-async function deliverTask(name, id, { runHooks } = {}) {
+// `env` is the caller's: see checkCurrentLead.
+async function deliverTask(name, id, { runHooks, env } = {}) {
   const mission = readMission(name); // before the lock, which lives in the mission folder
   const delivery = getDelivery(mission.config.delivery.type);
   return withMissionLock(name, `task deliver ${id}`, () => {
+    checkCurrentLead(name, env);
     const task = findTask(name, id);
     if (task.state === 'delivered') {
       return { outcome: 'already-delivered', warnings: delivery.finish(mission, task, { runHooks }) };

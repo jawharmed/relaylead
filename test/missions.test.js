@@ -4,8 +4,18 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { run } = require('../core/cli');
-const { listMissions, lockFile, releaseLock, isStaleFolderLock, reapLead, markReaperEnded } = require('../core/missions');
-const { takeOverStaleLock } = require('../core/mission-lock');
+const {
+  listMissions,
+  lockFile,
+  releaseLock,
+  isStaleFolderLock,
+  reapLead,
+  markReaperEnded,
+  launchLead,
+  launchWhileOpen,
+  readMission,
+} = require('../core/missions');
+const { takeOverStaleLock, withMissionLock } = require('../core/mission-lock');
 const { listSessions, recordSession, isAlive } = require('../core/sessions');
 const { readJson, writeJson } = require('../core/store');
 const { missionDir } = require('../core/paths');
@@ -1170,4 +1180,118 @@ test('remove checks the mission name before removing anything', async (t) => {
   assert.match(refused.err, /usage: relaylead remove <mission> \[--force\]/);
   // missions/.. is RELAYLEAD_HOME itself.
   assert.strictEqual(fs.existsSync(path.join(process.env.RELAYLEAD_HOME, 'config.json')), true);
+});
+
+test('a launch stops the session it started when the mission was stopped meanwhile', async (t) => {
+  freshHome(t);
+  writeMission('demo', tmpDir('relaylead-project-'));
+  const stateFile = path.join(missionDir('demo'), 'state.json');
+  const session = { shortId: 'aaaa1111' };
+  const stopped = [];
+  const stop = async (stoppedSession) => {
+    stopped.push(stoppedSession);
+  };
+
+  // Stopped while the session was being launched: it is stopped, and the launch refused.
+  const launch = async () => {
+    writeJson(stateFile, { state: 'stopped', stopping: true });
+    return session;
+  };
+  await assert.rejects(launchWhileOpen('demo', launch, stop), { code: 'mission-stopped' });
+  assert.deepStrictEqual(stopped, [session]);
+
+  // Already stopped, or done: nothing is launched.
+  let launches = 0;
+  const counted = async () => {
+    launches++;
+    return session;
+  };
+  await assert.rejects(launchWhileOpen('demo', counted, stop), { code: 'mission-stopped' });
+  writeJson(stateFile, { state: 'done' });
+  await assert.rejects(launchWhileOpen('demo', counted, stop), { code: 'mission-done' });
+  assert.strictEqual(launches, 0);
+
+  // Open all along: the session is returned.
+  writeJson(stateFile, { state: 'working' });
+  assert.strictEqual(await launchWhileOpen('demo', counted, stop), session);
+  assert.strictEqual(stopped.length, 1);
+});
+
+test('a lead name is never given twice, even when a launch left no record', async (t) => {
+  freshHome(t);
+  writeMission('demo', tmpDir('relaylead-project-'));
+  recordSession('demo', { sessionId: 'fake-old', shortId: 'aaaa1111', name: 'demo/lead/1', role: 'lead', pid: 2147483646 });
+  // Lead 3 was reserved by a launch that recorded nothing (it crashed, or failed).
+  writeJson(path.join(missionDir('demo'), 'lead-launch.json'), { n: 3, name: 'demo/lead/3', at: new Date().toISOString() });
+
+  const lead = await withMissionLock('demo', 'test', () => launchLead(readMission('demo')));
+
+  assert.strictEqual(lead.name, 'demo/lead/4');
+  assert.strictEqual(readJson(path.join(missionDir('demo'), 'lead.json')).sessionName, 'demo/lead/4');
+  const reserved = readJson(path.join(missionDir('demo'), 'lead-launch.json'));
+  assert.strictEqual(reserved.n, 4);
+  assert.strictEqual(reserved.name, 'demo/lead/4');
+  assert.ok(listSessions('demo').some((session) => session.name === 'demo/lead/4'));
+});
+
+test('the restart and handover sections come before the mission', async (t) => {
+  freshHome(t);
+  const prompts = [];
+  stub(t, 'launch', (original) => async (spec) => {
+    prompts.push(spec.prompt);
+    return original(spec);
+  });
+  const dir = tmpDir('relaylead-project-');
+  assert.strictEqual((await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir])).code, 0);
+  const section = '## Restart\n\nThe previous lead session demo/lead/1 ended unexpectedly.';
+
+  await withMissionLock('demo', 'test', () => launchLead(readMission('demo'), { section }));
+
+  assert.strictEqual(prompts.length, 2);
+  assert.ok(!prompts[0].includes('## Restart'), 'the first lead gets no section');
+  const at = prompts[1].indexOf(section);
+  assert.ok(at > 0, prompts[1]);
+  assert.ok(at < prompts[1].indexOf('## This mission'), prompts[1]);
+});
+
+// The fake agent's launch, made to return only once the lead's first command (`state set working`)
+// has run: like claude's, which returns after the first turn has started.
+function launchReturningAfterFirstCommand(t) {
+  stub(t, 'launch', (original) => async (spec) => {
+    const session = await original(spec);
+    if (spec.role === 'lead') {
+      const ran = () => fs.existsSync(session.logFile) && /end relaylead state set working|relaylead state set working failed/.test(fs.readFileSync(session.logFile, 'utf8'));
+      await waitFor(ran, 30000, `the first command of ${spec.name}`);
+    }
+    return session;
+  });
+}
+
+function logOf(name) {
+  const session = listSessions('demo').find((candidate) => candidate.name === name);
+  return fs.readFileSync(session.logFile, 'utf8');
+}
+
+test('a new lead that runs its first command before lead.json names it is accepted', async (t) => {
+  freshHome(t);
+  launchReturningAfterFirstCommand(t);
+  const dir = tmpDir('relaylead-project-');
+  const stateFile = path.join(missionDir('demo'), 'state.json');
+
+  // First launch: no lead.json yet.
+  assert.strictEqual((await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir])).code, 0);
+  assert.doesNotMatch(logOf('demo/lead/1'), /failed/);
+  const first = readJson(stateFile);
+  assert.strictEqual(first.state, 'working');
+  assert.ok(first.updatedAt <= readJson(path.join(missionDir('demo'), 'lead.json')).startedAt);
+
+  // A second lead, while lead.json still names the first one.
+  writeJson(stateFile, { state: 'starting' });
+  await withMissionLock('demo', 'test', () => launchLead(readMission('demo')));
+  assert.doesNotMatch(logOf('demo/lead/2'), /failed/);
+  const second = readJson(stateFile);
+  assert.strictEqual(second.state, 'working');
+  const lead = readJson(path.join(missionDir('demo'), 'lead.json'));
+  assert.strictEqual(lead.sessionName, 'demo/lead/2');
+  assert.ok(second.updatedAt <= lead.startedAt);
 });

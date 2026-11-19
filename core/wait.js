@@ -4,7 +4,7 @@
 const path = require('node:path');
 const { missionDir } = require('./paths');
 const { writeJson, readJson } = require('./store');
-const { readMission, getState } = require('./missions');
+const { readMission, getState, currentLeadError } = require('./missions');
 const { sleep } = require('./timing');
 const { codedError } = require('./messages');
 const { listTasks, markFailed } = require('./tasks');
@@ -111,7 +111,9 @@ async function stopFinishedCrew(adapter, changes, tasks, sessions) {
 
 // Gives the changes since the last wait to `report` as soon as there is one, or [] after the timeout.
 // The snapshot is saved only after `report` succeeds, so a change is never lost on the way out.
-async function waitForChanges(name, timeoutSeconds = DEFAULT_TIMEOUT_S, report = () => {}) {
+// `env` is the caller's: a lead replaced while it waits (relaunch, handover) gets not-current-lead at
+// the next round, before anything is written or stopped.
+async function waitForChanges(name, timeoutSeconds = DEFAULT_TIMEOUT_S, report = () => {}, { env } = {}) {
   const mission = readMission(name);
   const adapter = getAdapter(mission.agent);
   const snapshot = { ...EMPTY_SNAPSHOT, ...readJson(snapshotFile(name), {}) };
@@ -123,6 +125,8 @@ async function waitForChanges(name, timeoutSeconds = DEFAULT_TIMEOUT_S, report =
       sessions = await adapter.list(name);
       listedAt = Date.now();
     }
+    const refused = currentLeadError(name, env);
+    if (refused) throw refused;
     const { tasks, view } = look(name, sessions, snapshot.lostSince);
     const changes = diff(snapshot, view);
     if (changes.length > 0 || Date.now() >= deadline) {
