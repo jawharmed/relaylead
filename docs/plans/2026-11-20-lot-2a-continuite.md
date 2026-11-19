@@ -698,6 +698,8 @@ Couvre le « Terminé quand » du lot sous macOS, à la place de Linux : lead tu
 
 25. **Deux leads actuels pendant un lancement (relecture de la Task 8).** La définition « lead de `lead.json` **ou** lead en cours de lancement » laissait deux leads actuels pendant tout `adapter.launch` (jusqu'à 30 s) : un ancien lead relancé par le démon (fait mesuré 4) pouvait encore faire passer `state set done`, `question ask` ou `wait`. Tranché : une réservation en cours (`lead-launch.json` non `failed`, plus récente que `lead.json`) **exclut** le lead de `lead.json` ; un lancement qui échoue (`failed: true`) lui rend la main. `launchLead` inscrit la session au registre avant d'écrire `lead.json`, et `wait` refait le contrôle juste avant d'écrire l'instantané.
 
+26. **Tour réveillé qui échoue après son premier battement (relecture de la Task 9).** Le réveil était jugé sur un seul battement : un lead réveillé qui lançait `relaylead task list`, puis dont le tour mourait avant `relaylead wait` (limite d'usage, erreur d'API), gardait sa vue « réveillée » et l'état `waiting`, et plus rien ne le réveillait avant un autre changement. Tranché : un échec du lead (`failures/`) postérieur au réveil (`lastLeadActionAt`) et à son dernier battement vaut réveil sans effet (« Garde du réveil ») ; le motif redevient dû, après l'espacement, et après la retenue de 5 h de la règle 11 pour une limite d'usage. Un réveil suivi d'un battement efface `lastWakeAt` : il n'est plus jamais rejugé, et `lastLeadActionAt` garde son heure.
+
 ## Hors périmètre
 
 - **Limites d'usage, pause et reprise, priorités, jetons de travaux lourds** : lot 2b (le relevé `failures/` et la barre d'état de mesure, qui porte déjà `rate_limits`, leur servent de base).

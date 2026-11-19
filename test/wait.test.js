@@ -7,7 +7,7 @@ const { listTasks, startTask } = require('../core/tasks');
 const { stopMission } = require('../core/missions');
 const { listSessions } = require('../core/sessions');
 const { readJson, writeJson } = require('../core/store');
-const { waitForChanges } = require('../core/wait');
+const { waitForChanges, viewOf, unseenChanges } = require('../core/wait');
 const { missionDir } = require('../core/paths');
 const fake = require('../adapters/fake');
 const { makeIo, waitFor, sessionEnded } = require('../fixtures/helpers');
@@ -311,4 +311,49 @@ test('a lead replaced while its wait stops a crew member does not save the snaps
   assert.strictEqual(await run(['wait', '--timeout', '20'], io), 1);
   assert.match(io.err.text, /demo\/lead\/2 took over/);
   assert.strictEqual(fs.readFileSync(snapshotFile(), 'utf8'), before);
+});
+
+test('viewOf writes nothing and unseenChanges reports what the next wait would', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  const crew = await startedTaskWithoutCrew();
+  stubList(t, () => []);
+  const taskFile = path.join(missionDir('demo'), 'tasks', 'a.json');
+  const taskBefore = fs.readFileSync(taskFile, 'utf8');
+  const now = Date.now();
+
+  // Seen lost for the first time: the grace starts now, nothing fails.
+  const fresh = viewOf('demo', [], {}, now);
+  assert.deepStrictEqual(fresh.toFail, []);
+  assert.deepStrictEqual(fresh.lostSince, { [crew.shortId]: new Date(now).toISOString() });
+  assert.strictEqual(fresh.view.tasks.a, 'running');
+
+  // Lost for 61 s: its task is to fail, and the view already shows it failed, but nothing is written.
+  const lostSince = { [crew.shortId]: secondsAgo(61) };
+  const lost = viewOf('demo', [], lostSince, now);
+  assert.deepStrictEqual(lost.toFail, [{ id: 'a', shortId: crew.shortId, summary: 'crew session ended without a result' }]);
+  assert.deepStrictEqual(lost.view.tasks, { a: 'failed', b: 'todo' });
+  assert.deepStrictEqual(lost.lostSince, lostSince);
+  assert.strictEqual(fs.readFileSync(taskFile, 'utf8'), taskBefore);
+  assert.strictEqual(fs.existsSync(snapshotFile()), false);
+
+  // Without a snapshot, everything is unseen; the key holds the states and attempts, keys sorted.
+  writeJson(snapshotFile(), { tasks: {}, questions: {}, lostSince });
+  const unseen = unseenChanges('demo', [], lostSince, now);
+  assert.deepStrictEqual(unseen.changes, [
+    { kind: 'task', id: 'a', from: null, to: 'failed' },
+    { kind: 'task', id: 'b', from: null, to: 'todo' },
+  ]);
+  assert.strictEqual(unseen.viewKey, '{"questions":{},"tasks":{"a":{"attempt":1,"state":"failed"},"b":{"attempt":0,"state":"todo"}}}');
+  assert.deepStrictEqual(unseen.toFail, lost.toFail);
+  assert.deepStrictEqual(unseen.lostSince, lostSince);
+  assert.strictEqual(fs.readFileSync(taskFile, 'utf8'), taskBefore);
+
+  // The next wait reports exactly those changes; once it has, nothing is unseen.
+  assert.deepStrictEqual(await wait(0), unseen.changes);
+  assert.strictEqual(listTasks('demo')[0].state, 'failed');
+  const after = unseenChanges('demo', [], {}, Date.now());
+  assert.deepStrictEqual(after.changes, []);
+  assert.deepStrictEqual(after.toFail, []);
+  assert.strictEqual(after.viewKey, unseen.viewKey);
 });

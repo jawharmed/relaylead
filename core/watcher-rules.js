@@ -5,9 +5,12 @@
 // obs: {now, mission, record (state.json), lead (lead.json), rows (the adapter's list, null when it
 // failed), listError, tasksError, leadIdleConfirmed, registry, tasks (null when they could not be
 // read), readings: {[shortId]: {heartbeat, statusline, failure}}, failures (the whole failures/
-// folder, by short id), unseen, mail, config, watch (watch.json)}.
+// folder, by short id), unseen (what the next `relaylead wait` would report, wait.js unseenChanges:
+// {changes, viewKey, toFail, lostSince}, null without the list or the tasks), mail (unread messages
+// by short id), config, watch (watch.json)}.
 //
-// Actions: {type: 'stop-session', session, log} and {type: 'log', text, journal}.
+// Actions: {type: 'stop-session', session, log}, {type: 'log', text, journal}, {type: 'mark-failed',
+// id, summary, log} and {type: 'wake-lead', reasons, log}.
 
 // An active lead whose last heartbeat is older than this is reported, never stopped.
 const SILENT_MS = 30 * 60 * 1000;
@@ -16,6 +19,19 @@ const SILENT_MS = 30 * 60 * 1000;
 // (Claude's own service restarts a killed session in about 11 s, measured fact 4); also how recent a
 // heartbeat keeps a lead missing from the list restarting. Read at each call: tests shorten it.
 const restartGraceMs = () => Number(process.env.RELAYLEAD_RESTART_GRACE_MS) || 120000;
+
+// The guard of the wakes ("Garde du réveil"). No wake this soon after an action on the lead (a wake, a
+// relaunch, a handover); read at each call: tests shorten it.
+const leadQuietMs = () => Number(process.env.RELAYLEAD_LEAD_QUIET_MS) || 10000;
+// A wake that no heartbeat follows within this time had no effect.
+const INEFFECTIVE_AFTER_MS = 5 * 60 * 1000;
+// After 1, 2, then 3 wakes without effect, the next one waits this long; past 3, the lead is stuck.
+const WAKE_BACKOFF_MS = [15, 30, 60].map((minutes) => minutes * 60 * 1000);
+// A lead held by a usage limit is not woken for this long after its failure; read at each call.
+const rateLimitHoldMs = () => Number(process.env.RELAYLEAD_RATE_LIMIT_HOLD_MS) || 5 * 60 * 60 * 1000;
+// A lead idle while the mission works, silent this long, has ended its turn (a command lasts 10 min
+// at most).
+const INTERRUPT_SILENCE_MS = 11 * 60 * 1000;
 
 // watch.json, the watcher's memory of a mission. A missing field has this value.
 function emptyWatch() {
@@ -97,7 +113,7 @@ function lostFor(obs) {
   return Number.isFinite(since) ? obs.now - since : 0;
 }
 
-// Rules 2 to 4, 6 and 7. Returns {actions, watch}: watch is a new object, obs is left as it is.
+// Rules 2 to 7, 11 and 14 to 16. Returns {actions, watch}: watch is a new object, obs is left as it is.
 function decide(obs) {
   const watch = { ...emptyWatch(), ...JSON.parse(JSON.stringify(obs.watch || {})) };
   const actions = [];
@@ -114,8 +130,26 @@ function decide(obs) {
   if (obs.tasksError) log(`tasks-failed ${obs.tasksError}`);
   stopExtraLeads(obs, actions);
   if (obs.tasks) stopOrphanCrew(obs, actions);
+  const status = leadStatus(obs);
+  // Without the tasks, nothing is known of what the lead has not seen: rules 5 and 14 wait.
+  const unseen = obs.tasks ? obs.unseen : null;
+  if (unseen) {
+    watch.crewLostSince = unseen.lostSince;
+    if (unseen.changes.length === 0) watch.lastWakeView = null;
+    if (status !== 'active') failLostCrew(unseen, actions);
+  }
   watchLead(obs, watch, log);
+  judgeWakes(obs, watch);
+  if (status === 'idle') tendIdleLead(obs, watch, unseen, actions, log);
   return { actions, watch };
+}
+
+// Rule 5: a crew lost past the grace of wait, while the lead is not active (an active lead's own wait
+// fails its task). The task is failed by act; the lead is woken for it at the next pass.
+function failLostCrew(unseen, actions) {
+  for (const { id, shortId, summary } of unseen.toFail) {
+    actions.push({ type: 'mark-failed', id, summary, log: `crew-lost ${shortId || '-'} task ${id}` });
+  }
 }
 
 function hasProcess(obs, session) {
@@ -182,4 +216,133 @@ function watchLead(obs, watch, log) {
   }
 }
 
-module.exports = { decide, leadStatus, emptyWatch, SILENT_MS, restartGraceMs };
+// The lead's last heartbeat, in ms; NaN when it never beat.
+function heartbeatMs(obs) {
+  const readings = obs.readings[obs.lead.shortId] || {};
+  return Date.parse(readings.heartbeat && readings.heartbeat.at);
+}
+
+// What a wake without effect does to watch.json: counted, and its motive due again. Also applied by
+// act to a wake that throws. `now` in ms.
+function wakeWithoutEffect(watch, now) {
+  return {
+    ineffectiveWakes: watch.ineffectiveWakes + 1,
+    lastIneffectiveAt: iso(now),
+    lastWakeAt: null,
+    lastWakeView: null,
+    interruptWakeFor: null,
+  };
+}
+
+// The guard's memory, whatever the lead's state: any heartbeat after the last wake, or after the last
+// wake judged without effect, sets the count back to 0 (a lead unblocked by hand is woken again). A
+// wake followed by a heartbeat worked: lastWakeAt is cleared, so it is never judged again. A wake had
+// no effect when no heartbeat has followed it for 5 min, or when the lead failed after it (failures/:
+// a usage limit, an API error), after its last heartbeat and before any wake judged since: the turn
+// it started died before the lead could see what woke it (once the usage limit is over, rule 11, the
+// motive is due again). The time of that wake is lastLeadActionAt, which lastWakeAt clears not.
+function judgeWakes(obs, watch) {
+  const beat = heartbeatMs(obs);
+  if (beat > Date.parse(watch.lastWakeAt) || beat > Date.parse(watch.lastIneffectiveAt)) {
+    watch.ineffectiveWakes = 0;
+    watch.stuckNoticeFor = null;
+  }
+  const wakeAt = Date.parse(watch.lastWakeAt);
+  if (beat > wakeAt) watch.lastWakeAt = null;
+  const failure = (obs.readings[obs.lead.shortId] || {}).failure;
+  const failedAt = Date.parse(failure && failure.at);
+  const failedAfterWake =
+    failedAt > Date.parse(watch.lastLeadActionAt) && !(beat >= failedAt) && !(Date.parse(watch.lastIneffectiveAt) >= failedAt);
+  const unanswered = Number.isFinite(Date.parse(watch.lastWakeAt)) && obs.now - wakeAt >= INEFFECTIVE_AFTER_MS;
+  if (failedAfterWake || unanswered) Object.assign(watch, wakeWithoutEffect(watch, obs.now));
+}
+
+// Rules 11 and 14 to 16, for an idle lead: one wake at most, for every motive there is.
+function tendIdleLead(obs, watch, unseen, actions, log) {
+  if (rateLimited(obs, watch, log)) return; // rule 11
+  const motives = wakeMotives(obs, watch, unseen);
+  if (motives.length === 0) return;
+  // A crew being failed by this pass: the lead is woken once its task is failed, at the next pass.
+  if (unseen && unseen.toFail.length > 0) return;
+  if (!wakeAllowed(obs, watch, log)) return;
+  watch.lastWakeAt = iso(obs.now);
+  watch.lastLeadActionAt = iso(obs.now);
+  for (const motive of motives) Object.assign(watch, motive.remember);
+  actions.push({
+    type: 'wake-lead',
+    reasons: motives.flatMap((motive) => motive.reasons),
+    log: `wake-lead ${obs.lead.shortId}: ${motives.map((motive) => motive.log).join('; ')}`,
+  });
+}
+
+// Rule 11: a usage limit hit after the lead's last heartbeat, less than 5 h ago. Logged once per
+// failure.
+function rateLimited(obs, watch, log) {
+  const failure = (obs.readings[obs.lead.shortId] || {}).failure;
+  if (!failure || failure.error !== 'rate_limit') return false;
+  const at = Date.parse(failure.at);
+  if (!(at > Date.parse(lastBeat(obs))) || !(obs.now - at < rateLimitHoldMs())) return false;
+  if (watch.rateLimitNoticeFor !== failure.at) {
+    log(`lead-rate-limited ${obs.lead.shortId}`);
+    watch.rateLimitNoticeFor = failure.at;
+  }
+  return true;
+}
+
+// The motives of rules 14 to 16, in order: {reasons (for the wake's text), log, remember (what watch
+// keeps of it once the lead is woken)}.
+function wakeMotives(obs, watch, unseen) {
+  const motives = [];
+  // Rule 14: changes the lead has not seen, once per view.
+  if (unseen && unseen.changes.length > 0 && unseen.viewKey !== watch.lastWakeView) {
+    const reasons = unseen.changes.map((change) => `${change.kind} ${change.id} is now ${change.to || 'gone'}`);
+    motives.push({ reasons, log: reasons.join('; '), remember: { lastWakeView: unseen.viewKey } });
+  }
+  // Rule 15: mail for the lead.
+  if ((obs.mail || {})[obs.lead.shortId] > 0) motives.push({ reasons: ['you have mail'], log: 'mail', remember: {} });
+  // Rule 16: its turn ended while the mission works, once per state (or per lead, before any state).
+  const key = obs.record.updatedAt || obs.lead.startedAt;
+  const readings = obs.readings[obs.lead.shortId] || {};
+  const stopped = Boolean(readings.heartbeat) && readings.heartbeat.tool === '(stop)';
+  if (
+    hasProcess(obs, obs.lead) &&
+    ['working', 'starting'].includes(obs.record.state) &&
+    key !== watch.interruptWakeFor &&
+    (stopped || heartbeatAge(obs) > INTERRUPT_SILENCE_MS)
+  ) {
+    const reasons = ['your turn ended while the mission was working'];
+    motives.push({ reasons, log: 'turn ended while working', remember: { interruptWakeFor: key } });
+  }
+  return motives;
+}
+
+// The guard of a wake that has a motive: quiet time after an action on the lead, a wake not judged
+// yet, then the backoff of the wakes without effect; past 3, `lead-stuck`, once, in both logs.
+function wakeAllowed(obs, watch, log) {
+  if (obs.now - Date.parse(watch.lastLeadActionAt) < leadQuietMs()) return false;
+  // Not judged yet: no heartbeat since, no failure, and less than 5 min old (judgeWakes clears it).
+  if (Number.isFinite(Date.parse(watch.lastWakeAt))) return false;
+  const count = watch.ineffectiveWakes;
+  if (count > WAKE_BACKOFF_MS.length) {
+    if (watch.stuckNoticeFor !== obs.lead.shortId) {
+      log(`lead-stuck ${obs.lead.shortId}`, true);
+      watch.stuckNoticeFor = obs.lead.shortId;
+    }
+    return false;
+  }
+  return !(count > 0 && obs.now - Date.parse(watch.lastIneffectiveAt) < WAKE_BACKOFF_MS[count - 1]);
+}
+
+module.exports = {
+  decide,
+  leadStatus,
+  emptyWatch,
+  wakeWithoutEffect,
+  SILENT_MS,
+  INEFFECTIVE_AFTER_MS,
+  WAKE_BACKOFF_MS,
+  INTERRUPT_SILENCE_MS,
+  restartGraceMs,
+  leadQuietMs,
+  rateLimitHoldMs,
+};
