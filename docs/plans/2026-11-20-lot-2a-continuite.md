@@ -49,6 +49,7 @@ Claude Code 2.1.328, macOS, 19 nov. 2026. Mesures faites avec les options de lan
 Ajouts du lot 1.1 (toujours en vigueur) :
 
 - Pas de shell : git, les agents et les assistants détachés se lancent par `execFileSync` ou `spawn` avec un tableau d'arguments, jamais `shell: true`.
+- Tout nouvel appel git synchrone passe par `runFileSync` (`core/run-file.js`).
 - Chaque nouvelle erreur attendue est un `codedError` dont le code a son texte en anglais **et** en français dans `core/messages.js`.
 - Fichiers `tasks/archive/<id>.<n>.json` et `<id>.<n>.result.json` ; `state.json` peut porter `stopping: true`, écrit par le cœur seul.
 - Avant toute suppression récursive sous `~/.relaylead/missions/`, le nom est vérifié par `/^[a-z0-9-]+$/`.
