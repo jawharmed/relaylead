@@ -10,9 +10,9 @@
 
 **Spec :** [`docs/specs/2026-11-14-relaylead-design.md`](../specs/2026-11-14-relaylead-design.md) (v6, amendée le 19 nov. 2026) : « Le veilleur », « Cycle de vie » (3. Relève), « Mesures », contrat d'adaptateur (`wake`, `inject`, `heartbeat`, `context`). Feuille de route : [`2026-11-15-feuille-de-route.md`](2026-11-15-feuille-de-route.md), ligne « 2a. Continuité ». Essai jetable : [`docs/spike-results.md`](../spike-results.md). Plan précédent : [`2026-11-16-lot-1-1-robustesse.md`](2026-11-16-lot-1-1-robustesse.md) ; relevé réel : [`docs/manual-checks/lot-1-1-claude-macos.md`](../manual-checks/lot-1-1-claude-macos.md). Mesures préalables sur Claude Code 2.1.328 (relevé `mesures-2a.md` du 19 nov. 2026, hors dépôt) : leurs faits sont recopiés dans « Faits mesurés », seule source à lire pour l'exécution. Décisions de l'auteur du 19 nov. 2026 : première version publique **macOS seulement** (essais réels sous macOS, la CI garde les trois systèmes avec le faux agent) ; planificateur du système **launchd seulement**, ailleurs une erreur codée (lot 4) ; lot 6 supprimé, le lot 7 suit le lot 5. Relecture contradictoire du plan faite le 19 nov. 2026 (2 critiques, 17 importants, 11 mineurs) : toutes ses corrections sont intégrées.
 
-## Faits mesurés (Claude Code 2.1.328, macOS, 19 nov. 2026)
+## Faits mesurés
 
-Mesures faites avec les options de lancement de l'adaptateur (`adapters/claude/args.js`), lignes lues par `claude agents --json --all` toutes les 100 à 500 ms, mort du processus datée par `kill -0` toutes les 5 ms. Huit sessions `rl-2a-probe-*`, toutes arrêtées et supprimées.
+Claude Code 2.1.328, macOS, 19 nov. 2026. Mesures faites avec les options de lancement de l'adaptateur (`adapters/claude/args.js`), lignes lues par `claude agents --json --all` toutes les 100 à 500 ms, mort du processus datée par `kill -0` toutes les 5 ms. Huit sessions `rl-2a-probe-*`, toutes arrêtées et supprimées.
 
 1. **Après `claude stop`, la ligne perd son PID avant la fin du processus.** Le PID quitte la ligne 0,1 à 0,5 s après `claude stop` (avant même que la commande rende, en 0,8 à 1,1 s) ; le processus vit encore jusqu'à 1,4 à 2,0 s après l'arrêt, soit au moins 0,9 s de plus. Pendant l'arrêt d'une session en plein tour, la ligne montre environ 1,5 s de `working` sans PID et parfois une lecture `failed` passagère, puis `stopped`. Une session inactive arrêtée reste `done` (jamais `stopped`). La ligne reste dans `--all` et sort de la liste sans `--all`. Conséquence : une session arrêtée a fini quand la ligne n'a plus de PID **et** que le PID lu avant l'arrêt est mort (Tasks 2, 11, 12).
 2. **`status` vaut `busy` pendant tout un tour**, appels d'outils longs (Bash de 60 s) et intervalles entre outils compris (127 lectures, aucune `idle`) ; il passe à `idle` (`done`/`idle`) moins de 0,5 s après la fin du tour. Seul faux `idle` observé : au début d'un tour (lancement ou réveil), environ 1 s de `working` sans PID ni `status`, puis **une** lecture `working`/`idle` avec PID (0,5 à 1 s), puis `busy`. Conséquence : deux lectures `idle` à 2 s d'écart, et un court silence (10 s) après une action du veilleur sur le lead (Task 9).
@@ -61,7 +61,7 @@ Ajouts du lot 2a :
 - **`observe` n'écrit rien** ; toute écriture du veilleur (tâche déclarée perdue, `watch.json`, courrier, état) se fait dans `act`, sous le verrou de mission, après une seconde observation sous ce verrou.
 - **Aucune écriture dans la configuration de l'utilisateur** : ni `~/Library/LaunchAgents`, ni `~/.claude`, ni sa barre d'état. Hooks et barre d'état de mesure passent par `--settings` à chaque lancement.
 - Hooks et barre d'état : rapides (aucun appel réseau ni à `claude`, lecture du transcript bornée à ses 256 derniers Kio), ne lèvent jamais (une erreur : rien n'est écrit, sortie 0), n'écrivent que sous `missions/<mission>/`.
-- Le contrat d'adaptateur gagne : `stopById` (déjà lu par le cœur), `wake` obligatoire pour la continuité, `idle` dans les lignes de `list` (« Contrat d'adaptateur »).
+- **Le contrat d'adaptateur change** (au lot 1.1, il ne changeait pas) : il gagne `stopById` (déjà lu par le cœur), `wake` obligatoire pour la continuité, et `idle` dans les lignes de `list` ; un `pid` nul ne veut plus dire « processus fini » (section « Contrat d'adaptateur »).
 - Textes adressés aux sessions (réveil, courrier, consignes) et lignes de `watcher.log` en anglais, comme les profils.
 - **`RELAYLEAD_WATCHER=off`**, posée par `fixtures/run-tests.js` pour toute la suite, coupe la boucle lancée par `launch` et les passages ciblés ; seuls les tests qui les éprouvent la retirent, le temps du test. Les passages des tests e2e sont lancés à la main (`relaylead watcher run`), jamais par la boucle.
 - Délais lus à l'appel et raccourcis par variable d'environnement dans les tests : `RELAYLEAD_RESTART_GRACE_MS`, `RELAYLEAD_IDLE_RECHECK_MS`, `RELAYLEAD_LEAD_QUIET_MS`, `RELAYLEAD_HELPER_RECHECK_MS`, `RELAYLEAD_HELPER_PATIENCE_MS`, `RELAYLEAD_RATE_LIMIT_HOLD_MS`, `RELAYLEAD_CLAUDE_WAKE_SETTLE_MS`, `RELAYLEAD_FAKE_WAKE_MS` ; ceux des lots précédents restent.
@@ -95,7 +95,8 @@ core/
   hooks/stop.js      (nouveau) battement de fin de tour, courrier qui retient la fin du tour
   hooks/stopfailure.js (nouveau) échec de la session (rate_limit…)
   hooks/statusline.js  (nouveau) barre d'état de mesure : contexte exact et taille de la fenêtre
-  missions.js        fin en deux temps (#71), reaper lié à sa mission, launchLead, réservation du numéro, handover, stopMission(note)
+  sessions.js        settleBoundMs
+  missions.js        fin en deux temps (#71), launchWhileOpen, reaper lié à sa mission, launchLead, réservation du numéro, handover, stopMission(note)
   wait.js            viewOf (vue pure), unseenChanges, refus d'un lead remplacé
   tasks.js           environnement des équipiers (rôle, nom), lead actuel vérifié sous le verrou
   store.js           writeTextExclusive
@@ -112,7 +113,7 @@ fixtures/
   claude/transcript.jsonl (nouveau) transcript synthétique
   fake-429.js        (nouveau) faux serveur de limite d'usage, pour l'essai réel
   run-tests.js       RELAYLEAD_WATCHER=off
-  helpers.js         RELAYLEAD_WATCHER=off au chargement, killSession
+  helpers.js         RELAYLEAD_WATCHER=off au chargement, killSession, userEnv sans rôle ni nom de session
 docs/specs/2026-11-14-relaylead-design.md   encart d'amendement du 19 nov. 2026
 README.md            veilleur, STOP, réveil, relève, réglages context et watcher, déblocage à la main (en, fr)
 test/                readings, mailbox, watcher-rules, watcher, watcher-loop (nouveaux) ; missions, claude-adapter,
@@ -120,7 +121,7 @@ test/                readings, mailbox, watcher-rules, watcher, watcher-loop (no
 docs/manual-checks/lot-2a-claude-macos.md   (nouveau) relevé humain
 ```
 
-## Contrat d'adaptateur (référence pour les Tasks 1 à 3, 6 à 12)
+## Contrat d'adaptateur
 
 ```js
 // Ligne rendue par list(mission) : celle du lot 1, plus idle.
@@ -152,7 +153,9 @@ Règles : un `pid` rendu par `list` veut dire « l'agent connaît un processus v
 
 `watch.json` : `{leadLostSince, crewLostSince: {}, failedRelaunches, lastRelaunchAt, lastFailedRelaunchAt, lastLeadActionAt, lastWakeAt, lastWakeView, ineffectiveWakes, lastIneffectiveAt, stuckNoticeFor, interruptWakeFor, rateLimitNoticeFor, unlistedNoticeFor, handoverNoticeFor, contextFullNotices: [], baseAlerts: [], silentNoticeFor, failuresSeen: {}, tripped}` ; absent, chaque champ vaut `null`, `0`, `false`, `[]` ou `{}`.
 
-## Réglages du lot (`core/config.js`, `DEFAULTS`)
+## Réglages du lot
+
+Dans `core/config.js`, `DEFAULTS` :
 
 ```js
 context: { budgets: { lead: 150000, crew: 250000 }, capPercent: 40, hardPercent: 20 },
@@ -163,18 +166,24 @@ watcher: { autoStart: true, helpers: true, everySeconds: 300 },
 
 Seuils d'une session : `soft = base + budgets[role]`, plafonné à `floor(capPercent / 100 × window)` quand la fenêtre est mesurée ; `hard = floor(soft × (100 + hardPercent) / 100)`. `base` est sa première mesure, `window` la `context_window_size` de sa barre d'état (connue dès le premier appel, fait mesuré 3). Fenêtre inconnue : pas de plafond. Un relevé de plus de 30 min n'est périmé que pour un lead **actif** : celui d'une session inactive ou morte ne bouge plus et reste exact.
 
-## Règles du veilleur (référence pour les Tasks 6 à 12)
+## Règles du veilleur
 
-États du lead, lus sur la ligne de `list` qui porte le `shortId` de `lead.json` :
+#### États du lead
+
+Lus sur la ligne de `list` qui porte le `shortId` de `lead.json` :
 
 - **actif** : `working`, avec processus, pas inactif ;
 - **inactif** : avec processus et `waiting` ou `done` ; ou `working` et `idle` sur deux lectures à `RELAYLEAD_IDLE_RECHECK_MS` (2000) d'écart (fait mesuré 2 : une seule lecture `idle` peut tomber au début d'un tour) ; ou **absent alors que l'état vaut `waiting`** (le réveil marche sur une session arrêtée) ;
 - **en relance** : `working` sans processus, ou absent de la liste, depuis moins de `restartGraceMs()` (`RELAYLEAD_RESTART_GRACE_MS`, 120000) comptés depuis `watch.leadLostSince` ; ou absent mais avec un battement datant de moins de `restartGraceMs()` (ligne `lead-unlisted-but-alive <shortId>`, une fois, `unlistedNoticeFor`) ;
 - **absent** : `stopped` ou `failed` ; `waiting` ou `done` sans processus ; en relance depuis plus que la grâce.
 
-Lead actif ou inactif : `leadLostSince` repasse à `null` (une grâce entière à chaque disparition). Si `list` échoue, aucune règle de session ne s'applique à ce passage (`list-failed <message>`). Si `listTasks` lève, les règles 3, 5, 14 et 19 ne sont pas évaluées (`tasks-failed <message>`). `decide` ne s'applique pas à une ligne lue pendant un arrêt demandé par le veilleur : chaque action s'exécute sous le verrou, et la décision suivante vient d'une nouvelle observation sous ce verrou. « Battement » veut dire celui du lead actuel ; un lead qui n'a jamais battu a pour âge de battement le temps écoulé depuis `lead.startedAt`.
+Lead actif ou inactif : `leadLostSince` repasse à `null` (une grâce entière à chaque disparition). Si `list` échoue (`obs.listError`), aucune règle de session ne s'applique à ce passage et `decide` émet la ligne `list-failed <message>`. Si `listTasks` lève (`obs.tasksError`), les règles 3, 5, 14 et 19 ne sont pas évaluées et `decide` émet `tasks-failed <message>`. `decide` ne s'applique pas à une ligne lue pendant un arrêt demandé par le veilleur : chaque action s'exécute sous le verrou, et la décision suivante vient d'une nouvelle observation sous ce verrou. « Battement » veut dire celui du lead actuel ; un lead qui n'a jamais battu a pour âge de battement le temps écoulé depuis `lead.startedAt`.
 
-**Cumul :** les règles 2 à 7 et 19 s'appliquent toutes. Sur le lead, **au plus une action par passage** : la première qui s'applique parmi 8 à 16, dans l'ordre ; 17 et 18 seulement si aucune de 8 à 16 n'a agi. La règle 11 arrête l'évaluation des règles 12 à 16 tant qu'elle tient. « Une fois » veut dire une fois par session (ou par valeur indiquée), retenu dans `watch.json`. Un « motif de réveil » est une des conditions des règles 14 à 16 (garde du réveil comprise).
+#### Cumul
+
+Les règles 2 à 7 et 19 s'appliquent toutes. Sur le lead, **au plus une action par passage** : la première qui s'applique parmi 8 à 16, dans l'ordre ; 17 et 18 seulement si aucune de 8 à 16 n'a agi. La règle 11 arrête l'évaluation des règles 12 à 16 tant qu'elle tient. « Une fois » veut dire une fois par session (ou par valeur indiquée), retenu dans `watch.json`. Un « motif de réveil » est une des conditions des règles 14 à 16 (garde du réveil comprise). « Équipier » veut dire une session de rôle `crew` au registre ; « lead » une session de rôle `lead`. Le nom du lead actuel est le champ `sessionName` de `lead.json`.
+
+#### Table des règles
 
 | # | Condition | Action | Ligne de `watcher.log` | Task |
 |---|---|---|---|---|
@@ -187,7 +196,7 @@ Lead actif ou inactif : `leadLostSince` repasse à `null` (une grâce entière �
 | 6 | lead en relance, première observation | journal | `lead-restarting <shortId>` | 6 |
 | 7 | lead actif, dernier battement de plus de 30 min, une fois | journal (jamais d'arrêt) | `lead-silent <shortId> <minutes> min` | 6 |
 | 8 | lead **absent**, `failedRelaunches` ≥ 3 après décompte | `trip-breaker`, après la sortie du verrou | `breaker-tripped after 3 failed relaunches` | 11 |
-| 9 | `state.json` vaut `handover`, `by` = nom du lead actuel ou `user` | `hand-over` (arrête l'ancien s'il a un processus) | `hand-over <ancien> to <nouveau>: <note>` | 12 |
+| 9 | `state.json` vaut `handover`, `by` = `sessionName` de `lead.json` ou `user` | `hand-over` (arrête l'ancien s'il a un processus) | `hand-over <ancien> to <nouveau>: <note>` | 12 |
 | 10 | lead absent, état ni `waiting`, ni `done`, ni `stopped` (donc `working`, `starting`, ou `handover` demandé par un lead remplacé) | `relaunch-lead` : reprise si son contexte est connu et sous le seuil souple, sinon session neuve ; reprise ratée → session neuve dans la même action | `relaunch-lead <shortId> resumed` ou `relaunch-lead <shortId> as <nom>` | 11 |
 | 11 | lead inactif, échec `rate_limit` postérieur à son dernier battement et de moins de `RELAYLEAD_RATE_LIMIT_HOLD_MS` (5 h) | ni relève ni réveil (12 à 16 sautées) ; journal une fois par `at` de l'échec (`rateLimitNoticeFor`) | `lead-rate-limited <shortId>` | 9 |
 | 12 | lead **actif**, contexte ≥ seuil dur | `hand-over` forcé | `hand-over <ancien> to <nouveau>: forced at <tokens> tokens` | 12 |
@@ -199,7 +208,9 @@ Lead actif ou inactif : `leadLostSince` repasse à `null` (une grâce entière �
 | 18 | base > moitié du seuil souple, une fois | journal | `base-high <shortId> <base>/<soft>` | 12 |
 | 19 | équipier listé avec processus, sa tâche tourne, fenêtre **mesurée**, contexte ≥ seuil dur, une fois | `mail` à l'équipier (contexte plein) | `notify-context-full <shortId> task <id>` | 12 |
 
-**Garde du réveil** (règles 14 à 16 ; elle entre aussi dans le « motif de réveil » de la règle 13) :
+#### Garde du réveil
+
+Elle s'applique aux règles 14 à 16 et entre dans le « motif de réveil » de la règle 13 :
 - **silence** : aucun réveil dans les `RELAYLEAD_LEAD_QUIET_MS` (10000) qui suivent `lastLeadActionAt` (réveil, relance ou relève) ; la mesure ne demande que de couvrir le faux `idle` d'au plus 1 s d'un début de tour, déjà couvert par les deux lectures à 2 s ;
 - **réveil en attente de jugement** : aucun réveil tant que `lastWakeAt` est posé, sans battement postérieur, depuis moins de 5 min (`INEFFECTIVE_AFTER_MS`) ;
 - **réveil sans effet** : un réveil qu'aucun battement ne suit dans les 5 min, ou un réveil qui lève dans `act`. Effets : `ineffectiveWakes` + 1, `lastIneffectiveAt` = maintenant, `lastWakeAt` = `null`, et `lastWakeView` et `interruptWakeFor` repassent à `null` (le motif redevient dû) ;
@@ -207,9 +218,13 @@ Lead actif ou inactif : `leadLostSince` repasse à `null` (une grâce entière �
 - **remise à zéro** : tout battement du lead postérieur à `lastWakeAt` ou à `lastIneffectiveAt` remet `ineffectiveWakes` à 0 et efface `stuckNoticeFor` (un lead débloqué à la main se réveille de nouveau) ;
 - `lastWakeView` repasse à `null` dès que `unseen.changes` est vide.
 
-**Décompte du disjoncteur :** seuls deux endroits comptent. (a) Le `decide` qui émet `relaunch-lead` : si `lastRelaunchAt` est posé et qu'aucun battement du lead actuel ne lui est postérieur, `failedRelaunches` + 1, `lastFailedRelaunchAt` = maintenant, `lastRelaunchAt` = `null`. (b) `act` : `relaunch-lead` ou `hand-over` qui lève, `failedRelaunches` + 1, `lastFailedRelaunchAt` = maintenant, `lastRelaunchAt` = `null`. **Tout battement du lead actuel postérieur à `lastRelaunchAt` ou à `lastFailedRelaunchAt`** remet `failedRelaunches` à 0 et ces deux champs à `null` : un lead revenu autrement (démon, utilisateur) efface le compte, et seules trois relances ratées d'affilée arrêtent la mission. `relaunch-lead` et `hand-over` posent `lastRelaunchAt` et `lastLeadActionAt` à l'heure de **début** de l'action. La seconde observation, sous le verrou, relit `watch.json` : le `watch` du premier `decide` est jeté, si bien que deux observations d'un même passage comptent une fois. La règle 8 ne vise qu'un lead absent : jamais un lead en relance par le démon.
+#### Décompte du disjoncteur
 
-Textes envoyés aux sessions (anglais, exacts) :
+Seuls deux endroits comptent. (a) Le `decide` qui émet `relaunch-lead` : si `lastRelaunchAt` est posé et qu'aucun battement du lead actuel ne lui est postérieur, `failedRelaunches` + 1, `lastFailedRelaunchAt` = maintenant, `lastRelaunchAt` = `null`. (b) `act` : `relaunch-lead` ou `hand-over` qui lève, `failedRelaunches` + 1, `lastFailedRelaunchAt` = maintenant, `lastRelaunchAt` = `null`. **Tout battement du lead actuel postérieur à `lastRelaunchAt` ou à `lastFailedRelaunchAt`** remet `failedRelaunches` à 0 et ces deux champs à `null` : un lead revenu autrement (démon, utilisateur) efface le compte, et seules trois relances ratées d'affilée arrêtent la mission. `relaunch-lead` et `hand-over` posent `lastRelaunchAt` et `lastLeadActionAt` à l'heure de **début** de l'action. La seconde observation, sous le verrou, relit `watch.json` : le `watch` du premier `decide` est jeté, si bien que deux observations d'un même passage comptent une fois. La règle 8 ne vise qu'un lead absent : jamais un lead en relance par le démon.
+
+## Textes envoyés aux sessions
+
+En anglais, exacts :
 
 - réveil : « Relaylead woke you: {reasons}. Carry on with the method: run `relaylead task list` first. » ; `{reasons}` joint par « ; » des éléments `task a is now done`, `question q-b is now answered`, `you have mail`, `your turn ended while the mission was working` ;
 - reprise d'un lead absent : « Relaylead restarted you after your session ended. Carry on with the method: run `relaylead task list` first. » ;
@@ -224,13 +239,15 @@ Les hooks préfixent chaque message du courrier par « Message from Relaylead: �
 
 ### Task 1 : arrêt par identifiant pour le faux agent (#67)
 
+Sections de référence appliquées : aucune.
+
 **Files :** modifier `adapters/fake/index.js`, `test/fake-adapter.test.js`, `test/missions.test.js`, `test/deliveries.test.js`.
 
 Constat de #67 : `relaylead remove` et le traitement d'un marqueur `stopping` de plus d'une heure n'arrêtent une session que si l'adaptateur sait le faire par son identifiant ; le faux agent n'a pas `stopById`, ces deux chemins sautent donc l'arrêt et ne sont pas éprouvés. Depuis #62, le faux agent s'arrête par un fichier témoin choisi au lancement, jamais par PID : rejouer `stop` est sans danger.
 
 **Interfaces :**
 - `adapters/fake/index.js` exporte `stopById: true`. `stop(session)` ne change pas : il écrit le fichier d'arrêt, puis le retire quand la session a fini (fichier de fin présent) ou n'a pas de processus.
-- Les tests qui éprouvent la branche « adaptateur qui arrête par PID » mettent `fake.stopById = false` le temps du test et le rétablissent dans `t.after` : `stop on a stopped or done mission kills nothing`, la fin de `stop runs again for an adapter that stops by id…`, `an old stopping marker does not replay a stop by pid`, et `a stop with nothing to do still cleans` (`test/deliveries.test.js`). Les lignes `fake.stopById = true` devenues inutiles sont retirées (`stop runs again…`, `stop of a done mission says it is done`).
+- Les tests qui éprouvent la branche « adaptateur qui arrête par PID » mettent `fake.stopById = false` le temps du test et le **rétablissent à `true`** dans `t.after` : `stop on a stopped or done mission kills nothing`, la fin de `stop runs again for an adapter that stops by id…`, `an old stopping marker does not replay a stop by pid`, et, dans `test/deliveries.test.js`, `a stop with nothing to do still cleans` et `a skipped stop keeps the worktree of a session whose recorded process still runs`. Les lignes `fake.stopById = true` devenues inutiles sont retirées (`stop runs again…`, `stop of a done mission says it is done`), et **tous** les `delete fake.stopById` de `test/missions.test.js` (dans les `t.after` de ces deux tests et au milieu du premier) deviennent `fake.stopById = true` ou disparaissent : un `delete` retirerait l'export pour le reste du fichier.
 
 - [ ] **Étape 1 : tests qui échouent** :
   - `the fake adapter stops by id, harmlessly on a session already ended` (`test/fake-adapter.test.js`) : `fake.stopById === true` ; une session lancée, arrêtée, puis arrêtée de nouveau : aucune erreur, et aucun fichier d'arrêt ne reste ;
@@ -243,14 +260,16 @@ Constat de #67 : `relaylead remove` et le traitement d'un marqueur `stopping` de
 
 ### Task 2 : fin d'une session en deux temps, reaper lié à sa mission (#71)
 
-**Files :** modifier `core/missions.js`, `core/cli.js` (`_reap`), `adapters/claude/index.js`, `test/missions.test.js`, `test/claude-adapter.test.js`.
+Sections de référence appliquées : « Faits mesurés » (point 1), « Contrat d'adaptateur ».
+
+**Files :** modifier `core/missions.js`, `core/sessions.js`, `core/cli.js` (`_reap`), `adapters/claude/index.js`, `test/missions.test.js`, `test/claude-adapter.test.js`.
 
 Constat de #71 : `stopSessionsAndWait` (sondage toutes les 250 ms), l'attente de `wake` (60 s) et `launchRunning` jugent la fin d'un processus sur son seul PID ; sous Windows, un PID repris fait croire une session vivante. Mais le fait mesuré 1 interdit de passer au seul témoin de la liste : la ligne de Claude perd son PID 0,9 à 1,5 s **avant** la fin du processus. D'où la règle en deux temps. Second point de #71 : après `remove` puis un nouveau lancement du même nom, un ancien reaper encore vivant peut écrire `reaper-ended.json` dans la nouvelle mission et relire son `lead.json`.
 
 **Interfaces :**
 - `core/missions.js` :
   - `hasProcess(rows, session) -> boolean` : vrai si une ligne de `rows` porte `session.shortId` et un `pid` non nul.
-  - `settleBoundMs(totalMs) -> number` : `totalMs` sous POSIX ; sous `win32`, `min(totalMs, Number(process.env.RELAYLEAD_CLAUDE_WAKE_SETTLE_MS) || 5000)`.
+  - `settleBoundMs(totalMs) -> number`, dans `core/sessions.js` à côté d'`isAlive` (chargé par `core/missions.js` et par l'adaptateur Claude ; le placer dans `core/missions.js` créerait le cycle `missions → adapters → claude → missions`) : `totalMs` sous POSIX ; sous `win32`, `min(totalMs, Number(process.env.RELAYLEAD_CLAUDE_WAKE_SETTLE_MS) || 5000)`.
   - `stopSessionsAndWait(mission, sessions)` : `pidAvant` = PID de la ligne lue avant les arrêts, `null` si la ligne manque ou n'en a pas ; celui du registre **seulement si cette lecture a échoué**, comme aujourd'hui (le test `a session the adapter no longer lists has no process to wait for` le fixe). Après les arrêts, chaque sondage (`STOP_POLL_MS`) relit `adapter.list(mission.name)` : une session a fini quand `!hasProcess(rows, session)` **et** `!isAlive(pidAvant)` ; une fois le premier temps atteint, le second ne dure pas plus que `settleBoundMs(stopWaitMs())` depuis ce moment, au-delà la session compte comme finie. Un sondage dont la liste échoue juge ce tour-là sur `isAlive(pidAvant)` seul. Délai total (`stopWaitMs`) et retour `{failed, alive, error}` inchangés. Les relances de tâche (`stopPreviousCrew`), l'arrêt et la fin de mission en héritent.
   - `LAUNCH_LOCK_MAX_MS = 15 * 60 * 1000`. Dans `isStale` (branche « pas de `mission.json` ») et dans `launchRunning`, un lancement ne tourne que si le PID du verrou est vivant **et** que le fichier de verrou a moins de 15 min (`ageOf`).
   - `spawnReaper(name, createdAt)` lance `relaylead _reap <name> <createdAt>`. `reapLead(name, createdAt)` rend aussitôt si `mission.json` manque ou porte un autre `createdAt`. `markReaperEnded(name, createdAt)` n'écrit `reaper-ended.json` que si `mission.json` porte ce `createdAt`. Sans `createdAt` (un assistant lancé avant ce lot), comportement d'aujourd'hui.
@@ -272,22 +291,24 @@ Constat de #71 : `stopSessionsAndWait` (sondage toutes les 250 ms), l'attente de
 
 ### Task 3 : faux agent : fin de tour, mort brutale et réveil
 
+Sections de référence appliquées : « Contrat d'adaptateur ».
+
 **Files :** modifier `adapters/fake/index.js`, `adapters/fake/agent.js`, `fixtures/helpers.js`, `core/messages.js`, `test/fake-adapter.test.js`.
 
 Le veilleur réveille et relance par `wake`, que le faux agent n'a pas. Il faut aussi qu'une session du faux agent puisse finir son tour en restant vivante (comme une session Claude `done`/`idle`) et mourir sans écrire sa fin (comme un `kill -9`), sans qu'aucun de ces cas se juge sur son PID (sous Windows, celui d'une session tuée est repris en quelques millisecondes, #62).
 
 **Interfaces :**
-- `agent.js` : `endTurn()` écrit le fichier `RELAYLEAD_FAKE_IDLE`, puis reste vivant comme `idle()`. Nouveau rôle `waiting` : une session qui finit son premier tour aussitôt (pour les tests). Au démarrage, si `RELAYLEAD_FAKE_WAKE_MESSAGE` est défini, l'agent écrit `woken: <message>` dans son journal.
+- `agent.js` : `endTurn()` écrit le fichier `RELAYLEAD_FAKE_IDLE`, puis reste vivant comme `idle()`. Avec `RELAYLEAD_FAKE_END_FIRST_TURN=1`, une session finit son premier tour aussitôt (pour les tests), en gardant son rôle `lead` ou `crew` au registre. Au démarrage, si `RELAYLEAD_FAKE_WAKE_MESSAGE` est défini, l'agent écrit `woken: <message>` dans son journal.
 - `index.js` :
-  - `launch` ajoute au registre `idleFile` (`missions/<m>/fake-<shortId>.idle`), `killedFile` (`missions/<m>/fake-<shortId>.killed`) et `env` (le `spec.env` reçu), champs ignorés du cœur, et passe à l'agent `RELAYLEAD_FAKE_IDLE` et `RELAYLEAD_FAKE_SHORT_ID` ;
+  - `launch` ajoute au registre `idleFile` (`missions/<m>/fake-<shortId>.idle`), `killedFile` (`missions/<m>/fake-<shortId>.killed`), `logFile` (le `RELAYLEAD_FAKE_LOG` d'aujourd'hui) et `env` (le `spec.env` reçu), champs ignorés du cœur, et passe à l'agent `RELAYLEAD_FAKE_IDLE` et `RELAYLEAD_FAKE_SHORT_ID` ;
   - `list` : fichier `.killed` présent → `{state: 'failed', pid: null, idle: true}` ; fichier de fin présent → `{state: 'done', pid: null, idle: true}` ; sinon, processus mort (`!isAlive(pid)`, preuve sûre : seul un PID **vivant** peut tromper, #62) → `{state: 'failed', pid: null, idle: true}` ; sinon fichier `idle` présent → `{state: 'waiting', idle: true}` ; sinon `{state: 'working', idle: false}` ;
-  - `wake(session, message) -> Promise<Session>` : appelle `module.exports.stop(session)` (remplaçable par les tests) ; attend au plus `RELAYLEAD_FAKE_WAKE_MS` (10000) que le fichier de fin ou le fichier `.killed` existe, sinon `wake-timeout` ; retire les fichiers de fin, `idle`, `.killed` et d'arrêt ; relance `agent.js` avec le même rôle, les mêmes `sessionId`, `shortId` et fichiers, l'env `{...process.env, RELAYLEAD_TASK: undefined, ...session.env, …fichiers, RELAYLEAD_FAKE_WAKE_MESSAGE: message}` ; rend la session avec son nouveau `pid`, `state: 'working'`, `idle: false`. `capabilities` gagne `'wake'`.
+  - `wake(session, message) -> Promise<Session>` : appelle `module.exports.stop(session)` (remplaçable par les tests) ; attend au plus `RELAYLEAD_FAKE_WAKE_MS` (10000) que le fichier de fin ou le fichier `.killed` existe, sinon `wake-timeout` ; retire les fichiers de fin, `idle`, `.killed` et d'arrêt ; relance `agent.js` avec le même rôle, les mêmes `sessionId`, `shortId` et fichiers, l'env `{...process.env, RELAYLEAD_TASK: undefined, ...session.env, …fichiers, RELAYLEAD_FAKE_LOG: session.logFile, RELAYLEAD_FAKE_WAKE_MESSAGE: message}` ; rend `{...session, pid, state: 'working', idle: false}` : tous les champs du registre sont gardés, car le cœur réécrit l'enregistrement par `recordSession`. `capabilities` gagne `'wake'`.
 - `fixtures/helpers.js` : `killSession(session)` : `process.kill(session.pid, 'SIGKILL')`, puis écrit `session.killedFile` (le témoin que la session tuée ne peut pas écrire).
 - `wake-timeout` (en, fr) devient général : « the session {shortId} was stopped but its process was still running after {seconds} s; it was not woken » / « la session {shortId} a été arrêtée mais son processus tournait encore après {seconds} s ; elle n'a pas été réveillée ».
 
 - [ ] **Étape 1 : tests qui échouent** :
-  - `a fake session that ended its turn is listed waiting and idle` : rôle `waiting` → `{state: 'waiting', idle: true}` avec un `pid` ;
-  - `wake restarts a fake session under the same ids, with the message` : rôle `waiting`, `wake(session, 'hello')` → même `shortId` et `sessionId`, autre `pid` ; le journal de la session contient `woken: hello` ; la session finit de nouveau son tour (`waiting`) ;
+  - `a fake session that ended its turn is listed waiting and idle` : rôle `lead`, `RELAYLEAD_FAKE_END_FIRST_TURN=1` → `{state: 'waiting', idle: true}` avec un `pid` ;
+  - `wake restarts a fake session under the same ids, with the message` : même montage, `wake(session, 'hello')` → même `shortId` et `sessionId`, autre `pid`, mêmes `idleFile`, `killedFile`, `logFile` et `env` ; le journal de la session contient `woken: hello` ; la session finit de nouveau son tour (`waiting`) ;
   - `a killed fake session is listed failed without a process` : `killSession` → `{state: 'failed', pid: null}` ; une session enregistrée par le test avec le PID 2147483646 et sans témoin → même chose ;
   - `wake resumes a killed fake session` : après `killSession`, `wake` rend une session vivante sous le même id, le témoin `.killed` retiré ;
   - `wake gives up when the fake session does not end` : `fake.stop` remplacé par une fonction vide, `RELAYLEAD_FAKE_WAKE_MS=300` → `wake-timeout`, l'ancien processus vit toujours.
@@ -297,6 +318,8 @@ Le veilleur réveille et relance par `wake`, que le faux agent n'a pas. Il faut 
 - [ ] **Étape 5 :** commit `feat(fake): fin de tour, mort brutale et réveil du faux agent`.
 
 ### Task 4 : battement de cœur et mesure du contexte
+
+Sections de référence appliquées : « Faits mesurés » (points 3 et 4), « Fichiers d'état du lot » (lignes `heartbeats/` et `context/`), « Réglages du lot » (seuils, `DEFAULTS.context`).
 
 **Files :** créer `core/readings.js`, `core/hooks/posttool.js`, `core/hooks/statusline.js`, `fixtures/claude/transcript.jsonl`, `test/readings.test.js` ; modifier `core/config.js`, `adapters/claude/settings.js`, `adapters/fake/agent.js`, `test/hooks.test.js`, `test/claude-settings.test.js`, `test/fake-adapter.test.js`.
 
@@ -335,6 +358,8 @@ Deux sources, dans l'ordre de la spec : la barre d'état de mesure, exacte, appe
 
 ### Task 5 : boîte aux lettres, hooks Stop et StopFailure
 
+Sections de référence appliquées : « Fichiers d'état du lot » (lignes `failures/` et `mailbox/`), « Textes envoyés aux sessions » (dernière phrase : préfixe des messages).
+
 **Files :** créer `core/mailbox.js`, `core/hooks/stop.js`, `core/hooks/stopfailure.js`, `fixtures/fake-429.js`, `test/mailbox.test.js` ; modifier `core/store.js`, `core/hooks/posttool.js`, `core/readings.js`, `adapters/claude/settings.js`, `adapters/fake/agent.js`, `test/store.test.js`, `test/hooks.test.js`, `test/claude-settings.test.js`, `test/fake-adapter.test.js`.
 
 Aucune commande n'envoie un message à une session vivante : le veilleur passe par des fichiers. L'essai jetable a prouvé les deux voies (`PostToolUse` pour une session qui travaille, `Stop` pour celle qui allait finir son tour) et la détection d'une limite d'usage par `StopFailure`. La pause sur limite d'usage reste au lot 2b : ici, l'échec est seulement relevé.
@@ -357,13 +382,13 @@ Aucune commande n'envoie un message à une session vivante : le veilleur passe p
   - `writeTextExclusive refuses a file that exists` (`test/store.test.js`) ;
   - `mail is read in the order it was sent, then kept in read/` : deux envois d'affilée (même milliseconde possible) → `first` puis `second` ;
   - `the mail of one session is not taken by another` ;
-  - `fifty mails sent at once all arrive, in order` : 50 envois d'affilée → 50 fichiers aux noms distincts et croissants, 50 messages lus dans l'ordre ;
+  - `fifty mails sent in a row all arrive, in order` : 50 envois d'affilée → 50 fichiers aux noms distincts et croissants, 50 messages lus dans l'ordre ;
   - `the posttool hook passes the mail on as additional context` : deux messages `first`, `second` → sortie exacte `{hookSpecificOutput: {hookEventName: 'PostToolUse', additionalContext: 'Message from Relaylead: first\n\nMessage from Relaylead: second'}}`, battement écrit, messages dans `read/` ;
   - `a mail read but not marked is passed on again` : `readMail` sans `markRead`, puis le hook → le message est transmis ;
   - `the stop hook keeps the turn going while mail waits` : avec un message → `{decision: 'block', reason: 'Message from Relaylead: …'}` ; sans courrier → rien ; battement `tool: '(stop)'` dans les deux cas ;
   - `the stopfailure hook records the error and its message` : `{session_id, error: 'rate_limit', last_assistant_message: "You've hit your 5-hour limit · resets 2:54am (Europe/Paris)"}` → `failures/<id>.json` ;
   - `the session settings add the Stop and StopFailure hooks` ;
-  - `a fake session takes its mail after each command` : un message envoyé à un lead du faux agent finit dans `read/` et dans son journal ;
+  - `a fake session takes its mail after each command` : mission dont une tâche tourne (le faux lead boucle sur `wait --timeout 5`, donc lance des commandes) ; un message envoyé au lead finit dans `read/` et dans son journal ;
   - `the fake 429 server answers a rate limit with its reset headers` : statut 429 et les trois en-têtes.
 - [ ] **Étape 2 :** échecs attendus.
 - [ ] **Étape 3 :** implémenter.
@@ -372,17 +397,20 @@ Aucune commande n'envoie un message à une session vivante : le veilleur passe p
 
 ### Task 6 : le veilleur : un passage, son verrou, `STOP` et son journal
 
+Sections de référence appliquées : « Contrat d'adaptateur » ; « Fichiers d'état du lot » (lignes `watch.json`, `watcher.lock`, `watcher.log`, `STOP`, et le paragraphe `watch.json`) ; « Règles du veilleur » › « États du lead », « Cumul » et « Table des règles » (règles 0 à 4, 6 et 7).
+
 **Files :** créer `core/watcher.js`, `core/watcher-rules.js`, `core/watch-log.js`, `test/watcher-rules.test.js`, `test/watcher.test.js` ; modifier `core/cli.js`, `core/messages.js`.
 
 Le squelette du veilleur et ses premières règles (0 à 4, 6 et 7 de « Règles du veilleur ») : rien n'est encore réveillé, relancé ni relevé. `test/watcher-rules.test.js` porte un test de table que chaque tâche suivante complète (`the rules table`) : une observation par ligne, l'action attendue.
 
 **Interfaces :**
 - `core/watcher-rules.js` : `decide(obs) -> {actions, watch}`, pure (aucune lecture, l'heure vient de `obs.now`). `obs` :
-  `{now, mission, record /* state.json */, lead /* lead.json ou null */, rows /* list, ou null si elle a échoué */, leadIdleConfirmed, registry, tasks /* ou null */, readings: {[shortId]: {heartbeat, statusline, failure}}, failures /* tout le dossier failures/ */, unseen /* Task 9 */, mail: {[shortId]: number}, config, watch}`.
-  Actions : `{type: 'stop-session', session, log}`, `{type: 'log', text, journal /* aussi dans journal.log */}` ; les tâches suivantes ajoutent `mark-failed`, `wake-lead`, `relaunch-lead`, `hand-over`, `mail`, `trip-breaker`. `leadStatus(obs) -> 'active'|'idle'|'restarting'|'absent'` y est aussi exportée. Constantes : `SILENT_MS = 30 * 60 * 1000`, `restartGraceMs()` (`RELAYLEAD_RESTART_GRACE_MS`, 120000), qui sert aussi de fenêtre de battement de l'état « en relance ».
+  `{now, mission /* contenu de mission.json : name, createdAt, config… */, record /* state.json */, lead /* lead.json ou null */, rows /* list, ou null si elle a échoué */, listError /* message ou null */, tasksError /* message ou null */, leadIdleConfirmed, registry, tasks /* ou null */, readings: {[shortId]: {heartbeat, statusline, failure}}, failures /* tout le dossier failures/ */, unseen /* Task 9 */, mail: {[shortId]: number}, config, watch}`.
+  Actions : `{type: 'stop-session', session, log}` (exécutée par `stopSessionsAndWait(mission, [session])`, fin en deux temps ; un échec ou une session encore vivante lève l'action), `{type: 'log', text, journal /* aussi dans journal.log */}` ; les tâches suivantes ajoutent `mark-failed`, `wake-lead`, `relaunch-lead`, `hand-over`, `mail`, `trip-breaker`. `leadStatus(obs) -> 'active'|'idle'|'restarting'|'absent'` y est aussi exportée. Constantes : `SILENT_MS = 30 * 60 * 1000`, `restartGraceMs()` (`RELAYLEAD_RESTART_GRACE_MS`, 120000), qui sert aussi de fenêtre de battement de l'état « en relance ».
 - `core/watcher.js` :
-  - `observe(name) -> obs|null` : aucune écriture. `null` pour une mission finie, en arrêt (`stopping`, sauf `watch.tripped`) ou sans `lead.json` ; `rows` par `adapter.list` (`null` et ligne `list-failed` si elle lève) ; si le lead est `working` et `idle` avec un processus, seconde lecture après `RELAYLEAD_IDLE_RECHECK_MS` → `leadIdleConfirmed` ; `tasks` par `listTasks` (`null` et ligne `tasks-failed` s'il lève) ; `watch` relu dans `watch.json`.
-  - `tendMission(name) -> action[]` : `module.exports.observe` (remplaçable par les tests) puis `decide` ; si rien à faire et `watch` inchangé, rien n'est verrouillé ni écrit. Sinon, sous `withMissionLock(name, 'watcher')` : relit `mission.json`, et ne fait rien si son `createdAt` diffère de celui observé ou si la mission est finie ; observe de nouveau (ce qui relit `watch.json`), décide de nouveau à partir de cette seule observation, exécute chaque action (`act`), écrit `watch.json`. Une attente du verrou qui abandonne (`start-busy`, `start-stuck`, `mission-unknown`) laisse la mission au passage suivant, sans erreur. Une action qui lève est journalisée (`error <type>: <message>`) et n'empêche pas les suivantes. Les actions marquées « après le verrou » s'exécutent après sa sortie.
+  - `observe(name) -> obs|null` : aucune écriture, aucune ligne de journal. `null` pour une mission finie, en arrêt (`stopping`, sauf `watch.tripped`) ou sans `lead.json` ; `rows` par `adapter.list` (`null` et `listError` si elle lève) ; si le lead est `working` et `idle` avec un processus, seconde lecture après `RELAYLEAD_IDLE_RECHECK_MS` → `leadIdleConfirmed` ; `tasks` par `listTasks` (`null` et `tasksError` s'il lève) ; `watch` relu dans `watch.json`.
+  - `tendMission(name) -> action[]` : `module.exports.observe` (remplaçable par les tests) puis `decide` ; si rien à faire et `watch` inchangé, rien n'est verrouillé ni écrit. Sinon, sous `withMissionLock(name, 'watcher')` : relit `mission.json`, et ne fait rien si son `createdAt` diffère de `obs.mission.createdAt` ou si la mission est finie ; observe de nouveau (ce qui relit `watch.json`), décide de nouveau à partir de cette seule observation, exécute chaque action par `act(name, action, watch)`, puis écrit `watch.json`.
+  - `act(name, action, watch) -> Promise<void>` : exécute une action ; peut modifier `watch` (l'objet rendu par le second `decide`) avant son écriture : les Tasks 9, 11 et 12 s'en servent pour les effets d'un échec. Une attente du verrou qui abandonne (`start-busy`, `start-stuck`, `mission-unknown`) laisse la mission au passage suivant, sans erreur. Une action qui lève est journalisée (`error <type>: <message>`) et n'empêche pas les suivantes. Les actions marquées « après le verrou » s'exécutent après sa sortie.
   - `runPass() -> {outcome: 'done'|'stop'|'busy', missions}` : `missions` vaut toujours un nombre (0 pour `'stop'` et `'busy'`). `STOP` présent → `'stop'` sans rien toucher ; `watcher.lock` créé par `'wx'` (`{pid, since}`), un verrou de plus de 15 min ou dont le processus est mort repris par `takeOverStaleLock` (`core/mission-lock.js`), sinon `'busy'` ; bascule `watcher.log` vers `watcher.log.1` au-delà de 1048576 octets ; `tendMission` pour chaque mission de `listMissions()`, chacune dans un `try/catch` (`error observe <mission>: <message>`) ; dans un `finally`, retire `watcher.lock` seulement s'il porte encore notre `pid` et notre `since`. `missions` = nombre de missions à veiller (ni finies ni en arrêt).
 - `core/watch-log.js` : `watchLog(mission, action, detail)` : ajoute la ligne (`fs.appendFileSync` sous `withWindowsRetry`) ; ne lève jamais. Module à part, qui ne charge que `core/paths.js` et `core/store.js` : `core/missions.js` s'en sert (Task 8) sans dépendance circulaire avec `core/watcher.js`.
 - `core/cli.js` : `relaylead watcher run [--mission <nom>]` (refusé dans une session : `refuseInSession('watcher', io)`) : sans `--mission`, `runPass()` ; avec, `STOP` vérifié puis `tendMission(nom)` seul, sans le verrou de passage. Imprime les lignes ajoutées au journal par ce passage. `--mission` inconnue → `mission-unknown`. Aide : `watcher   watch the missions: restart, wake and relieve their leads` / `watcher   veiller sur les missions : relancer, réveiller et relever leurs leads`.
@@ -410,7 +438,6 @@ Le squelette du veilleur et ses premières règles (0 à 4, 6 et 7 de « Règles
     - `watcher.log moves to watcher.log.1 past 1 MiB` ;
     - `a mission that cannot be read does not hide the next ones` : `mission.json` invalide dans `bad`, lead de trop dans `good` → arrêté, ligne `error observe bad` ;
     - `a pass for a mission removed or replaced meanwhile does nothing` : `observe` remplacée par une fonction qui rend une observation avec un lead de trop et un `createdAt` ancien → aucune session arrêtée, aucun `watch.json` écrit ;
-    - `observe writes nothing` : après `observe` sur une mission avec un équipier perdu, aucun fichier de la mission n'a changé (`mtime`) ;
     - `the lead is read idle only on two idle reads` : `list` remplacée (`working` + `idle`, puis `working` occupé) → `leadIdleConfirmed` faux.
 - [ ] **Étape 2 :** échecs attendus.
 - [ ] **Étape 3 :** implémenter.
@@ -419,7 +446,9 @@ Le squelette du veilleur et ses premières règles (0 à 4, 6 et 7 de « Règles
 
 ### Task 7 : boucle du veilleur, lancée par `launch`
 
-**Files :** créer `core/detached.js`, `test/watcher-loop.test.js` ; modifier `core/watcher.js`, `core/missions.js` (`spawnReaper`), `core/cli.js`, `core/config.js`, `core/messages.js`, `fixtures/run-tests.js`, `test/missions.test.js`, `README.md`.
+Sections de référence appliquées : « Fichiers d'état du lot » (lignes `watcher-loop.json` et `watcher-loop.stop`), « Réglages du lot » (`watcher`).
+
+**Files :** créer `core/detached.js`, `test/watcher-loop.test.js` ; modifier `core/watcher.js`, `core/missions.js` (`spawnReaper`, qui garde `createdAt` dans ses arguments), `core/cli.js`, `core/config.js`, `core/messages.js`, `fixtures/run-tests.js`, `fixtures/helpers.js`, `test/missions.test.js`, `README.md`.
 
 Lancement explicite du veilleur, à la place de launchd jusqu'au lot 4 : une boucle détachée qui passe toutes les `watcher.everySeconds` secondes, lancée par `relaylead launch` et finie d'elle-même quand plus aucune mission n'a besoin d'elle. Elle vient avant les réveils (Task 9) : dès que le lead peut finir son tour, un réveil manqué doit être rattrapé.
 
@@ -449,14 +478,14 @@ Lancement explicite du veilleur, à la place de launchd jusqu'au lot 4 : une bou
   - `a stop holds until the next start` : après `stop`, `startWatcher({unlessStopped: true})` rend `'stopped-by-user'` et ne lance rien ; `start` relance ;
   - `a second start finds the watcher running` ;
   - `two loops started at once leave one` : deux `relaylead watcher loop` lancés ensemble → au bout de 3 s, un seul processus de boucle (le jeton du fichier), l'autre sorti ;
-  - `stop leaves no loop running` : après `watcherStopped`, plus aucun battement pendant 3 s ;
+  - `stop leaves no loop running` (`everySeconds: 1`) : après `watcherStopped`, `watcher-loop.json` absent, et ni `watcher.log` ni la date d'un passage ne changent pendant 3 s (une mission tenue avec un lead de trop fait écrire une ligne à chaque passage) ;
   - `a stale stop file does not kill a new loop` : `watcher-loop.stop` laissé, puis `start` → la boucle passe au moins deux fois ;
   - `the loop ends by itself once no mission needs watching` : la mission passe `stopped`, la boucle sort ;
   - `the loop keeps running while STOP is present` ;
   - `start with no mission to watch starts nothing` ;
   - `a loop beat older than 90 s is not a running watcher` ;
   - `the loop ends when the package version changes` : `version` de `watcher-loop.json` réécrite à `0.0.0` par le test → la boucle sort ;
-  - `launch starts the watcher when autoStart is on, says so on stderr, and not otherwise` (`test/missions.test.js`) : la sortie standard ne porte que le nom de la mission.
+  - `launch starts the watcher when autoStart is on, says so on stderr, and not otherwise` (`test/missions.test.js`) : la sortie standard ne porte que le nom de la mission ; `relaylead watcher stop` dans `t.after`, pour ne laisser aucune boucle.
 - [ ] **Étape 2 :** échecs attendus.
 - [ ] **Étape 3 :** implémenter.
 - [ ] **Étape 4 :** tests verts.
@@ -464,7 +493,9 @@ Lancement explicite du veilleur, à la place de launchd jusqu'au lot 4 : une bou
 
 ### Task 8 : identité du lead : nom réservé, lead actuel
 
-**Files :** modifier `core/missions.js`, `core/tasks.js`, `core/wait.js`, `core/cli.js`, `core/messages.js`, `test/missions.test.js`, `test/cli.test.js`, `test/wait.test.js`.
+Sections de référence appliquées : « Fichiers d'état du lot » (ligne `lead-launch.json`), « Règles du veilleur » › « Cumul » (définition du nom du lead actuel), « Textes envoyés aux sessions » (place des sections « ## Restart » et « ## Handover »).
+
+**Files :** modifier `core/missions.js`, `core/tasks.js`, `core/wait.js`, `core/cli.js`, `core/messages.js`, `fixtures/helpers.js`, `test/missions.test.js`, `test/cli.test.js`, `test/wait.test.js`.
 
 Les relances (Task 11) et les relèves (Task 12) lancent un second lead. Avant elles, deux garanties : un nom de lead n'est jamais porté par deux sessions, et un lead remplacé ne pilote plus la mission.
 
@@ -472,7 +503,9 @@ Les relances (Task 11) et les relèves (Task 12) lancent un second lead. Avant e
 - Environnement des sessions : `launchLead` passe `RELAYLEAD_ROLE: 'lead'` et `RELAYLEAD_SESSION: <nom>` ; `launchCrew` passe `RELAYLEAD_ROLE: 'crew'` et `RELAYLEAD_SESSION: <nom>`.
 - `core/missions.js` :
   - `launchLead(mission, {section} = {}) -> Promise<Session>`, sorti de `createMission` (qui l'appelle sans `section`) : `n` = max(plus grand numéro des sessions du registre nommées `<mission>/lead/<k>`, `n` de `lead-launch.json`) + 1 ; écrit `lead-launch.json` = `{n, name: '<mission>/lead/<n>', at}` **avant** `adapter.launch` (sous le verrou de mission ; au premier lancement, `createMission` tient le verrou du dossier) ; si `adapter.launch` lève, réécrit `lead-launch.json` avec `failed: true` avant de relancer l'erreur ; consigne = `leadPrompt(method, mission, section)` où `section` est insérée avant « ## This mission » ; écrit `lead.json` et le registre. Un `err.orphan` levé par le lancement est journalisé (`watchLog(mission, 'orphan-session', shortId)`, `core/watch-log.js`) avant d'être relancé.
-  - `currentLeadError(name, env) -> Error|null` : si `env.RELAYLEAD_ROLE === 'lead'`, le lead actuel est celui de `lead.json`, **ou** celui de `lead-launch.json` tant que son lancement est en cours (`failed` absent, et `lead.json` absent ou `at` postérieur à son `startedAt`) : `adapter.launch` ne rend qu'après le premier tour et le PID de la ligne (jusqu'à 30 s, une lecture de `claude agents` prenant jusqu'à 2 s sous charge), alors que le lead neuf lance déjà `state set working`. Un `RELAYLEAD_SESSION` qui n'est aucun des deux → `codedError('not-current-lead', {session, mission, current})`, `current` = nom de `lead.json`. Un lead lancé avant ce lot (sans ces variables) n'est pas contrôlé.
+  - `currentLeadError(name, env) -> Error|null` : si `env.RELAYLEAD_ROLE === 'lead'`, le lead actuel est celui de `lead.json`, **ou** celui de `lead-launch.json` tant que son lancement est en cours (`failed` absent, et `lead.json` absent ou `at` postérieur à son `startedAt`) : `adapter.launch` ne rend qu'après le premier tour et le PID de la ligne (jusqu'à 30 s, une lecture de `claude agents` prenant jusqu'à 2 s sous charge), alors que le lead neuf lance déjà `state set working`. Un `RELAYLEAD_SESSION` qui n'est aucun des deux → `codedError('not-current-lead', {session, mission, current})`, `current` = `sessionName` de `lead.json`.
+  - `launchWhileOpen(name, launch, stop) -> Promise<Session>` : relit l'état ; `stopped` ou `stopping` → `mission-stopped`, `done` → `mission-done`, sans rien lancer ; sinon `session = await launch()` (qui enregistre la session) ; relit l'état : devenu `stopped` ou `stopping` → `await stop(session)` puis `mission-stopped` ; rend `session`. `launchCrew` s'en sert à la place de sa relecture d'aujourd'hui (`core/tasks.js`), et les actions `relaunch-lead` (Task 11) et `hand-over` (Task 12) aussi.
+- `fixtures/helpers.js` : `userEnv()` retire aussi `RELAYLEAD_ROLE` et `RELAYLEAD_SESSION` (une suite lancée depuis une session lead recevrait sinon `not-current-lead`). Un lead lancé avant ce lot (sans ces variables) n'est pas contrôlé.
 - Contrôles :
   - `core/cli.js` : `state set`, `task start|retry|deliver`, `question ask` et `wait` appellent `currentLeadError` à l'entrée ;
   - `core/tasks.js` : `startTask`, `retryTask` et `deliverTask` reçoivent l'env de l'appelant (`{env}`) et refont le contrôle **sous** le verrou de mission : une commande qui attendait le verrou pendant une relève est refusée une fois le lead remplacé ;
@@ -480,6 +513,7 @@ Les relances (Task 11) et les relèves (Task 12) lancent un second lead. Avant e
 - Erreur `not-current-lead` (en / fr) : « this session ({session}) is no longer the lead of mission "{mission}": {current} took over; end your turn » / « cette session ({session}) n'est plus le lead de la mission « {mission} » : {current} a pris le relais ; terminez votre tour ».
 
 - [ ] **Étape 1 : tests qui échouent** :
+  - `a launch stops the session it started when the mission was stopped meanwhile` : `launch` remplacée par une fonction qui écrit `{state: 'stopped', stopping: true}` puis rend une session → `stop` appelé avec elle, `mission-stopped` levée ; état déjà `stopped` → `launch` jamais appelée ;
   - `a lead name is never given twice, even when a launch left no record` : `lead-launch.json` `{n: 3}`, registre jusqu'à `lead/1` → le lead suivant s'appelle `demo/lead/4` ;
   - `the restart and handover sections come before the mission` : la consigne d'un `launchLead` avec section contient la section avant « ## This mission » ;
   - `a replaced lead can no longer drive the mission` (`test/cli.test.js`) : env `RELAYLEAD_ROLE=lead`, `RELAYLEAD_SESSION=demo/lead/1`, `lead.json` sur `demo/lead/2` → `state set working`, `task start a`, `question ask …` et `wait --timeout 0` rendent 1 avec `not-current-lead`, rien ne change (état, tâches, `wait-snapshot.json`) ; avec `demo/lead/2`, les quatre passent ;
@@ -493,6 +527,8 @@ Les relances (Task 11) et les relèves (Task 12) lancent un second lead. Avant e
 - [ ] **Étape 5 :** commit `feat(missions): numéro de lead réservé, lead actuel seul à piloter la mission`.
 
 ### Task 9 : règles de réveil et équipiers perdus
+
+Sections de référence appliquées : « Fichiers d'état du lot » (paragraphe `watch.json`) ; « Règles du veilleur » › « États du lead », « Cumul », « Table des règles » (règles 5, 11, 14 à 16) et « Garde du réveil » ; « Textes envoyés aux sessions » (réveil).
 
 **Files :** modifier `core/wait.js`, `core/watcher-rules.js`, `core/watcher.js`, `test/watcher-rules.test.js`, `test/watcher.test.js`, `test/wait.test.js`.
 
@@ -511,14 +547,17 @@ Règles 5, 11 et 14 à 16 et la garde du réveil, éprouvées dans le veilleur s
 
 - [ ] **Étape 1 : tests qui échouent** :
   - règles : `an idle lead is woken for changes it has not seen, once per view` ; `a view that comes back after a retry wakes the lead again` (`attempt` dans la clé ; `lastWakeView` remis à `null` sur une vue sans changement) ; `an idle lead is woken for its mail` ; `an idle lead whose turn ended while working is woken once per state` (état `{state: 'working', updatedAt}`, battement `(stop)`) ; `a lead without a state yet is keyed on its start` (`record` sans `updatedAt`, clé `lead.startedAt`) ; `a lead whose last heartbeat is recent and not a stop is not woken for an interrupted turn` ; `a lead that never beat is aged from its start` ; `an idle lead with nothing new is left alone pass after pass` (état `waiting`, vue déjà réveillée, dix observations → aucune action) ; `an absent lead of a waiting mission is left alone, then woken by a change` ; `a rate-limited idle lead is neither woken nor handed over, until the hold expires` (5 h, contexte au-dessus du seuil souple et changement non vu) ; `no wake within 10 s of a lead action` ; `no second wake while the first one is not judged` ; `a wake that throws is tried again` (après l'espacement, `lastWakeView` remis à `null`) ; `a wake for a change that had no effect is tried again after the backoff` ; `a heartbeat after lead-stuck allows wakes again` ; `wakes without effect back off, then the lead is reported stuck` (15 min, 30 min, 1 h, puis `lead-stuck` une fois, dans les deux journaux) ; `a heartbeat after a wake resets the backoff` ; `an active lead is never woken` ; `a crew lost while the lead is idle fails its task and wakes the lead` (règle 5 puis règle 14 au passage suivant) ; `the rules table` complétée ;
-  - `viewOf writes nothing and unseenChanges reports what the next wait would` (`test/wait.test.js`) ; `wait still fails a lost crew after its grace` (existant, inchangé) ;
-  - `two targeted passes at once wake the lead once` (`test/watcher.test.js`) : projet de `setupProject` plus une tâche `c` sans dépendance ; `state.json` = `{state: 'waiting'}` ; lead du faux agent inactif (rôle `waiting`, inscrit dans `lead.json`) ; `a` et `c` lancées par `startTask` (le test joue le lead) et finies par leurs équipiers ; deux `relaylead watcher run --mission demo` lancés ensemble → une seule ligne `woken:` dans le journal du lead, une seule ligne `wake-lead`, et `watch.json` montre que le second passage a vu le lead (`lastLeadActionAt` posé, aucune seconde action).
+  - `viewOf writes nothing and unseenChanges reports what the next wait would` (`test/wait.test.js`) ;
+  - `observe writes nothing` (`test/watcher.test.js`, déplacé ici depuis la Task 6, une fois `unseen` rempli) : après `observe` sur une mission avec un équipier perdu au-delà de la grâce et une liste qui échoue, aucun fichier de la mission ni `watcher.log` n'a changé (`mtime`) ; `wait still fails a lost crew after its grace` (existant, inchangé) ;
+  - `two targeted passes at once wake the lead once` (`test/watcher.test.js`) : projet de `setupProject` plus une tâche `c` sans dépendance ; `state.json` = `{state: 'waiting'}` ; lead du faux agent inactif (rôle `lead`, `RELAYLEAD_FAKE_END_FIRST_TURN=1`, inscrit dans `lead.json`) ; `a` et `c` lancées par `startTask` (le test joue le lead) et finies par leurs équipiers ; deux `relaylead watcher run --mission demo` lancés ensemble → une seule ligne `woken:` dans le journal du lead, une seule ligne `wake-lead`, et `watch.json` montre que le second passage a vu le lead (`lastLeadActionAt` posé, aucune seconde action).
 - [ ] **Étape 2 :** échecs attendus.
 - [ ] **Étape 3 :** implémenter.
 - [ ] **Étape 4 :** tests verts.
 - [ ] **Étape 5 :** commit `feat(veilleur): réveil du lead inactif et équipiers perdus`.
 
 ### Task 10 : le lead finit son tour, les passages ciblés le réveillent
+
+Sections de référence appliquées : « Règles du veilleur » › « Garde du réveil » (silence) ; « Textes envoyés aux sessions » (réveil).
 
 **Files :** créer `test/e2e/continuity.test.js` ; modifier `core/cli.js`, `core/watcher.js`, `catalog/profiles/lead.md`, `catalog/methods/code.md`, `adapters/fake/agent.js`, `test/e2e/fake-mission.test.js`, `test/cli.test.js`, `test/catalog.test.js`, `README.md`.
 
@@ -550,31 +589,35 @@ Aujourd'hui, le lead attend par `relaylead wait --timeout 540` en boucle, même 
 
 ### Task 11 : relance du lead absent et disjoncteur
 
+Sections de référence appliquées : « Réglages du lot » (seuil souple, pour choisir la reprise) ; « Règles du veilleur » › « États du lead », « Cumul », « Table des règles » (règles 1, 8 et 10) et « Décompte du disjoncteur » ; « Textes envoyés aux sessions » (reprise d'un lead absent, section « ## Restart »).
+
 **Files :** modifier `core/missions.js`, `core/watcher-rules.js`, `core/watcher.js`, `test/watcher-rules.test.js`, `test/watcher.test.js`, `test/missions.test.js`, `test/e2e/continuity.test.js`, `README.md`.
 
 Règles 8 et 10, et le décompte du disjoncteur. Le démon de Claude relance seul un lead tué (`kill -9`, fait mesuré 4) ; il ne relance ni une session arrêtée, ni rien après un redémarrage : c'est le veilleur qui le fait, en reprenant la même session si son contexte est bas, sinon par une session neuve. La relance par le démon rejoue la commande interrompue : les actions du lead restent idempotentes.
 
 **Interfaces :**
 - `core/missions.js` : `stopMission(name, {note} = {})` : `note` va dans l'état `stopped` écrit par le cœur.
-- `relaunch-lead` (`act`) : `{type: 'relaunch-lead', resume}` ; pose `lastRelaunchAt` et `lastLeadActionAt` au début ; relit l'état juste avant de lancer (fini, `stopped` ou `stopping` → rien) ; `resume` vrai → `adapter.wake(ancienne session, texte de reprise)` et `recordSession` ; s'il lève, ou `resume` faux → `launchLead(mission, {section: <section « Restart »>})`. Relit l'état juste après `recordSession` : devenu `stopped` ou `stopping` → arrêter la session lancée (`stopSessionsAndWait`), comme `launchCrew`. Réussite : `leadLostSince` = `null`. Échec des deux : `failedRelaunches` + 1, `lastRelaunchAt` = `null`, ligne `error relaunch-lead: <message>`. `resume` vaut vrai quand `contextOf(…, {active: false})` est connu et sous `soft`.
-- `trip-breaker` : après la sortie du verrou de mission (`stopMission` le prend lui-même) ; `decide` a posé `watch.tripped = true` ; `stopMission(name, {note: 'stopped by the watcher: the lead could not be restarted 3 times in a row'})`, `writeJournal(name, 'watcher', <même texte>)`, journal du veilleur. Si `stopMission` lève (`stop-pending`…), la règle 1 le rejoue au passage suivant tant que `tripped` et `stopping` tiennent. Les canaux d'alerte viennent au lot 3.
+- `relaunch-lead` (`act`) : `{type: 'relaunch-lead', resume}` ; pose `lastRelaunchAt` et `lastLeadActionAt` au début ; tout se fait dans `launchWhileOpen(name, launch, stop)` (Task 8), avec `stop` = `(session) => stopSessionsAndWait(mission, [session])` ; `launch` : `resume` vrai → `adapter.wake(ancienne session, texte de reprise)` puis `recordSession` ; s'il lève, ou `resume` faux → `launchLead(mission, {section: <section « Restart »>})`. `mission-stopped` ou `mission-done` levées par `launchWhileOpen` → rien de plus, sans compter pour le disjoncteur. Réussite : `leadLostSince` = `null`. Échec des deux : `failedRelaunches` + 1, `lastFailedRelaunchAt` = maintenant, `lastRelaunchAt` = `null`, ligne `error relaunch-lead: <message>`. `resume` vaut vrai quand `contextOf(…, {active: false})` est connu et sous `soft`.
+- `trip-breaker` : après la sortie du verrou de mission (`stopMission` le prend lui-même) ; `decide` a posé `watch.tripped = true` ; `missions.stopMission(name, {note: 'stopped by the watcher: the lead could not be restarted 3 times in a row'})`, appelé par l'objet du module (remplaçable par le test `a breaker stop that fails is replayed`), `writeJournal(name, 'watcher', <même texte>)`, journal du veilleur. Si `stopMission` lève (`stop-pending`…), la règle 1 le rejoue au passage suivant tant que `tripped` et `stopping` tiennent. Les canaux d'alerte viennent au lot 3.
 
 - [ ] **Étape 1 : tests qui échouent** :
   - règles : `an absent lead is resumed when its context is known and low` ; `an absent lead is relaunched as a new session when its context is high or unknown` ; `an old context of a dead lead still allows a resume` ; `a lead restarting by itself is not relaunched during the grace` ; `a lead that came back by itself gets a full grace the next time` ; `a relaunch counts as failed when the lead is absent again with no heartbeat since` ; `a heartbeat after the relaunch resets the count and the relaunch time` ; `two observations of one pass count once` ; `the breaker trips after 3 failed relaunches in a row, before a handover` ; `a lead back by itself clears the failed relaunches` (battement postérieur à `lastFailedRelaunchAt`) ; `the breaker never trips while the lead restarts` (compte à 3, lead `working` sans PID dans la grâce → aucune action) ; `a lead absent after a stale handover request is relaunched` (état `handover`, `by` = ancien lead) ; `the rules table` complétée ;
-  - intégration (ces tests fixent `RELAYLEAD_RESTART_GRACE_MS=300`, sans quoi un faux lead qui vient de battre reste « en relance » 2 min) :
+  - intégration (ces tests fixent `RELAYLEAD_RESTART_GRACE_MS=300` : un lead `working` sans processus ou absent de la liste reste sinon « en relance » 2 min ; un faux lead tué, listé `failed`, est absent tout de suite) :
     - `a failed resume falls back to a new lead session in the same pass` : `fake.wake` qui lève → `lead.json` nomme `demo/lead/2`, sa consigne porte « ## Restart » avant « ## This mission » ;
     - `a relaunch that throws counts once` : `fake.wake` et `fake.launch` qui lèvent → `failedRelaunches` 1 et `lastRelaunchAt` `null` ; un second passage → 2 ;
     - `the breaker stops the mission and says why` : `watch.json` à `failedRelaunches: 2`, `lastRelaunchAt` ancien, lead absent sans battement depuis → état `stopped` avec la note, ligne dans `journal.log` et `breaker-tripped` ;
     - `a breaker stop that fails is replayed` : `stopMission` remplacé une fois par une fonction qui lève `stop-pending` → au passage suivant, la mission finit `stopped` sans marqueur ;
     - `a lead restarted by its agent after the watcher relaunched it is stopped as an extra lead` : lead `working` sans processus au-delà de la grâce (`list` remplacée) → `demo/lead/2` lancé ; puis l'ancien listé avec un processus → passage suivant : `stop-extra-lead` ;
     - `a stop during a relaunch leaves no lead running` : `RELAYLEAD_START_LOCK_WAIT_MS=300`, `fake.launch` retardé de 1 s ; `relaylead stop` lancé pendant la relance (il abandonne en `stop-pending`) → la relance voit `stopping` après `recordSession` et arrête le lead lancé ; un second `relaylead stop` rend 0 ; aucune session de la mission vivante ;
-  - `a lead killed in the middle of a mission is resumed and the mission ends without loss` (`test/e2e/continuity.test.js`) : dépôt jouet, `RELAYLEAD_WATCHER` retirée, `watcher: {autoStart: false}`, `RELAYLEAD_RESTART_GRACE_MS=300`, `RELAYLEAD_LEAD_QUIET_MS=300` ; dès que `a` tourne, `killSession(lead)` ; `relaylead watcher run` lancé toutes les secondes jusqu'à la relance ; la mission finit `done` ; `lead.json` nomme toujours `…/lead/1` (reprise) ; chaque tâche a `attempt` 1, une seule session d'équipier par tâche, `a.txt` et `b.txt` livrés une fois.
+  - `a lead killed in the middle of a mission is resumed and the mission ends without loss` (`test/e2e/continuity.test.js`) : dépôt jouet, `RELAYLEAD_WATCHER` retirée, `watcher: {autoStart: false}`, `RELAYLEAD_RESTART_GRACE_MS=300`, `RELAYLEAD_LEAD_QUIET_MS=300` ; dès que `a` tourne, `killSession(lead)` ; `relaylead watcher run` lancé toutes les secondes jusqu'à la relance ; répondre à `q-b` une fois le lead lu inactif, par l'assistant de `test/e2e/continuity.test.js` écrit à la Task 10 ; la mission finit `done` ; `lead.json` nomme toujours `…/lead/1` (reprise) ; chaque tâche a `attempt` 1, une seule session d'équipier par tâche, `a.txt` et `b.txt` livrés une fois.
 - [ ] **Étape 2 :** échecs attendus.
 - [ ] **Étape 3 :** implémenter.
 - [ ] **Étape 4 :** tests verts.
 - [ ] **Étape 5 :** commit `feat(veilleur): relance du lead absent et disjoncteur`.
 
 ### Task 12 : relève du lead, contexte plein d'un équipier
+
+Sections de référence appliquées : « Réglages du lot » (seuils) ; « Règles du veilleur » › « Cumul », « Table des règles » (règles 9, 12, 13, 17 à 19) et « Décompte du disjoncteur » ; « Textes envoyés aux sessions » (section « ## Handover » et ses variantes, avis de relève, contexte plein d'un équipier).
 
 **Files :** modifier `core/missions.js`, `core/cli.js`, `core/messages.js`, `core/watcher-rules.js`, `core/watcher.js`, `catalog/profiles/lead.md`, `catalog/profiles/developer.md`, `catalog/methods/code.md`, `adapters/fake/agent.js`, `test/watcher-rules.test.js`, `test/watcher.test.js`, `test/cli.test.js`, `test/catalog.test.js`, `test/e2e/continuity.test.js`, `README.md`.
 
@@ -583,7 +626,7 @@ Règles 9, 12, 13, 17 à 19, d'après la spec (« Cycle de vie », 3) : au seuil
 **Interfaces :**
 - `core/missions.js` : `STATES` = `['starting', 'working', 'waiting', 'handover', 'done']` ; `setState(name, state, note, {by} = {})` écrit `by` dans `state.json` pour `handover` (`by` = `RELAYLEAD_SESSION` de l'appelant, sinon `'user'`) ; la note d'un `handover` est ramenée à une ligne de 500 caractères au plus.
 - `core/cli.js` : `state set handover` lance un passage ciblé (`spawnDetached`, si `helpers`).
-- `hand-over` (`act`) : `{type: 'hand-over', reason: 'asked'|'forced'|'idle', note, tokens}` ; pose `lastRelaunchAt` et `lastLeadActionAt` au début ; relit l'état (fini, `stopped` ou `stopping` → rien) ; `stopSessionsAndWait(mission, [ancien lead])` s'il a un processus (un échec : action levée) ; `launchLead(mission, {section: <section « Handover »>})` ; relit l'état après `recordSession` : devenu `stopped` ou `stopping` → arrêter le lead lancé, **ne pas** écrire `starting` ; sinon `writeState` `{state: 'starting', note: 'taken over from <ancien>: <note ou « forced at <tokens> tokens » ou « idle past the soft threshold »>'}` ; `handoverNoticeFor` = `null`. Une relève qui lève compte pour le disjoncteur (+1, `lastRelaunchAt` = `null`).
+- `hand-over` (`act`) : `{type: 'hand-over', reason: 'asked'|'forced'|'idle', note, tokens}` ; pose `lastRelaunchAt` et `lastLeadActionAt` au début ; relit l'état (fini, `stopped` ou `stopping` → rien) ; `stopSessionsAndWait(mission, [ancien lead])` s'il a un processus (un échec : action levée) ; `writeState` `{state: 'starting', note: 'taken over from <ancien>: <note ou « forced at <tokens> tokens » ou « idle past the soft threshold »>'}` **avant** le lancement (le lead neuf agit avant que `launch` rende la main, Task 8 : écrit après, `starting` écraserait son `working`) ; puis `launchWhileOpen(name, () => launchLead(mission, {section: <section « Handover »>}), stop)` (Task 8), qui arrête le lead lancé si un arrêt est venu entre-temps ; `mission-stopped` levée → rien de plus, l'état d'arrêt reste ; `handoverNoticeFor` = `null`. Une relève qui lève autrement compte pour le disjoncteur : `failedRelaunches` + 1, `lastFailedRelaunchAt` = maintenant, `lastRelaunchAt` = `null`.
 - `mail` (`act`) : `{type: 'mail', shortId, text, log}` → `sendMail`.
 - `bad-state` liste `handover`.
 - Consignes : `lead.md` : section « Handing over » (sur l'avis de relève : finir l'étape, `relaylead state set handover --note "…"`, finir son tour ; la note dit où en est la mission en une ligne). `developer.md` : sur le message « context full » : commiter ce qui est fait, `relaylead task fail <id> --summary "context full: …"`, finir son tour.
@@ -593,19 +636,22 @@ Règles 9, 12, 13, 17 à 19, d'après la spec (« Cycle de vie », 3) : au seuil
 - [ ] **Étape 1 : tests qui échouent** :
   - règles : `a handover asked by the current lead or the user hands over` ; `a handover asked by a replaced lead is ignored` ; `an active lead past the hard threshold is handed over without its note` ; `an idle lead past the hard threshold with nothing to wake for is left alone` ; `an idle lead past the soft threshold is handed over instead of woken` ; `an idle lead past the soft threshold with nothing to wake for is left alone` ; `an active lead past the soft threshold gets one notice` ; `a stale reading of an active lead triggers nothing` ; `a high base is logged once` ; `a crew member past the hard threshold gets one context-full mail, only with a measured window` ; `a hard handover and a wake never come in the same pass` ; `the rules table` complétée ;
   - intégration :
-    - `a handover stops the old lead, starts the next one and writes starting` : `lead.json` → `demo/lead/2`, consigne avec « ## Handover » et la note avant « ## This mission », ancien lead fini, `state.json` = `{state: 'starting', note: 'taken over from demo/lead/1: <note>'}` ;
+    - `a handover writes starting before the new lead runs` : le faux lead neuf lance `state set working` dès son démarrage → l'état final vaut `working`, pas `starting` ;
+    - `a handover stops the old lead, starts the next one and writes starting` : `lead.json` → `demo/lead/2`, consigne avec « ## Handover » et la note avant « ## This mission », ancien lead fini ; `fake.launch` remplacé par une fonction qui relit `state.json` avant d'appeler l'original : il y lit `{state: 'starting', note: 'taken over from demo/lead/1: <note>'}` ;
     - `a failed handover counts towards the breaker` : `fake.launch` qui lève → `failedRelaunches` 1, état toujours `handover` ;
     - `a stop during a handover is not erased` : même montage que `a stop during a relaunch…` → état final `stopped`, jamais `starting`, aucun lead vivant après le second `stop` ;
-    - `a crew told its context is full fails its task and the lead retries it` : faux équipier derrière la barrière, relevé de contexte au-dessus du seuil dur avec une fenêtre mesurée (écrit par `recordStatusline`) → `notify-context-full`, la tâche passe `failed` (« context full: fake »), puis `task retry` par le test : tentative 2 lancée ;
+    - `a crew told its context is full fails its task and the lead retries it` : faux équipier derrière la barrière ; deux appels à `recordStatusline` pour sa session, fenêtre 100000 (plafond 40000, `hard` 48000) : 30000 (la base), puis 50000 → `notify-context-full`, la tâche passe `failed` (« context full: fake »), puis `task retry` par le test : tentative 2 lancée ;
   - `state set handover records who asked and starts a targeted pass` (`test/cli.test.js`) ; `a handover note is cut to one line of 500 characters` ;
   - `the lead and developer profiles say how to hand over` (`test/catalog.test.js`) ;
-  - `a lead past a low threshold hands over and the mission ends without loss` (`test/e2e/continuity.test.js`) : dépôt jouet, `.relaylead.json` `{"context": {"budgets": {"lead": 6000}}}`, `RELAYLEAD_FAKE_TOKENS_PER_COMMAND=1000`, `RELAYLEAD_LEAD_QUIET_MS=300`, `RELAYLEAD_RESTART_GRACE_MS=300`, `relaylead watcher run` toutes les secondes ; la mission finit `done` ; au moins `…/lead/2` dans le registre, chaque ancien lead fini ; chaque tâche a `attempt` 1 et une seule session d'équipier ; les deux tâches livrées une fois.
+  - `a lead past a low threshold hands over and the mission ends without loss` (`test/e2e/continuity.test.js`) : dépôt jouet, `.relaylead.json` `{"context": {"budgets": {"lead": 6000}}}`, `RELAYLEAD_FAKE_TOKENS_PER_COMMAND=1000`, `RELAYLEAD_LEAD_QUIET_MS=300`, `RELAYLEAD_RESTART_GRACE_MS=300`, `relaylead watcher run` toutes les secondes ; répondre à `q-b` une fois le lead lu inactif, par l'assistant de la Task 10 ; la mission finit `done` ; au moins `…/lead/2` dans le registre, chaque ancien lead fini ; chaque tâche a `attempt` 1 et une seule session d'équipier ; les deux tâches livrées une fois.
 - [ ] **Étape 2 :** échecs attendus.
 - [ ] **Étape 3 :** implémenter.
 - [ ] **Étape 4 :** tests verts ; `npm test` complet sur les trois systèmes par la CI.
 - [ ] **Étape 5 :** commit `feat(veilleur): relève du lead au seuil de contexte, contexte plein d'un équipier`.
 
 ### Task 13 (humain) : la continuité essayée avec Claude Code sur macOS
+
+Sections de référence appliquées : « Faits mesurés ».
 
 **Files :** créer `docs/manual-checks/lot-2a-claude-macos.md` (procédure et relevé, même forme que ceux des lots 1 et 1.1).
 
