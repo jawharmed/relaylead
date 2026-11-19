@@ -14,6 +14,7 @@ const messages = {
       '  wait      wait for a mission to change',
       '  question  ask the user a question',
       '  answer    answer a question',
+      '  watcher   watch the missions: restart, wake and relieve their leads',
       '',
       'Options:',
       '  --help, -h     show this help',
@@ -31,6 +32,8 @@ const messages = {
       'the sessions of mission {mission} were not stopped again: their process ids are more than an hour old\n',
     taskDelivered: 'task {id} delivered\n',
     taskAlreadyDelivered: 'task {id} already delivered\n',
+    watcherStopPresent: 'STOP is present in {home}: the watcher does nothing until it is removed\n',
+    watcherBusy: 'another watcher pass is running (process {pid}, since {since}); nothing done\n',
     // Subject of the commit of a task's state line, in the integration branch.
     deliveryCommit: 'chore(relaylead): deliver {id}',
     // Errors: the key is the error code (see codedError).
@@ -169,6 +172,7 @@ const messages = {
       '  wait      attendre qu\'une mission change',
       '  question  poser une question à l\'utilisateur',
       '  answer    répondre à une question',
+      '  watcher   veiller sur les missions : relancer, réveiller et relever leurs leads',
       '',
       'Options :',
       '  --help, -h     afficher cette aide',
@@ -186,6 +190,8 @@ const messages = {
       'les sessions de la mission {mission} n\'ont pas été arrêtées de nouveau : leurs numéros de processus ont plus d\'une heure\n',
     taskDelivered: 'tâche {id} livrée\n',
     taskAlreadyDelivered: 'tâche {id} déjà livrée\n',
+    watcherStopPresent: 'STOP est présent dans {home} : le veilleur ne fait rien tant qu\'il n\'est pas retiré\n',
+    watcherBusy: 'un autre passage du veilleur est en cours (processus {pid}, depuis {since}) ; rien n\'est fait\n',
     deliveryCommit: 'chore(relaylead): {id} livrée',
     usage: 'usage : {usage}',
     'dir-busy':
