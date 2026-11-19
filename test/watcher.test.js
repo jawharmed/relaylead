@@ -510,7 +510,8 @@ test('two targeted passes at once wake the lead once', async (t) => {
   // The second pass found the lead woken already.
   const watch = readJson(watchFile('demo'));
   assert.ok(Date.parse(watch.lastLeadActionAt) <= Date.now());
-  assert.strictEqual(watch.lastWakeAt, watch.lastLeadActionAt);
+  // Still waiting for its judgement, or cleared by the woken lead's heartbeat.
+  assert.ok([watch.lastLeadActionAt, null].includes(watch.lastWakeAt), JSON.stringify(watch));
   assert.ok(watch.lastWakeView);
   assert.strictEqual(watch.ineffectiveWakes, 0);
 });
@@ -546,4 +547,69 @@ test('a wake that throws counts as a wake without effect', async (t) => {
   assert.strictEqual(lines.length, 3, logText());
   // Held back for 15 min: the next pass does nothing.
   assert.deepStrictEqual(await watcher.tendMission('demo'), []);
+});
+
+// A waiting mission whose lead is recorded but run by no agent: `rows` gives what the stubbed list
+// shows, and the wakes are kept in the returned list (the woken session is the recorded one).
+function waitingMission(t, rows) {
+  const lead = record('demo', 'demo/lead/1', 'lead');
+  writeLead('demo', lead);
+  writeJson(stateFile('demo'), { state: 'waiting' });
+  const woken = [];
+  const { list, wake } = fake;
+  fake.list = async () => rows(lead);
+  fake.wake = async (session, message) => {
+    woken.push(message);
+    return session;
+  };
+  t.after(() => {
+    fake.list = list;
+    fake.wake = wake;
+  });
+  return { lead, woken };
+}
+
+test('act fails the task of a crew lost while the lead waits, then the lead is woken for it', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  const task = await startTask('demo', { id: 'a' });
+  const crew = listSessions('demo').find((session) => session.shortId === task.session);
+  await fake.stop(crew);
+  await waitFor(() => sessionEnded(crew), 30000, 'the crew session to end');
+  // The lead is done and idle with its process; the crew is no longer listed, lost for 61 s.
+  const { lead, woken } = waitingMission(t, (leadRecord) => [{ ...leadRecord, state: 'done', pid: DEAD_PID, idle: true }]);
+  writeJson(watchFile('demo'), { crewLostSince: { [crew.shortId]: new Date(Date.now() - 61 * 1000).toISOString() } });
+  writeJson(path.join(missionDir('demo'), 'wait-snapshot.json'), { tasks: { a: 'running', b: 'todo' }, questions: {}, lostSince: {} });
+
+  assert.deepStrictEqual((await watcher.tendMission('demo')).map((action) => action.type), ['mark-failed']);
+  const [a] = listTasks('demo');
+  assert.strictEqual(a.state, 'failed');
+  assert.strictEqual(a.summary, 'crew session ended without a result');
+  assert.deepStrictEqual(woken, []);
+
+  assert.deepStrictEqual((await watcher.tendMission('demo')).map((action) => action.type), ['wake-lead']);
+  // Its task failed, the crew is no longer counted lost.
+  assert.deepStrictEqual(readJson(watchFile('demo')).crewLostSince, {});
+  assert.deepStrictEqual(woken, ['Relaylead woke you: task a is now failed. Carry on with the method: run `relaylead task list` first.']);
+  const lines = logText().trim().split('\n');
+  assert.match(lines[0], new RegExp(`^\\S+ demo crew-lost ${crew.shortId} task a$`));
+  assert.match(lines[1], new RegExp(`^\\S+ demo wake-lead ${lead.shortId}: task a is now failed$`));
+  assert.strictEqual(lines.length, 2, logText());
+});
+
+test('a lead woken while it was not listed is no longer lost', async (t) => {
+  freshHome(t);
+  const dir = tmpDir('relaylead-project-');
+  fs.mkdirSync(path.join(dir, 'tasks'));
+  writeMission('demo', dir);
+  // Not listed for an hour: the absent lead of a waiting mission, idle; mail is waiting for it.
+  const { lead, woken } = waitingMission(t, () => []);
+  const hourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  writeJson(path.join(missionDir('demo'), 'lead.json'), { ...readJson(path.join(missionDir('demo'), 'lead.json')), startedAt: hourAgo });
+  writeJson(watchFile('demo'), { leadLostSince: hourAgo });
+  sendMail('demo', lead.shortId, 'hello');
+
+  assert.deepStrictEqual((await watcher.tendMission('demo')).map((action) => action.type), ['wake-lead']);
+  assert.strictEqual(woken.length, 1);
+  assert.strictEqual(readJson(watchFile('demo')).leadLostSince, null);
 });

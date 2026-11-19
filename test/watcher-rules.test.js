@@ -115,7 +115,7 @@ function idle(fields = {}) {
 // An idle lead that answers each wake: its Stop hook beats 1 s after it, seen from the next pass on.
 function answering(fields = {}) {
   return (now, watch) => {
-    const wakeAt = Date.parse(watch.lastWakeAt);
+    const wakeAt = Date.parse(watch.lastLeadActionAt);
     const at = Number.isFinite(wakeAt) && now > wakeAt ? wakeAt + 1000 : T0 - 30 * MINUTE;
     return idle({ readings: { [LEAD]: beat(at, '(stop)') }, ...fields });
   };
@@ -454,7 +454,9 @@ test('an idle lead is woken for changes it has not seen, once per view', () => {
     { type: 'wake-lead', reasons: ['task a is now done'], log: `wake-lead ${LEAD}: task a is now done` },
   ]);
   assert.strictEqual(first.watch.lastWakeView, JSON.stringify(A_DONE));
-  assert.strictEqual(first.watch.lastWakeAt, iso(T0));
+  assert.strictEqual(timeline(answering({ unseen: unseen(A_DONE) })).watch.lastWakeAt, iso(T0));
+  // A heartbeat after it: the wake worked, and is never judged again.
+  assert.strictEqual(first.watch.lastWakeAt, null);
   assert.strictEqual(first.watch.lastLeadActionAt, iso(T0));
 
   // Another change: one more wake, with every change it has not seen.
@@ -484,7 +486,7 @@ test('a view that comes back after a retry wakes the lead again', () => {
 
 test('an idle lead is woken for its mail', () => {
   // The woken lead reads its mail.
-  const at = (now, watch) => ({ ...answering()(now, watch), mail: { [LEAD]: watch.lastWakeAt ? 0 : 1 } });
+  const at = (now, watch) => ({ ...answering()(now, watch), mail: { [LEAD]: watch.lastLeadActionAt ? 0 : 1 } });
   const { minutes, actions } = timeline(at, { count: 10 });
   assert.deepStrictEqual(minutes, [0]);
   assert.deepStrictEqual(wakes(actions), [{ type: 'wake-lead', reasons: ['you have mail'], log: `wake-lead ${LEAD}: mail` }]);
@@ -527,7 +529,7 @@ test('a lead that never beat is aged from its start', () => {
 test('an idle lead with nothing new is left alone pass after pass', () => {
   const view = unseen(A_DONE);
   // Woken for that view an hour ago; it answered, and has waited since.
-  const watch = { ...emptyWatch(), lastWakeView: view.viewKey, lastWakeAt: iso(T0 - 60 * MINUTE), lastLeadActionAt: iso(T0 - 60 * MINUTE) };
+  const watch = { ...emptyWatch(), lastWakeView: view.viewKey, lastLeadActionAt: iso(T0 - 60 * MINUTE) };
   const readings = { [LEAD]: beat(T0 - 59 * MINUTE, '(stop)') };
   for (const leadRow of [IDLE_ROW, row(leadRecord, { state: 'waiting', idle: true })]) {
     const { actions, watch: after } = passes(10, 5 * MINUTE, () => idle({ rows: [leadRow], unseen: view, readings }), watch);
@@ -643,15 +645,19 @@ test('a heartbeat after lead-stuck allows wakes again', () => {
 });
 
 test('a heartbeat after a wake resets the backoff', () => {
-  // Two wakes without effect already; the last one judged 31 min ago.
+  // Two wakes without effect already; the last one judged 31 min ago, after the lead's last heartbeat.
   const watch = { ...emptyWatch(), ineffectiveWakes: 2, lastIneffectiveAt: iso(T0 - 31 * MINUTE) };
   const at = (now) =>
     idle({
       unseen: now < T0 + 10 * MINUTE ? unseen(A_DONE) : unseen([...A_DONE, B_DONE]),
       // It answers the first wake only.
-      readings: { [LEAD]: beat(now >= T0 + MINUTE ? T0 + MINUTE : T0 - 30 * MINUTE, '(stop)') },
+      readings: { [LEAD]: beat(now >= T0 + MINUTE ? T0 + MINUTE : T0 - 40 * MINUTE, '(stop)') },
     });
-  // The third wake had no effect: 15 min, not 1 h, before the next one.
+  // Woken once its 30 min are over; the count stays until it answers.
+  assert.strictEqual(timeline(at, { watch }).watch.ineffectiveWakes, 2);
+  const answered = timeline(at, { count: 2, watch });
+  assert.strictEqual(answered.watch.ineffectiveWakes, 0);
+  // The wake after it had no effect: 15 min, not 1 h, before the next one.
   assert.deepStrictEqual(timeline(at, { count: 40, watch }).minutes, [0, 10, 30]);
 });
 
@@ -683,4 +689,31 @@ test('a crew lost while the lead is idle fails its task and wakes the lead', () 
   const active = decide(observation({ unseen: unseen(A_FAILED, { toFail: [lost], lostSince }) }));
   assert.deepStrictEqual(active.actions, []);
   assert.deepStrictEqual(active.watch.crewLostSince, lostSince);
+});
+
+test('a woken turn that fails after its first heartbeat is woken again', () => {
+  // Woken at T0, it ran a command at 1 min, then its turn failed at 4 min, before its wait.
+  const turnFailing = (error) => (now) =>
+    idle({
+      unseen: unseen(A_DONE),
+      readings:
+        now < T0 + 5 * MINUTE
+          ? { [LEAD]: beat(T0 - 30 * MINUTE, '(stop)') }
+          : { [LEAD]: { ...beat(T0 + MINUTE), failure: { at: iso(T0 + 4 * MINUTE), error } } },
+    });
+  // A usage limit: held 5 h after the failure, then woken (15 min have long passed).
+  const limited = timeline(turnFailing('rate_limit'), { count: 62, stepMs: 5 * MINUTE });
+  assert.deepStrictEqual(limited.minutes, [0, 305]);
+  assert.deepStrictEqual(logs(limited.actions), [`lead-rate-limited ${LEAD}`]);
+  assert.strictEqual(limited.watch.ineffectiveWakes, 1);
+  // Any other failure: woken again after the backoff, counted once.
+  const failed = timeline(turnFailing('server_error'), { count: 5, stepMs: 5 * MINUTE });
+  assert.deepStrictEqual(failed.minutes, [0, 20]);
+  assert.strictEqual(failed.watch.ineffectiveWakes, 1);
+  // A failure from before the wake says nothing of it.
+  const oldFailure = { at: iso(T0 - 31 * MINUTE), error: 'server_error' };
+  const before = () => idle({ unseen: unseen(A_DONE), readings: { [LEAD]: { ...beat(T0 - 30 * MINUTE, '(stop)'), failure: oldFailure } } });
+  // Judged by the missing heartbeat alone, at 5 min.
+  const old = timeline(before, { count: 2, stepMs: 4 * MINUTE });
+  assert.deepStrictEqual([old.minutes, old.watch.ineffectiveWakes], [[0], 0]);
 });

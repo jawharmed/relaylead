@@ -235,8 +235,12 @@ function wakeWithoutEffect(watch, now) {
 }
 
 // The guard's memory, whatever the lead's state: any heartbeat after the last wake, or after the last
-// wake judged without effect, sets the count back to 0 (a lead unblocked by hand is woken again); a
-// wake that no heartbeat has followed for 5 min had no effect.
+// wake judged without effect, sets the count back to 0 (a lead unblocked by hand is woken again). A
+// wake followed by a heartbeat worked: lastWakeAt is cleared, so it is never judged again. A wake had
+// no effect when no heartbeat has followed it for 5 min, or when the lead failed after it (failures/:
+// a usage limit, an API error), after its last heartbeat and before any wake judged since: the turn
+// it started died before the lead could see what woke it (once the usage limit is over, rule 11, the
+// motive is due again). The time of that wake is lastLeadActionAt, which lastWakeAt clears not.
 function judgeWakes(obs, watch) {
   const beat = heartbeatMs(obs);
   if (beat > Date.parse(watch.lastWakeAt) || beat > Date.parse(watch.lastIneffectiveAt)) {
@@ -244,9 +248,13 @@ function judgeWakes(obs, watch) {
     watch.stuckNoticeFor = null;
   }
   const wakeAt = Date.parse(watch.lastWakeAt);
-  if (Number.isFinite(wakeAt) && !(beat > wakeAt) && obs.now - wakeAt >= INEFFECTIVE_AFTER_MS) {
-    Object.assign(watch, wakeWithoutEffect(watch, obs.now));
-  }
+  if (beat > wakeAt) watch.lastWakeAt = null;
+  const failure = (obs.readings[obs.lead.shortId] || {}).failure;
+  const failedAt = Date.parse(failure && failure.at);
+  const failedAfterWake =
+    failedAt > Date.parse(watch.lastLeadActionAt) && !(beat >= failedAt) && !(Date.parse(watch.lastIneffectiveAt) >= failedAt);
+  const unanswered = Number.isFinite(Date.parse(watch.lastWakeAt)) && obs.now - wakeAt >= INEFFECTIVE_AFTER_MS;
+  if (failedAfterWake || unanswered) Object.assign(watch, wakeWithoutEffect(watch, obs.now));
 }
 
 // Rules 11 and 14 to 16, for an idle lead: one wake at most, for every motive there is.
@@ -312,8 +320,8 @@ function wakeMotives(obs, watch, unseen) {
 // yet, then the backoff of the wakes without effect; past 3, `lead-stuck`, once, in both logs.
 function wakeAllowed(obs, watch, log) {
   if (obs.now - Date.parse(watch.lastLeadActionAt) < leadQuietMs()) return false;
-  // Not judged yet: no heartbeat since, and less than 5 min old (judgeWakes clears an older one).
-  if (Number.isFinite(Date.parse(watch.lastWakeAt)) && !(heartbeatMs(obs) > Date.parse(watch.lastWakeAt))) return false;
+  // Not judged yet: no heartbeat since, no failure, and less than 5 min old (judgeWakes clears it).
+  if (Number.isFinite(Date.parse(watch.lastWakeAt))) return false;
   const count = watch.ineffectiveWakes;
   if (count > WAKE_BACKOFF_MS.length) {
     if (watch.stuckNoticeFor !== obs.lead.shortId) {
