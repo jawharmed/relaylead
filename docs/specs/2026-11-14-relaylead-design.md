@@ -2,6 +2,8 @@
 
 Design du 15 novembre 2026, version 6 (amendée par l'essai jetable : [`docs/spike-results.md`](../spike-results.md)). **Relaylead** est un nom de code ; le nom public sera choisi avant la première publication. Ce document est en français ; le produit est en anglais par défaut, avec le français.
 
+> **Amendement du 19 novembre 2026 (décision de l'auteur).** La première version publique est **macOS seulement** : les essais avec le vrai Claude se font sous macOS, la CI garde macOS, Linux et Windows avec le faux agent. Le planificateur du système est **launchd seul** (lot 4, par `relaylead install`) ; ailleurs, ce qui en dépend échoue par une erreur codée « plateforme non prise en charge ». Jusqu'au lot 4, le veilleur se lance par `relaylead watcher start` et par `relaylead launch`. Là où ce document dit « macOS, Linux, Windows » pour le public de la v1, lire « macOS » ; détail dans la [feuille de route](../plans/2026-11-15-feuille-de-route.md).
+
 ## Intention
 
 Un **outil open source pour le grand public** qui permet de confier un travail (tâches d'un projet, demande libre, recherche, contenu…) d'un simple appel à un **lead** qui le mène seul avec **son équipe** de spécialistes, en arrière-plan, sans que l'utilisateur soit devant le terminal. Le lead tient dans la durée : il passe le relais à une session neuve quand son contexte se remplit, se met en pause avant les limites d'usage et reprend seul ensuite.
