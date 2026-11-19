@@ -5,12 +5,12 @@ const path = require('node:path');
 const { run } = require('../core/cli');
 const { listTasks, startTask } = require('../core/tasks');
 const { stopMission } = require('../core/missions');
-const { listSessions, isAlive } = require('../core/sessions');
+const { listSessions } = require('../core/sessions');
 const { readJson, writeJson } = require('../core/store');
 const { waitForChanges } = require('../core/wait');
 const { missionDir } = require('../core/paths');
 const fake = require('../adapters/fake');
-const { makeIo, waitFor } = require('../fixtures/helpers');
+const { makeIo, waitFor, sessionEnded } = require('../fixtures/helpers');
 const { setupProject, writeMission } = require('../fixtures/missions');
 
 // Runs `relaylead wait` for mission demo and returns the parsed changes.
@@ -43,7 +43,7 @@ async function startedTaskWithoutCrew() {
   const record = await startTask('demo', { id: 'a' });
   const crew = listSessions('demo').find((session) => session.shortId === record.session);
   await fake.stop(crew);
-  await waitFor(() => !isAlive(crew.pid), 30000, 'the crew process to end');
+  await waitFor(() => sessionEnded(crew), 30000, 'the crew process to end');
   return crew;
 }
 
@@ -99,7 +99,7 @@ test('a change between two waits is not lost', async (t) => {
   // The task finishes while nobody waits.
   await waitFor(() => fs.existsSync(resultFile('a')), 30000, 'the task result');
   const crew = listSessions('demo').find((session) => session.shortId === record.session);
-  await waitFor(() => !isAlive(crew.pid), 30000, 'the crew session to end');
+  await waitFor(() => sessionEnded(crew), 30000, 'the crew session to end');
 
   const startedAt = Date.now();
   const changes = await wait(5);
@@ -121,7 +121,7 @@ test('a finished task wakes the lead once', async (t) => {
   // The fake crew member runs `task done a` after 1 s, then its session ends.
   const changes = await wait(5);
   const crew = listSessions('demo').find((session) => session.shortId === record.session);
-  await waitFor(() => !isAlive(crew.pid), 30000, 'the crew session to end');
+  await waitFor(() => sessionEnded(crew), 30000, 'the crew session to end');
 
   assert.deepStrictEqual(changes, [{ kind: 'task', id: 'a', from: 'running', to: 'done' }]);
   assert.deepStrictEqual(await wait(0), []);
@@ -136,7 +136,7 @@ test('crew session done without a result marks the task failed', async (t) => {
   // Killed before its `task done`: the adapter now reports the session done.
   const crew = listSessions('demo').find((session) => session.shortId === record.session);
   await fake.stop(crew);
-  await waitFor(() => !isAlive(crew.pid), 30000, 'the crew session to end');
+  await waitFor(() => sessionEnded(crew), 30000, 'the crew session to end');
 
   const changes = await wait(5);
   assert.deepStrictEqual(

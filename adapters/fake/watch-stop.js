@@ -8,6 +8,7 @@
 // with the folder when the mission is removed.
 const fs = require('node:fs');
 const { isMainThread, workerData } = require('node:worker_threads');
+const { withWindowsRetry } = require('../../core/store');
 
 // Writes the ended file, then removes the stop file. In this order: a stop that writes its file
 // after the removal finds the ended file and removes its own file (adapters/fake/index.js), so no
@@ -18,10 +19,12 @@ function markEnded({ stopFile, endedFile }) {
   } catch {
     // The mission folder is gone: nobody will list the session.
   }
+  // Retried while Windows denies it for a moment (fs.rmSync's maxRetries only applies to a recursive
+  // removal): the tests take its removal as the end of the session.
   try {
-    fs.rmSync(stopFile, { force: true });
+    withWindowsRetry(() => fs.rmSync(stopFile, { force: true }));
   } catch {
-    // Denied for a moment on Windows: the file only stays behind.
+    // Still denied after the retries: the file only stays behind.
   }
 }
 

@@ -33,8 +33,9 @@ function removeQuietly(file) {
 
 // Write to a temporary file in the same folder, then rename: readers never see a partial file.
 // `mode` is applied by chmod: the umask would reduce it if it were given to writeFileSync.
-function writeText(file, text, { mode, retryMs } = {}) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
+// `createDir: false` fails (ENOENT) when the folder is missing, instead of creating it.
+function writeText(file, text, { mode, retryMs, createDir = true } = {}) {
+  if (createDir) fs.mkdirSync(path.dirname(file), { recursive: true });
   const random = Math.random().toString(36).slice(2, 10);
   const tmp = `${file}.${process.pid}.${random}.tmp`;
   try {
@@ -47,8 +48,8 @@ function writeText(file, text, { mode, retryMs } = {}) {
   }
 }
 
-function writeJson(file, data) {
-  writeText(file, JSON.stringify(data, null, 2) + '\n');
+function writeJson(file, data, options) {
+  writeText(file, JSON.stringify(data, null, 2) + '\n', options);
 }
 
 // Like writeJson, but only if the file does not exist yet: returns false when someone else wrote it first.

@@ -376,8 +376,9 @@ function cleanMission(mission, keepDirs) {
 }
 
 // Runs `relaylead _reap <mission>` on its own: it outlives this command and the lead's turn.
-// No shell, so a path with spaces or quotes is passed as it is. Its pid is recorded in reaper.json,
-// so one can check that it has ended.
+// No shell, so a path with spaces or quotes is passed as it is. Its pid is recorded in reaper.json;
+// the helper itself writes reaper-ended.json as it exits (markReaperEnded), so one can check that it
+// has ended without reading its pid, which Windows soon gives to another process.
 async function spawnReaper(name) {
   const child = spawn(process.execPath, [BIN, '_reap', name], {
     detached: true,
@@ -429,6 +430,18 @@ async function reapLead(name) {
     await adapter.stop(session);
   } catch (err) {
     writeJournal(name, 'reaper', `could not stop the lead ${lead.shortId}: ${err.message}`);
+  }
+}
+
+// The helper's last act (`relaylead _reap`), however reapLead ended: reaper-ended.json, with its pid
+// and the time. Written by the helper alone; reaper.json, written by `state set done`, only says it
+// was started. Never into a mission folder removed meanwhile: a folder written again would keep the
+// name taken. Never throws: the helper is exiting, so every error is ignored, not only a missing folder.
+function markReaperEnded(name) {
+  try {
+    writeJson(missionFile(name, 'reaper-ended.json'), { pid: process.pid, endedAt: now() }, { createDir: false });
+  } catch {
+    // The mission folder is gone (nobody will read the file), or the write failed: the helper ends anyway.
   }
 }
 
@@ -624,6 +637,7 @@ module.exports = {
   getState,
   setState,
   reapLead,
+  markReaperEnded,
   attachLead,
   lockFile,
   releaseLock,

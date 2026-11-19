@@ -6,7 +6,7 @@ const { spawn } = require('node:child_process');
 const { getAdapter } = require('../adapters');
 const { recordSession, isAlive } = require('../core/sessions');
 const { missionDir } = require('../core/paths');
-const { tmpDir, waitFor } = require('../fixtures/helpers');
+const { tmpDir, waitFor, sessionEnded } = require('../fixtures/helpers');
 
 const fake = getAdapter('fake');
 
@@ -55,16 +55,19 @@ test('fake stop ends the session process and kills nothing by its pid', async (t
   t.after(() => unrelated.kill());
 
   await fake.stop({ ...session, pid: unrelated.pid });
-  await waitFor(() => !isAlive(session.pid), 30000, 'the session process to end');
+  await waitFor(() => sessionEnded(session), 30000, 'the session process to end');
+  // A child of this test that has not ended: its pid is still its own.
   assert.ok(isAlive(unrelated.pid));
-  assert.strictEqual(fs.existsSync(session.stopFile), false); // removed by the agent as it ended
+  // Removed by the agent as it ended, just after its ended file: the stop above saw the unrelated
+  // process alive and left the file.
+  await waitFor(() => !fs.existsSync(session.stopFile), 5000, 'the agent to remove its stop file');
 });
 
 test('an ended session is listed done without a pid, even when its pid now names another process', async (t) => {
   // With a task but no mission.json, the crew member fails after its second of work, and ends.
   const session = await launchSession(t, { RELAYLEAD_TASK: 'a' });
   recordSession('demo', session);
-  await waitFor(() => !isAlive(session.pid), 30000, 'the session process to end');
+  await waitFor(() => sessionEnded(session), 30000, 'the session process to end');
   const unrelated = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
   t.after(() => unrelated.kill());
   recordSession('demo', { ...session, pid: unrelated.pid });
@@ -81,5 +84,5 @@ test('fake stop reaches the session from another RELAYLEAD_HOME', async (t) => {
   process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
 
   await fake.stop(session);
-  await waitFor(() => !isAlive(session.pid), 30000, 'the session process to end');
+  await waitFor(() => sessionEnded(session), 30000, 'the session process to end');
 });

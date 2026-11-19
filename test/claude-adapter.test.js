@@ -47,6 +47,11 @@ function fakeSessions(state) {
   }
 }
 
+// Whether this sleeper of the fake claude has ended: it writes its ended file as it exits.
+function sleeperEnded(state, sleeper) {
+  return fs.existsSync(path.join(state, `ended-${sleeper}`));
+}
+
 function calls(state) {
   return fs.readFileSync(path.join(state, 'calls.log'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
 }
@@ -145,13 +150,15 @@ test('list keeps the mission sessions; stop and attach use the short id', async 
 test('stop ends the session process and kills nothing by its pid', async (t) => {
   const { dir, state } = setup(t);
   const session = await claude.launch(spec(dir));
+  const [{ sleeper }] = fakeSessions(state);
   // The row's pid now names an unrelated live process, as when Windows has given it to another one.
   const unrelated = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
   t.after(() => unrelated.kill());
   writeJson(path.join(state, 'sessions.json'), fakeSessions(state).map((row) => ({ ...row, pid: unrelated.pid })));
 
   await claude.stop(session);
-  await waitFor(() => !isAlive(session.pid), 10000, 'the session process to end');
+  await waitFor(() => sleeperEnded(state, sleeper), 10000, 'the session process to end');
+  // A child of this test that has not ended: its pid is still its own.
   assert.ok(isAlive(unrelated.pid));
 });
 
@@ -293,11 +300,12 @@ test('wake resumes under the same id', async (t) => {
   const { dir, state } = setup(t);
   const session = await claude.launch(spec(dir));
   recordSession('demo', session);
+  const [{ sleeper }] = fakeSessions(state);
   const woken = await claude.wake(session, 'Go on with the answer: 57');
   assert.strictEqual(woken.shortId, session.shortId);
   assert.strictEqual(woken.state, 'working');
   assert.notStrictEqual(woken.pid, session.pid);
-  assert.strictEqual(isAlive(session.pid), false);
+  assert.strictEqual(sleeperEnded(state, sleeper), true);
   const resumes = calls(state).filter((args) => args.includes('--resume'));
   assert.deepStrictEqual(resumes, [['--bg', '--resume', session.sessionId, 'Go on with the answer: 57']]);
   assert.strictEqual(fakeSessions(state).length, 1);
