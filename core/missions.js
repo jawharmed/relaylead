@@ -333,42 +333,40 @@ async function endMission(mission) {
 async function stopSessionsAndWait(mission, sessions) {
   const adapter = getAdapter(mission.agent);
   // Taken before the stops: the adapter knows the current process of a session, which may have been
-  // restarted since it was recorded. A session it does not list has no process: its registry pid may
-  // by now belong to an unrelated process. Only when the list fails is the registry pid used.
+  // restarted since it was recorded.
   let listed = null;
   try {
     listed = await adapter.list(mission.name);
   } catch {
     // `claude agents` may fail for a moment: the registry pids will do
   }
+  const registry = listSessions(mission.name);
   const failed = [];
   const stopped = [];
   let error = null;
   for (const session of sessions) {
     try {
       await adapter.stop(session);
-      stopped.push({ session, pid: listed ? listedPid(listed, session) : session.pid, unlistedAt: null });
+      stopped.push({ session, ...pidToWaitFor(listed, registry, session), unlistedAt: null });
     } catch (err) {
       failed.push(session);
       error = error || err;
     }
   }
   const giveUpAt = Date.now() + stopWaitMs();
-  const wait = { settleMs: settleBoundMs(stopWaitMs()), giveUpAt };
-  let alive = await stillRunning(adapter, mission, stopped, wait);
+  let alive = await stillRunning(adapter, mission, stopped, giveUpAt);
   while (alive.length > 0 && Date.now() < giveUpAt) {
     await sleep(STOP_POLL_MS);
-    alive = await stillRunning(adapter, mission, alive, wait);
+    alive = await stillRunning(adapter, mission, alive, giveUpAt);
   }
   return { failed, alive: alive.map((entry) => entry.session), error };
 }
 
 // The stopped sessions that have not ended yet, read again from the adapter. A session has ended once
 // the adapter lists no process for it (first step) and the pid read before its stop is dead (second
-// step, measured fact 1). Before `giveUpAt`, the second step lasts at most `settleMs` (settleBoundMs,
-// shorter than the whole wait on Windows only), after which the session counts as ended. A list that
-// fails leaves this round to the pid alone.
-async function stillRunning(adapter, mission, entries, { settleMs, giveUpAt }) {
+// step, measured fact 1). Before `giveUpAt`, the second step lasts at most the entry's `settleMs`,
+// after which the session counts as ended. A list that fails leaves this round to the pid alone.
+async function stillRunning(adapter, mission, entries, giveUpAt) {
   let rows = null;
   try {
     rows = await adapter.list(mission.name);
@@ -384,7 +382,7 @@ async function stillRunning(adapter, mission, entries, { settleMs, giveUpAt }) {
     }
     if (entry.unlistedAt === null) entry.unlistedAt = now;
     if (!isAlive(entry.pid)) return false;
-    return now >= giveUpAt || now - entry.unlistedAt < settleMs;
+    return now >= giveUpAt || now - entry.unlistedAt < entry.settleMs;
   });
 }
 
@@ -394,10 +392,19 @@ function hasProcess(rows, session) {
   return rows.some((row) => row.shortId === session.shortId && Boolean(row.pid));
 }
 
-// The pid the adapter lists for the session; null (no process) when it does not list it.
-function listedPid(listed, session) {
+// {pid, settleMs}: the pid read before the stop, to wait for once the session is stopped, and how
+// long the second step may last (settleBoundMs). The pid the adapter lists for the session. A session
+// it does not list has no process: null. A row without a pid (a stop run again, or within the 1.5 s
+// when the row has lost its pid, measured fact 1): the registry pid, as a fallback that may by now
+// belong to an unrelated process, so with the short bound. When the list has failed: the registry
+// pid, with the whole wait, as before.
+function pidToWaitFor(listed, registry, session) {
+  const recorded = (registry.find((candidate) => candidate.shortId === session.shortId) || session).pid;
+  if (!listed) return { pid: recorded, settleMs: settleBoundMs(stopWaitMs()) };
   const row = listed.find((candidate) => candidate.shortId === session.shortId);
-  return row ? row.pid : null;
+  if (!row) return { pid: null, settleMs: 0 };
+  if (row.pid) return { pid: row.pid, settleMs: settleBoundMs(stopWaitMs()) };
+  return { pid: recorded, settleMs: settleBoundMs(stopWaitMs(), { fallback: true }) };
 }
 
 // The folders of these sessions. An adapter row may have no folder: the registry has it.
@@ -423,7 +430,8 @@ function cleanMission(mission, keepDirs) {
 // it exits (markReaperEnded), so one can check that it has ended without reading its pid, which
 // Windows soon gives to another process.
 async function spawnReaper(name, createdAt) {
-  const child = spawn(process.execPath, [BIN, '_reap', name, createdAt], {
+  const args = createdAt ? [BIN, '_reap', name, createdAt] : [BIN, '_reap', name];
+  const child = spawn(process.execPath, args, {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,

@@ -951,12 +951,12 @@ function unrelatedProcess(t) {
 }
 
 // A crew session of mission demo recorded with `pid`. Like claude (measured fact 1), the adapter
-// lists it with that pid until it is stopped, then without one.
-function listedWithPidUntilStopped(t, pid) {
+// lists it with that pid until it is stopped, then without one; from the start when `alreadyStopped`.
+function listedWithPidUntilStopped(t, pid, { alreadyStopped = false } = {}) {
   writeMission('demo', tmpDir('relaylead-project-')); // no lead: the test plays it
   const session = { sessionId: 'fake-crew', shortId: 'crew0000', name: 'demo/developer/1', role: 'crew', pid };
   recordSession('demo', session);
-  let stopped = false;
+  let stopped = alreadyStopped;
   stub(t, 'list', () => async () => [{ ...session, state: stopped ? 'stopped' : 'working', pid: stopped ? null : pid }]);
   stub(t, 'stop', () => async () => {
     stopped = true;
@@ -978,12 +978,15 @@ test(
     freshHome(t);
     const unrelated = unrelatedProcess(t);
     listedWithPidUntilStopped(t, unrelated.pid);
+    setEnv(t, 'RELAYLEAD_CLAUDE_WAKE_SETTLE_MS', '1000');
     const start = Date.now();
 
     const stopped = await cli(['stop', 'demo']);
 
+    const elapsed = Date.now() - start;
     assert.deepStrictEqual([stopped.code, stopped.out, stopped.err], [0, 'mission demo stopped\n', '']);
-    assert.ok(Date.now() - start < 8000, `stopped in ${Date.now() - start} ms`);
+    // list and stop answer at once: only the wait for the pid from before takes this long.
+    assert.ok(elapsed >= 1000 && elapsed < 8000, `stopped in ${elapsed} ms`);
     assert.ok(isAlive(unrelated.pid));
   },
 );
@@ -1001,11 +1004,33 @@ test(
     assert.strictEqual(refused.code, 1);
     assert.match(refused.err, /process is still running/);
 
+    // Run again, the stop finds the session listed without a pid: it waits for the registry pid.
+    const replayed = await cli(['stop', 'demo']);
+    assert.strictEqual(replayed.code, 1);
+    assert.match(replayed.err, /process is still running/);
+
     await lingering.end();
     const stopped = await cli(['stop', 'demo']);
     assert.strictEqual(stopped.code, 0, stopped.err);
   },
 );
+
+test('a session listed without a pid is waited for on its registry pid, at most the short bound', async (t) => {
+  freshHome(t);
+  // As for a stop run again, or within the 1.5 s when the row has lost its pid (measured fact 1).
+  const unrelated = unrelatedProcess(t); // or a pid now used by another process
+  listedWithPidUntilStopped(t, unrelated.pid, { alreadyStopped: true });
+  setEnv(t, 'RELAYLEAD_CLAUDE_WAKE_SETTLE_MS', '1000');
+  const start = Date.now();
+
+  const stopped = await cli(['stop', 'demo']);
+
+  const elapsed = Date.now() - start;
+  assert.deepStrictEqual([stopped.code, stopped.out, stopped.err], [0, 'mission demo stopped\n', '']);
+  // list and stop answer at once: only the wait for the registry pid takes this long.
+  assert.ok(elapsed >= 1000 && elapsed < 8000, `stopped in ${elapsed} ms`);
+  assert.ok(isAlive(unrelated.pid));
+});
 
 test('a stop judges on the pid only when the list fails', async (t) => {
   // The adapter lists the session with its pid until it is stopped, then fails.

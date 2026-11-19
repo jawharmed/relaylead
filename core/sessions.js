@@ -48,9 +48,11 @@ function isAlive(pid) {
 // read before the stop has ended (the row loses its pid up to 1.5 s before the process ends). This is
 // how long the second step may last, out of a wait of `totalMs`: all of it on POSIX, where a pid is
 // not given to another process within seconds; at most 5 s on Windows, which soon gives it to another
-// one (#71). Past it, the session counts as ended.
-function settleBoundMs(totalMs) {
-  if (process.platform !== 'win32') return totalMs;
+// one (#71). Past it, the session counts as ended. A `fallback` pid, taken from the registry because
+// the row already had none (a command run again, or within those 1.5 s), may by now belong to another
+// process on any system: it gets the short bound everywhere.
+function settleBoundMs(totalMs, { fallback = false } = {}) {
+  if (process.platform !== 'win32' && !fallback) return totalMs;
   return Math.min(totalMs, Number(process.env.RELAYLEAD_CLAUDE_WAKE_SETTLE_MS) || 5000);
 }
 

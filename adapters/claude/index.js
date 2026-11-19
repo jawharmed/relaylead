@@ -236,10 +236,12 @@ async function attach(session) {
 async function wake(session, message) {
   checkPrompt(message, 'message');
   const row = await findRow(session.shortId);
-  // A row without a pid has no process: the registry pid may by now belong to another process.
-  const pid = row ? row.pid : session.pid;
+  // The pid to wait for: the listed one. Without one (a wake run again after one that gave up, or
+  // within the 1.5 s when the row has lost its pid, measured fact 1), the registry pid, as a fallback
+  // that may by now belong to another process: it gets the short bound on every system.
+  const listedPid = row ? row.pid : null;
   await stop(session);
-  await waitUntilEnded(session, pid);
+  await waitUntilEnded(session, listedPid || session.pid, settleBoundMs(wakeTimeoutMs(), { fallback: !listedPid }));
   const args = ['--bg', '--resume', session.sessionId, message];
   const { stdout, stderr } = await runClaude(args, { cwd: session.cwd, label: 'claude --bg --resume', timeoutMs: launchTimeoutMs() });
   const output = stdout + stderr;
@@ -255,13 +257,12 @@ async function wake(session, message) {
 
 // The end of a stopped session, in two steps: its row has no pid (or is gone), then `pid`, read
 // before the stop, has ended; the row loses its pid up to 1.5 s before the process ends (measured
-// fact 1). Within the wait of wakeTimeoutMs, the second step lasts at most settleBoundMs, which only
-// shortens it on Windows: on macOS the resume never starts before the process has ended, which would
-// start a copy. A read of the row that fails leaves that round to the pid alone. Fails with
-// wake-timeout once the wait is over.
-async function waitUntilEnded(session, pid) {
+// fact 1). Within the wait of wakeTimeoutMs, the second step lasts at most `settleMs`
+// (settleBoundMs), which for a listed pid only shortens it on Windows: on macOS the resume never
+// starts before that process has ended, which would start a copy. A read of the row that fails
+// leaves that round to the pid alone. Fails with wake-timeout once the wait is over.
+async function waitUntilEnded(session, pid, settleMs) {
   const deadline = Date.now() + wakeTimeoutMs();
-  const settleMs = settleBoundMs(wakeTimeoutMs());
   let unlistedAt = null;
   for (;;) {
     let listed; // whether claude lists a process for the session; undefined when the read fails
