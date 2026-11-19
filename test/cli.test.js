@@ -200,3 +200,36 @@ test('a start queued behind a handover is refused once the lead is replaced', as
   assert.deepStrictEqual(listSessions('demo'), []);
   assert.strictEqual(fs.existsSync(missionFile(path.join('tasks', 'a.json'))), false);
 });
+
+test('while a new lead is being launched, the old one can no longer drive the mission', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  writeJson(missionFile('lead.json'), {
+    sessionId: 'fake-demo/lead/1',
+    shortId: 'aaaa1111',
+    sessionName: 'demo/lead/1',
+    startedAt: new Date(Date.now() - 60 * 1000).toISOString(),
+  });
+  const reservation = { n: 2, name: 'demo/lead/2', at: new Date().toISOString() };
+  writeJson(missionFile('lead-launch.json'), reservation);
+
+  // Restarted by its agent, the old lead replays its command: refused, the new one has the mission.
+  const old = makeIo(leadEnv('demo/lead/1'));
+  assert.strictEqual(await run(['state', 'set', 'done'], old), 1);
+  assert.match(old.err.text, /this session \(demo\/lead\/1\) is no longer the lead of mission "demo": demo\/lead\/2 took over/);
+  assert.strictEqual(fs.existsSync(missionFile('state.json')), false);
+
+  // The launch failed: the old lead has the mission back.
+  writeJson(missionFile('lead-launch.json'), { ...reservation, failed: true });
+  const back = makeIo(leadEnv('demo/lead/1'));
+  assert.strictEqual(await run(['state', 'set', 'working'], back), 0, back.err.text);
+});
+
+test('a lead without its session name is told so', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  nameLead('demo/lead/1');
+  const io = makeIo({ RELAYLEAD_MISSION: 'demo', RELAYLEAD_ROLE: 'lead' });
+  assert.strictEqual(await run(['state', 'set', 'working'], io), 1);
+  assert.match(io.err.text, /this session \(-\) is no longer the lead/);
+});

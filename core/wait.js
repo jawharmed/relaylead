@@ -132,6 +132,9 @@ async function waitForChanges(name, timeoutSeconds = DEFAULT_TIMEOUT_S, report =
     if (changes.length > 0 || Date.now() >= deadline) {
       report(changes);
       await stopFinishedCrew(adapter, changes, tasks, sessions);
+      // Checked again: a lead replaced during the stops leaves the changes to its successor's wait.
+      const replaced = currentLeadError(name, env);
+      if (replaced) throw replaced;
       writeJson(snapshotFile(name), view);
       return changes;
     }

@@ -250,14 +250,15 @@ async function launchLead(mission, { section } = {}) {
     if (err.orphan) watchLog(name, 'orphan-session', err.orphan);
     throw err;
   }
+  // Recorded first: lead.json, written last, never names a session that is not in the registry.
   try {
+    recordSession(name, lead);
     writeJson(missionFile(name, 'lead.json'), {
       sessionId: lead.sessionId,
       shortId: lead.shortId,
       sessionName: lead.name,
       startedAt: now(),
     });
-    recordSession(name, lead);
   } catch (err) {
     try {
       await adapter.stop(lead); // no orphan session
@@ -290,20 +291,21 @@ function leadPrompt(method, mission, section) {
 
 // Null when the session running a command may drive the mission; otherwise the not-current-lead
 // error. Only a lead is checked (RELAYLEAD_ROLE, set at launch; a lead launched before it was set is
-// not checked). The current lead is the one lead.json names, or the one whose launch is running:
-// reserved in lead-launch.json, not failed, after the lead of lead.json started (or before any).
-// claude's launch returns only once the first turn of the new lead has started, and that turn already
-// runs commands.
+// not checked). There is one current lead. While a launch runs (reserved in lead-launch.json, not
+// failed, after the lead of lead.json started, or before any), it is the lead being launched, and the
+// lead of lead.json no longer is: claude's launch returns only once the first turn of the new lead has
+// started, and that turn already runs commands, while an old lead restarted by its agent replays its
+// last command (measured fact 4). A launch that failed gives the mission back to the lead of lead.json.
 function currentLeadError(name, env) {
   if (!env || env.RELAYLEAD_ROLE !== 'lead') return null;
   if (!fs.existsSync(missionFile(name, 'mission.json'))) return null; // the command says mission-unknown
-  const session = env.RELAYLEAD_SESSION;
   const lead = readJson(missionFile(name, 'lead.json'), null);
-  if (lead && session === lead.sessionName) return null;
   const launch = readJson(missionFile(name, 'lead-launch.json'), null);
   const launching = launch && !launch.failed && (!lead || Date.parse(launch.at) > Date.parse(lead.startedAt));
-  if (launching && session === launch.name) return null;
-  return codedError('not-current-lead', { session, mission: name, current: lead ? lead.sessionName : '-' });
+  const current = launching ? launch.name : lead && lead.sessionName;
+  const session = env.RELAYLEAD_SESSION;
+  if (session && session === current) return null;
+  return codedError('not-current-lead', { session: session || '-', mission: name, current: current || '-' });
 }
 
 // Launches a session unless the mission is over, and stops it if a stop came during the launch.
