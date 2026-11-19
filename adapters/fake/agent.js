@@ -59,6 +59,14 @@ function idle() {
   setInterval(() => {}, 60 * 1000);
 }
 
+// End the turn but stay alive, like a Claude session that is done and idle: the adapter's list reads
+// the file RELAYLEAD_FAKE_IDLE, never the pid.
+function endTurn() {
+  fs.writeFileSync(process.env.RELAYLEAD_FAKE_IDLE, '');
+  log('turn ended');
+  idle();
+}
+
 function readMission() {
   return readJson(path.join(missionDir(process.env.RELAYLEAD_MISSION), 'mission.json'));
 }
@@ -167,7 +175,11 @@ process.on('uncaughtException', (err) => {
 });
 
 watchStop();
+// Woken by the adapter's wake: the message it was given, as the first thing in the log.
+if (process.env.RELAYLEAD_FAKE_WAKE_MESSAGE) log(`woken: ${process.env.RELAYLEAD_FAKE_WAKE_MESSAGE}`);
 const role = process.argv[2];
-if (role === 'lead') lead();
+// For the tests: a session that ends its first turn at once, keeping its role in the registry.
+if (process.env.RELAYLEAD_FAKE_END_FIRST_TURN === '1') endTurn();
+else if (role === 'lead') lead();
 else if (role === 'crew' && process.env.RELAYLEAD_TASK) crew();
 else idle();

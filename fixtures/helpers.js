@@ -38,6 +38,13 @@ function sessionEnded(session) {
   return fs.existsSync(session.endedFile);
 }
 
+// Kills a session of the fake agent the way `kill -9` would: its agent writes no end. Then writes the
+// witness the killed session cannot write, which the adapter's list reads instead of its pid.
+function killSession(session) {
+  process.kill(session.pid, 'SIGKILL');
+  fs.writeFileSync(session.killedFile, '');
+}
+
 // The environment of a person in a terminal: the tests may themselves run inside a mission session,
 // whose RELAYLEAD_MISSION and RELAYLEAD_TASK would make the CLI refuse the user's commands.
 function userEnv() {
@@ -47,4 +54,4 @@ function userEnv() {
   return env;
 }
 
-module.exports = { tmpDir, makeIo, waitFor, sessionEnded, userEnv };
+module.exports = { tmpDir, makeIo, waitFor, sessionEnded, killSession, userEnv };
