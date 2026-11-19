@@ -34,6 +34,15 @@ const messages = {
     taskAlreadyDelivered: 'task {id} already delivered\n',
     watcherStopPresent: 'STOP is present in {home}: the watcher does nothing until it is removed\n',
     watcherBusy: 'another watcher pass is running (process {pid}, since {since}); nothing done\n',
+    watcherStarted: 'watcher started: it checks the missions every {seconds} s and ends once none needs it\n',
+    watcherAlreadyRunning: 'the watcher is already running (since {since})\n',
+    watcherNothingToWatch: 'no mission to watch; the watcher was not started\n',
+    watcherStopped: 'watcher stopped\n',
+    watcherStopRequested: 'the watcher stops once its current pass is over\n',
+    watcherNotRunning: 'the watcher is not running\n',
+    watcherStatusRunning: 'watcher running since {since}; last pass {lastPass}\n',
+    watcherNotStarted:
+      'relaylead launch: the watcher could not be started ({detail}); start it with: relaylead watcher start\n',
     // Subject of the commit of a task's state line, in the integration branch.
     deliveryCommit: 'chore(relaylead): deliver {id}',
     // Errors: the key is the error code (see codedError).
@@ -48,6 +57,7 @@ const messages = {
     'remove-unmerged-work':
       'mission "{mission}" has work not delivered: {items}; remove anyway with: relaylead remove {mission} --force; it deletes these branches and changes',
     'mission-unknown': 'no mission named "{mission}"',
+    'watcher-not-started': 'the watcher loop gave no sign of life within {seconds} s',
     'mission-stopped': 'mission "{mission}" was stopped; its state can no longer change',
     'mission-finished': 'mission "{mission}" is done; its state can no longer change',
     'bad-state': 'unknown state "{state}"; use one of: {states}',
@@ -192,6 +202,16 @@ const messages = {
     taskAlreadyDelivered: 'tâche {id} déjà livrée\n',
     watcherStopPresent: 'STOP est présent dans {home} : le veilleur ne fait rien tant qu\'il n\'est pas retiré\n',
     watcherBusy: 'un autre passage du veilleur est en cours (processus {pid}, depuis {since}) ; rien n\'est fait\n',
+    watcherStarted:
+      'veilleur lancé : il passe sur les missions toutes les {seconds} s et s\'arrête quand aucune n\'en a besoin\n',
+    watcherAlreadyRunning: 'le veilleur tourne déjà (depuis {since})\n',
+    watcherNothingToWatch: 'aucune mission à veiller ; le veilleur n\'a pas été lancé\n',
+    watcherStopped: 'veilleur arrêté\n',
+    watcherStopRequested: 'le veilleur s\'arrête à la fin de son passage en cours\n',
+    watcherNotRunning: 'le veilleur ne tourne pas\n',
+    watcherStatusRunning: 'veilleur en marche depuis {since} ; dernier passage {lastPass}\n',
+    watcherNotStarted:
+      'relaylead launch : le veilleur n\'a pas pu être lancé ({detail}) ; lancez-le avec : relaylead watcher start\n',
     deliveryCommit: 'chore(relaylead): {id} livrée',
     usage: 'usage : {usage}',
     'dir-busy':
@@ -204,6 +224,7 @@ const messages = {
     'remove-unmerged-work':
       'la mission « {mission} » a du travail non livré : {items} ; supprimez quand même avec : relaylead remove {mission} --force ; cela supprime ces branches et ces changements',
     'mission-unknown': 'aucune mission nommée « {mission} »',
+    'watcher-not-started': 'la boucle du veilleur n\'a donné aucun signe de vie en {seconds} s',
     'mission-stopped': 'la mission « {mission} » a été arrêtée ; son état ne peut plus changer',
     'mission-finished': 'la mission « {mission} » est terminée ; son état ne peut plus changer',
     'bad-state': 'état inconnu « {state} » ; utilisez l\'un de : {states}',

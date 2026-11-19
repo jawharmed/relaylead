@@ -2,7 +2,6 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
-const { spawn } = require('node:child_process');
 const { home, missionDir, slug } = require('./paths');
 const { writeJson, readJson } = require('./store');
 const { loadConfig } = require('./config');
@@ -13,11 +12,11 @@ const { writeJournal } = require('./guard');
 const { getAdapter } = require('../adapters');
 const { getDelivery } = require('../deliveries');
 const { sleep } = require('./timing');
+const { spawnDetached } = require('./detached');
 const { withMissionLock, takeOverStaleLock, EMPTY_LOCK_STALE_MS } = require('./mission-lock');
 
 // States the lead may declare. 'stopped' is written by the core only.
 const STATES = ['starting', 'working', 'waiting', 'done'];
-const BIN = path.join(__dirname, '..', 'bin', 'relaylead.js');
 const REAP_POLL_MS = 2000;
 // The states after which no session of the mission may run.
 const FINISHED = ['done', 'stopped'];
@@ -423,26 +422,14 @@ function cleanMission(mission, keepDirs) {
   return warnings;
 }
 
-// Runs `relaylead _reap <mission> <createdAt>` on its own: it outlives this command and the lead's
-// turn. The createdAt ties it to this mission: once the mission is removed and launched again under
-// the same name, the helper leaves the new one alone. No shell, so a path with spaces or quotes is
-// passed as it is. Its pid is recorded in reaper.json; the helper itself writes reaper-ended.json as
-// it exits (markReaperEnded), so one can check that it has ended without reading its pid, which
-// Windows soon gives to another process.
+// Runs `relaylead _reap <mission> <createdAt>` on its own (spawnDetached): it outlives this command
+// and the lead's turn. The createdAt ties it to this mission: once the mission is removed and launched
+// again under the same name, the helper leaves the new one alone. Its pid is recorded in reaper.json;
+// the helper itself writes reaper-ended.json as it exits (markReaperEnded), so one can check that it
+// has ended without reading its pid, which Windows soon gives to another process.
 async function spawnReaper(name, createdAt) {
-  const args = createdAt ? [BIN, '_reap', name, createdAt] : [BIN, '_reap', name];
-  const child = spawn(process.execPath, args, {
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: true,
-  });
-  // Without an 'error' listener, a failed start would crash the whole process.
-  await new Promise((resolve, reject) => {
-    child.once('spawn', resolve);
-    child.once('error', reject);
-  });
-  child.unref();
-  writeJson(missionFile(name, 'reaper.json'), { pid: child.pid, startedAt: now() });
+  const pid = await spawnDetached(createdAt ? ['_reap', name, createdAt] : ['_reap', name]);
+  writeJson(missionFile(name, 'reaper.json'), { pid, startedAt: now() });
 }
 
 // The helper: waits until the lead has ended its last turn (10 min at most), then stops it. The turn

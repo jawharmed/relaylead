@@ -3,7 +3,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { loadConfig, resolveSecret, DEFAULTS } = require('../core/config');
+const { loadConfig, watcherSettings, resolveSecret, DEFAULTS } = require('../core/config');
 const { writeJson } = require('../core/store');
 
 function tmpDir() {
@@ -28,6 +28,26 @@ test('project config overrides machine config, params override both', () => {
 test('loadConfig works when no config file exists', () => {
   process.env.RELAYLEAD_HOME = tmpDir();
   assert.deepStrictEqual(loadConfig({ dir: tmpDir() }), DEFAULTS);
+});
+
+test('watcherSettings reads the machine file, and RELAYLEAD_WATCHER=off turns the loop and helpers off', (t) => {
+  const home = tmpDir();
+  process.env.RELAYLEAD_HOME = home;
+  const saved = process.env.RELAYLEAD_WATCHER;
+  t.after(() => {
+    if (saved === undefined) delete process.env.RELAYLEAD_WATCHER;
+    else process.env.RELAYLEAD_WATCHER = saved;
+  });
+  delete process.env.RELAYLEAD_WATCHER;
+  assert.deepStrictEqual(watcherSettings(), { autoStart: true, helpers: true, everySeconds: 300 });
+  writeJson(path.join(home, 'config.json'), { watcher: { autoStart: false, everySeconds: 60 } });
+  assert.deepStrictEqual(watcherSettings(), { autoStart: false, helpers: true, everySeconds: 60 });
+  for (const everySeconds of [0, 1.5, '10', null]) {
+    writeJson(path.join(home, 'config.json'), { watcher: { everySeconds } });
+    assert.strictEqual(watcherSettings().everySeconds, 300, JSON.stringify(everySeconds));
+  }
+  process.env.RELAYLEAD_WATCHER = 'off';
+  assert.deepStrictEqual(watcherSettings(), { autoStart: false, helpers: false, everySeconds: 300 });
 });
 
 test('resolveSecret reads env: and file: references', () => {

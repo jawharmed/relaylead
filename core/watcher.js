@@ -1,13 +1,17 @@
 // The watcher: a pass over every mission that is not finished. For each one it observes (observe,
 // which writes nothing), decides by the pure rules of watcher-rules.js, then acts under the mission
 // lock, after a second observation made under that lock. ~/.relaylead/STOP stops it from doing
-// anything; ~/.relaylead/watcher.lock keeps one full pass at a time.
+// anything; ~/.relaylead/watcher.lock keeps one full pass at a time. The loop (`relaylead watcher
+// loop`, started by `relaylead watcher start` and by `relaylead launch`) runs a full pass every
+// watcher.everySeconds seconds, and ends once no mission needs it.
 const fs = require('node:fs');
 const path = require('node:path');
 const { isDeepStrictEqual } = require('node:util');
 const { home, missionDir } = require('./paths');
-const { readJson, writeJson, withWindowsRetry } = require('./store');
+const { readJson, writeJson, writeText, withWindowsRetry } = require('./store');
 const { codedError } = require('./messages');
+const { watcherSettings } = require('./config');
+const { spawnDetached } = require('./detached');
 const { listSessions, isAlive } = require('./sessions');
 const { readReadings } = require('./readings');
 const { stopSessionsAndWait } = require('./missions');
@@ -25,6 +29,16 @@ const PASS_LOCK_STALE_MS = 15 * 60 * 1000;
 const LOG_MAX_BYTES = 1048576;
 // The errors of a wait for a lock that gave up: the mission is left to the next pass.
 const LOCK_GAVE_UP = ['start-busy', 'start-stuck', 'mission-unknown'];
+// The loop writes its beat this often; a loop file whose beat is older than LOOP_RUNNING_MS is that of
+// a loop that is gone (killed, or the machine restarted). Never judged on its pid (#62).
+const LOOP_BEAT_MS = 30 * 1000;
+const LOOP_RUNNING_MS = 90 * 1000;
+// Between two passes, the loop checks every LOOP_STEP_MS whether it must end.
+const LOOP_STEP_MS = 1000;
+const START_WAIT_MS = 5000;
+// The file of a test run (RELAYLEAD_TEST_RUN_FILE) is refreshed every 10 s while the run lives.
+const TEST_RUN_STALE_MS = 60 * 1000;
+const STOP_WAIT_MS = 10000;
 // The second idle read of a lead that is working (measured fact 2). Read at each call: tests shorten it.
 const idleRecheckMs = () => Number(process.env.RELAYLEAD_IDLE_RECHECK_MS) || 2000;
 
@@ -350,4 +364,188 @@ async function runPass() {
   }
 }
 
-module.exports = { observe, act, tendMission, runPass, stopPresent };
+// The missions to watch now, neither finished nor being stopped, being launched included. One whose
+// mission.json cannot be read is not counted, and does not keep the others from being counted.
+function missionsToWatch() {
+  return missionNames().filter((name) => {
+    try {
+      return needsWatching(name);
+    } catch {
+      return false;
+    }
+  }).length;
+}
+
+function loopFile() {
+  return path.join(home(), 'watcher-loop.json');
+}
+
+function loopStopFile() {
+  return path.join(home(), 'watcher-loop.stop');
+}
+
+// {pid, startedAt, version, beatAt, lastPassAt, everySeconds}, or null when there is none (or it
+// cannot be read: it is written by rename, so only a broken disk does that).
+function readLoopFile() {
+  try {
+    return readJson(loopFile(), null);
+  } catch {
+    return null;
+  }
+}
+
+// pid and startedAt are the token of a loop: the file is that loop's.
+function isOurs(loop, token) {
+  return Boolean(loop) && loop.pid === token.pid && loop.startedAt === token.startedAt;
+}
+
+function removeFile(file) {
+  try {
+    withWindowsRetry(() => fs.rmSync(file, { force: true }));
+  } catch {
+    // left behind: the next start, or the next loop, deals with it
+  }
+}
+
+// The version of package.json as it is on the disk now: an update of the package changes it under a
+// running loop. A package.json that cannot be read (being replaced) counts as another version.
+function packageVersion() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')).version;
+  } catch {
+    return null;
+  }
+}
+
+// RELAYLEAD_TEST_RUN_FILE is set by the tests alone (fixtures/run-tests.js, fixtures/helpers.js),
+// which refresh that file every 10 s: once it is gone or has not been refreshed for 60 s, the tests
+// are over, even killed (Ctrl-C, kill -9), and no loop they started may outlive them.
+function testRunOver() {
+  const file = process.env.RELAYLEAD_TEST_RUN_FILE;
+  if (!file) return false;
+  try {
+    return Date.now() - fs.statSync(file).mtimeMs > TEST_RUN_STALE_MS;
+  } catch {
+    return true;
+  }
+}
+
+// Removes the loop file only while it names this loop: another loop may have written its own.
+function removeOwnLoopFile(token) {
+  if (isOurs(readLoopFile(), token)) removeFile(loopFile());
+}
+
+// Whether the loop must end: the loop file names another loop (two loops started at once: the last
+// one written wins), the package has changed version since the loop wrote its file (the next launch
+// starts the new one), or watcher-loop.stop is there (it is left for the user's next start).
+// A start removes the stop file, then looks for the loop file; on a stop, the loop removes its file,
+// then reads the stop file again. So a start that comes as the loop reads its stop either finds the
+// loop gone and starts another one, or is seen here: the loop writes its file again (`write`) and
+// goes on. A stop holds until the next start, even during the loop's last pass.
+function loopMustEnd(token, info, write) {
+  if (testRunOver()) return true;
+  const loop = readLoopFile();
+  if (loop && !isOurs(loop, token)) return true;
+  if ((loop || info).version !== packageVersion()) return true;
+  if (!fs.existsSync(loopStopFile())) return false;
+  removeOwnLoopFile(token);
+  if (fs.existsSync(loopStopFile())) return true;
+  write();
+  return false;
+}
+
+// `relaylead watcher loop`: a full pass, then a wait of everySeconds, again and again. Its file,
+// watcher-loop.json, is written at its start, after each pass, and every 30 s by a timer of its own,
+// so a long pass does not make it look gone. After a pass that found no mission to watch, the file is
+// removed before the missions are counted again: a launch that came meanwhile either sees the loop
+// gone and starts another one, or has written its mission.json before the count. On its way out,
+// the loop removes its file, if it is still its own. An error that ends it is written to watcher.log.
+async function loop() {
+  const token = { pid: process.pid, startedAt: new Date().toISOString() };
+  const info = { ...token, version: packageVersion(), beatAt: null, lastPassAt: null, everySeconds: watcherSettings().everySeconds };
+  const write = () => {
+    info.beatAt = new Date().toISOString();
+    writeJson(loopFile(), info);
+  };
+  write();
+  const beat = setInterval(() => {
+    try {
+      const current = readLoopFile();
+      if (!current || isOurs(current, token)) write();
+    } catch {
+      // the next beat writes it
+    }
+  }, LOOP_BEAT_MS);
+  try {
+    for (;;) {
+      let result = null;
+      try {
+        result = await module.exports.runPass();
+      } catch (err) {
+        watchLog(null, 'error', `pass: ${err.message}`);
+      }
+      if (loopMustEnd(token, info, write)) return;
+      info.lastPassAt = new Date().toISOString();
+      write();
+      if (result && result.outcome === 'done' && result.missions === 0) {
+        removeOwnLoopFile(token);
+        if (missionsToWatch() === 0 || loopMustEnd(token, info, write)) return;
+        write();
+      }
+      for (let step = 0; step < info.everySeconds; step++) {
+        await sleep(LOOP_STEP_MS);
+        if (loopMustEnd(token, info, write)) return;
+      }
+    }
+  } catch (err) {
+    watchLog(null, 'error', `loop: ${err.message}`);
+    throw err;
+  } finally {
+    clearInterval(beat);
+    removeOwnLoopFile(token);
+  }
+}
+
+// {running, since, lastPassAt}: running while the loop file has a beat less than 90 s old.
+function watcherRunning() {
+  const loop = readLoopFile();
+  const beatAt = loop ? Date.parse(loop.beatAt) : NaN;
+  if (!(Date.now() - beatAt < LOOP_RUNNING_MS)) return { running: false, since: null, lastPassAt: null };
+  return { running: true, since: loop.startedAt, lastPassAt: loop.lastPassAt || null };
+}
+
+// Starts the loop: 'started' once its file has come (5 s at most), 'already' while one runs,
+// 'nothing' when no mission is to be watched. A start first removes watcher-loop.stop, the user's
+// stop: a loop still running then goes on, one that has read it already has removed its file, and
+// another is started (loopMustEnd). With unlessStopped (the targeted passes), that stop is kept and
+// nothing is started: 'stopped-by-user'.
+async function startWatcher({ unlessStopped = false } = {}) {
+  if (unlessStopped && fs.existsSync(loopStopFile())) return 'stopped-by-user';
+  // Not removeFile: a stop that cannot be lifted must not go unsaid.
+  withWindowsRetry(() => fs.rmSync(loopStopFile(), { force: true }));
+  if (watcherRunning().running) return 'already';
+  if (missionsToWatch() === 0) return 'nothing';
+  await spawnDetached(['watcher', 'loop']);
+  const giveUpAt = Date.now() + START_WAIT_MS;
+  while (!watcherRunning().running) {
+    if (Date.now() >= giveUpAt) throw codedError('watcher-not-started', { seconds: START_WAIT_MS / 1000 });
+    await sleep(50);
+  }
+  return 'started';
+}
+
+// Asks the loop to stop with watcher-loop.stop, which stays until the next start: 'stopped' once the
+// loop has removed its file (10 s at most), 'requested' when it is still in a long pass (it ends at the
+// end of that pass), 'not-running' when no loop runs.
+async function stopWatcher() {
+  writeText(loopStopFile(), `${new Date().toISOString()}\n`);
+  if (!watcherRunning().running) return 'not-running';
+  const giveUpAt = Date.now() + STOP_WAIT_MS;
+  while (fs.existsSync(loopFile())) {
+    if (Date.now() >= giveUpAt) return 'requested';
+    await sleep(100);
+  }
+  return 'stopped';
+}
+
+module.exports = { observe, act, tendMission, runPass, stopPresent, loop, watcherRunning, startWatcher, stopWatcher };

@@ -1,6 +1,6 @@
 const path = require('node:path');
 const { t, codedError } = require('./messages');
-const { loadConfig } = require('./config');
+const { loadConfig, watcherSettings } = require('./config');
 const {
   createMission,
   listMissions,
@@ -16,7 +16,7 @@ const {
 const { listTasks, startTask, retryTask, deliverTask, finishTask } = require('./tasks');
 const { waitForChanges } = require('./wait');
 const { askQuestion, answerQuestion, listQuestions } = require('./questions');
-const { runPass, tendMission, stopPresent } = require('./watcher');
+const { runPass, tendMission, stopPresent, loop, watcherRunning, startWatcher, stopWatcher } = require('./watcher');
 const { watchLogSize, watchLogSince } = require('./watch-log');
 const { home } = require('./paths');
 const pkg = require('../package.json');
@@ -95,8 +95,24 @@ commands.launch = async (args, io) => {
     agent: options.agent,
   });
   io.out.write(mission.name + '\n');
+  await startWatcherAfterLaunch(io);
   return 0;
 };
+
+// The loop of the watcher, started by launch unless watcher.autoStart is false (or RELAYLEAD_WATCHER
+// is off). It runs on its own, unasked: it says so on stderr, where the mission's name, alone on
+// stdout, is not mixed with it. A loop that could not be started does not fail the launch.
+async function startWatcherAfterLaunch(io) {
+  const lang = language(io);
+  try {
+    const settings = watcherSettings();
+    if (!settings.autoStart) return;
+    if ((await startWatcher()) === 'started') io.err.write(t('watcherStarted', { seconds: settings.everySeconds }, lang));
+  } catch (err) {
+    const detail = err.vars ? t(err.code, err.vars, lang) : err.message;
+    io.err.write(t('watcherNotStarted', { detail }, lang));
+  }
+}
 
 commands.list = async (args, io) => {
   const missions = listMissions();
@@ -260,14 +276,39 @@ commands.answer = async (args, io) => {
 };
 
 // `relaylead watcher run`: one full pass over the missions, or with --mission a pass over that one
-// alone, without the pass lock. Prints the lines the pass added to watcher.log.
+// alone, without the pass lock. Prints the lines the pass added to watcher.log. `start`, `stop` and
+// `status` drive the loop; `loop` is the loop itself, started by `start` (internal, not in the help).
 commands.watcher = async (args, io) => {
   refuseInSession('watcher', io);
   const { positional, options } = parseArgs(args);
-  if (positional.length !== 1 || positional[0] !== 'run' || options.mission === '') {
-    throw codedError('usage', { usage: 'relaylead watcher run [--mission <name>]' });
+  const [action] = positional;
+  const known = ['run', 'start', 'stop', 'status', 'loop'].includes(action);
+  if (positional.length !== 1 || !known || options.mission === '' || (action !== 'run' && options.mission !== undefined)) {
+    throw codedError('usage', { usage: 'relaylead watcher run [--mission <name>] | start | stop | status' });
   }
   const lang = language(io);
+  if (action === 'loop') {
+    await loop();
+    return 0;
+  }
+  if (action === 'start') {
+    const outcome = await startWatcher();
+    if (outcome === 'started') io.out.write(t('watcherStarted', { seconds: watcherSettings().everySeconds }, lang));
+    else if (outcome === 'already') io.out.write(t('watcherAlreadyRunning', { since: watcherRunning().since }, lang));
+    else io.out.write(t('watcherNothingToWatch', {}, lang));
+    return 0;
+  }
+  if (action === 'stop') {
+    const outcome = await stopWatcher();
+    const key = { stopped: 'watcherStopped', requested: 'watcherStopRequested' }[outcome] || 'watcherNotRunning';
+    io.out.write(t(key, {}, lang));
+    return 0;
+  }
+  if (action === 'status') {
+    const { running, since, lastPassAt } = watcherRunning();
+    io.out.write(running ? t('watcherStatusRunning', { since, lastPass: lastPassAt || '-' }, lang) : t('watcherNotRunning', {}, lang));
+    return 0;
+  }
   const logSize = watchLogSize();
   if (options.mission) {
     readMission(options.mission); // mission-unknown

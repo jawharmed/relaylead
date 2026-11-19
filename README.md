@@ -47,6 +47,19 @@ Design documents are in French for now:
 - [Roadmap to v1](docs/plans/2026-11-15-feuille-de-route.md)
 - [Spike results on Claude Code](docs/spike-results.md)
 
+## Continuity
+
+A watcher, without AI, looks after the missions that are not finished: it stops a second lead, or a crew session whose task no longer runs, and writes what it sees (a failed session, a silent lead) to its log.
+
+- `relaylead launch` starts the watcher's loop, and says so on stderr: it passes over the missions every `watcher.everySeconds` seconds (`300` by default) and ends by itself once no mission needs it. `"watcher": {"autoStart": false}` turns this off.
+- `relaylead watcher start` starts the loop; `relaylead watcher stop` stops it, and that stop holds until the next `relaylead watcher start` or `relaylead launch`; `relaylead watcher status` says whether it runs, and when it last passed.
+- `relaylead watcher run` makes one pass now, `--mission <mission>` for that mission alone.
+- `watcher.helpers` (`true` by default): the short passes Relaylead starts on its own right after an event of a mission; `false` turns them off.
+- An empty file `~/.relaylead/STOP` makes the watcher do nothing until you remove it; its loop keeps running.
+- Each action of the watcher is a line of `~/.relaylead/watcher.log`, moved to `watcher.log.1` past 1 MiB.
+
+The `watcher` settings are read from `~/.relaylead/config.json` only. The loop does not survive a restart of the machine until `relaylead install` (to come) hands it to launchd: after a restart, run `relaylead watcher start`.
+
 ## Develop
 
 Run the tests with `npm test` (Node.js 18 or newer, no dependencies to install).
@@ -93,6 +106,19 @@ Les commits propres à Relaylead sur la branche d'intégration (la fusion de cha
 ### Dépendances
 
 Le profil `developer` n'a droit qu'à `npm ci --ignore-scripts` et `npm install --ignore-scripts`, tels quels : les scripts d'installation exécutent le code de paquets tiers avec vos droits, et le garde-fou ne voit que la commande `npm`. C'est un garde-fou contre l'habitude d'un agent qui installe « comme d'habitude », pas contre une session hostile : `node *`, `npm test` et les alias git exécutent toujours du code. Un projet qui a besoin des scripts ajoute, en connaissance de cause, `"guard": {"allow": ["Bash(npm ci)"]}` à `.relaylead.json`. Le mode `all` reste un choix explicite qui ne bloque rien : `npm ci` y est permis et **lance les scripts d'installation**.
+
+## Continuité
+
+Un veilleur, sans IA, veille sur les missions qui ne sont pas finies : il arrête un second lead, ou une session d'équipier dont la tâche ne tourne plus, et écrit dans son journal ce qu'il voit (une session en échec, un lead silencieux).
+
+- `relaylead launch` lance la boucle du veilleur, et le dit sur la sortie d'erreur : elle passe sur les missions toutes les `watcher.everySeconds` secondes (`300` par défaut) et s'arrête d'elle-même quand aucune mission n'en a besoin. `"watcher": {"autoStart": false}` coupe ce lancement.
+- `relaylead watcher start` lance la boucle ; `relaylead watcher stop` l'arrête, et cet arrêt tient jusqu'au prochain `relaylead watcher start` ou `relaylead launch` ; `relaylead watcher status` dit si elle tourne, et quand elle est passée pour la dernière fois.
+- `relaylead watcher run` fait un passage tout de suite, `--mission <mission>` pour cette seule mission.
+- `watcher.helpers` (`true` par défaut) : les courts passages que Relaylead lance de lui-même juste après un événement d'une mission ; `false` les coupe.
+- Un fichier vide `~/.relaylead/STOP` fait que le veilleur ne fait rien tant que vous ne l'avez pas retiré ; sa boucle continue de tourner.
+- Chaque action du veilleur est une ligne de `~/.relaylead/watcher.log`, déplacé vers `watcher.log.1` au-delà de 1 Mio.
+
+Les réglages `watcher` se lisent dans `~/.relaylead/config.json` seulement. La boucle ne survit pas au redémarrage de la machine tant que `relaylead install` (à venir) ne l'a pas confiée à launchd : après un redémarrage, lancez `relaylead watcher start`.
 
 ## Développer
 
