@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const { writeJson, writeText, readJson, writeRetryMs } = require('../core/store');
+const { writeJson, writeText, writeTextExclusive, readJson, writeRetryMs } = require('../core/store');
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'relaylead-store-'));
@@ -19,6 +19,15 @@ test('writeJson then readJson round-trips', () => {
 test('readJson returns the fallback for a missing file', () => {
   const file = path.join(tmpDir(), 'missing.json');
   assert.deepStrictEqual(readJson(file, { none: true }), { none: true });
+});
+
+test('writeTextExclusive refuses a file that exists', () => {
+  const file = path.join(tmpDir(), 'mail', 'one.md');
+  assert.strictEqual(writeTextExclusive(file, 'first'), true);
+  assert.strictEqual(writeTextExclusive(file, 'second'), false);
+  assert.strictEqual(fs.readFileSync(file, 'utf8'), 'first');
+  // No temporary file is left behind, written or refused.
+  assert.deepStrictEqual(fs.readdirSync(path.dirname(file)), ['one.md']);
 });
 
 test('readJson names the file when JSON is invalid', () => {

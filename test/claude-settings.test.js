@@ -109,3 +109,13 @@ test('the session settings add the heartbeat hook and the measuring status line'
     command: `"${process.execPath}" "${path.join(dir, 'core', 'hooks', 'statusline.js')}"`,
   });
 });
+
+test('the session settings add the Stop and StopFailure hooks', () => {
+  const dir = path.join('C:', 'Program Files', 'relay lead');
+  const settings = settingsFor({ packageDir: dir });
+  const entry = (script) => [
+    { hooks: [{ type: 'command', command: `"${process.execPath}" "${path.join(dir, 'core', 'hooks', `${script}.js`)}"` }] },
+  ];
+  assert.deepStrictEqual(settings.hooks.Stop, entry('stop'));
+  assert.deepStrictEqual(settings.hooks.StopFailure, entry('stopfailure'));
+});

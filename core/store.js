@@ -52,13 +52,13 @@ function writeJson(file, data, options) {
   writeText(file, JSON.stringify(data, null, 2) + '\n', options);
 }
 
-// Like writeJson, but only if the file does not exist yet: returns false when someone else wrote it first.
-// The data goes to a temporary file, then a hard link makes it appear complete, or fails if the file exists.
-function writeJsonExclusive(file, data) {
+// Like writeText, but only if the file does not exist yet: returns false when someone else wrote it first.
+// The text goes to a temporary file, then a hard link makes it appear complete, or fails if the file exists.
+function writeTextExclusive(file, text) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
   try {
-    fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n');
+    fs.writeFileSync(tmp, text);
     withWindowsRetry(() => fs.linkSync(tmp, file));
     return true;
   } catch (err) {
@@ -67,6 +67,10 @@ function writeJsonExclusive(file, data) {
   } finally {
     removeQuietly(tmp);
   }
+}
+
+function writeJsonExclusive(file, data) {
+  return writeTextExclusive(file, JSON.stringify(data, null, 2) + '\n');
 }
 
 function readJson(file, fallback) {
@@ -84,4 +88,4 @@ function readJson(file, fallback) {
   }
 }
 
-module.exports = { writeText, writeRetryMs, writeJson, writeJsonExclusive, readJson, withWindowsRetry };
+module.exports = { writeText, writeTextExclusive, writeRetryMs, writeJson, writeJsonExclusive, readJson, withWindowsRetry };

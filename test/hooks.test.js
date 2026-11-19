@@ -3,8 +3,11 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+const http = require('node:http');
+const { spawn, spawnSync } = require('node:child_process');
 const { writeJson } = require('../core/store');
+const { sendMail, readMail } = require('../core/mailbox');
+const { readReadings } = require('../core/readings');
 const { DEFAULTS } = require('../core/config');
 const { tmpDir } = require('../fixtures/helpers');
 const { gitRepo } = require('../fixtures/git');
@@ -228,4 +231,124 @@ test('a status line with an empty usage is no reading, and sets no base', () => 
   call({ input_tokens: 2, cache_creation_input_tokens: 9505, cache_read_input_tokens: 33240 });
   call({});
   assert.deepStrictEqual([reading(home, 'context').contextTokens, reading(home, 'context').baseTokens], [42747, 42747]);
+});
+
+const STOP = path.join(__dirname, '..', 'core', 'hooks', 'stop.js');
+const STOPFAILURE = path.join(__dirname, '..', 'core', 'hooks', 'stopfailure.js');
+
+function readMailNames(home, ...folder) {
+  const dir = path.join(home, 'missions', 'demo', 'mailbox', '0123abcd', ...folder);
+  return fs.readdirSync(dir).filter((name) => name.endsWith('.md')).sort();
+}
+
+test('the posttool hook passes the mail on as additional context', () => {
+  const home = missionHome({});
+  const env = { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'demo' };
+  process.env.RELAYLEAD_HOME = home;
+  sendMail('demo', '0123abcd', 'first');
+  sendMail('demo', '0123abcd', 'second');
+
+  const out = runHook(POSTTOOL, { session_id: SESSION_ID, tool_name: 'Bash', transcript_path: TRANSCRIPT }, env);
+  assert.deepStrictEqual(JSON.parse(out), {
+    hookSpecificOutput: {
+      hookEventName: 'PostToolUse',
+      additionalContext: 'Message from Relaylead: first\n\nMessage from Relaylead: second',
+    },
+  });
+  assert.strictEqual(reading(home, 'heartbeats').contextTokens, 42366);
+  assert.deepStrictEqual(readMailNames(home), []);
+  assert.strictEqual(readMailNames(home, 'read').length, 2);
+  // The mail is passed on once: the next action has none.
+  assert.strictEqual(runHook(POSTTOOL, { session_id: SESSION_ID, tool_name: 'Bash' }, env), '');
+});
+
+test('a mail read but not marked is passed on again', () => {
+  const home = missionHome({});
+  const env = { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'demo' };
+  process.env.RELAYLEAD_HOME = home;
+  sendMail('demo', '0123abcd', 'do it again');
+  // As by a hook killed after it printed the mail, before it filed it as read.
+  assert.strictEqual(readMail('demo', '0123abcd').length, 1);
+
+  const out = runHook(POSTTOOL, { session_id: SESSION_ID, tool_name: 'Bash' }, env);
+  assert.strictEqual(JSON.parse(out).hookSpecificOutput.additionalContext, 'Message from Relaylead: do it again');
+  assert.deepStrictEqual(readMailNames(home), []);
+});
+
+test('the stop hook keeps the turn going while mail waits', () => {
+  const home = missionHome({});
+  const env = { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'demo' };
+  process.env.RELAYLEAD_HOME = home;
+  sendMail('demo', '0123abcd', 'task a is done');
+  const input = { session_id: SESSION_ID, hook_event_name: 'Stop', transcript_path: TRANSCRIPT, stop_hook_active: false };
+
+  assert.deepStrictEqual(JSON.parse(runHook(STOP, input, env)), {
+    decision: 'block',
+    reason: 'Message from Relaylead: task a is done',
+  });
+  const { at, ...heartbeat } = reading(home, 'heartbeats');
+  assert.deepStrictEqual(heartbeat, { tool: '(stop)', contextTokens: 42366, baseTokens: 42366 });
+  assert.deepStrictEqual(readMailNames(home), []);
+
+  // The mail is taken: the turn may end this time.
+  fs.rmSync(path.join(home, 'missions', 'demo', 'heartbeats'), { recursive: true });
+  assert.strictEqual(runHook(STOP, { ...input, stop_hook_active: true }, env), '');
+  assert.strictEqual(reading(home, 'heartbeats').tool, '(stop)');
+  // Without a mission folder, nothing is written and the turn ends.
+  assert.strictEqual(runHook(STOP, input, { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'gone' }), '');
+  assert.strictEqual(fs.existsSync(path.join(home, 'missions', 'gone')), false);
+});
+
+test('the stopfailure hook records the error and its message', () => {
+  const home = missionHome({});
+  const env = { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'demo' };
+  const message = "You've hit your 5-hour limit · resets 2:54am (Europe/Paris)";
+  const input = { session_id: SESSION_ID, hook_event_name: 'StopFailure', error: 'rate_limit', last_assistant_message: message };
+
+  assert.strictEqual(runHook(STOPFAILURE, input, env), '');
+  const { at, ...failure } = reading(home, 'failures');
+  assert.deepStrictEqual(failure, { error: 'rate_limit', message });
+  assert.match(at, /^\d{4}-\d\d-\d\dT\S+Z$/);
+  process.env.RELAYLEAD_HOME = home;
+  assert.strictEqual(readReadings('demo', '0123abcd').failure.error, 'rate_limit');
+
+  // A failure without its fields is still recorded; without a session id or a mission, nothing.
+  runHook(STOPFAILURE, { session_id: SESSION_ID }, env);
+  assert.deepStrictEqual([reading(home, 'failures').error, reading(home, 'failures').message], [null, null]);
+  assert.strictEqual(runHook(STOPFAILURE, { error: 'rate_limit' }, env), '');
+  assert.strictEqual(runHook(STOPFAILURE, input, { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'gone' }), '');
+  assert.strictEqual(runHook(STOPFAILURE, 'not json', env), '');
+  assert.deepStrictEqual(fs.readdirSync(path.join(home, 'missions', 'demo', 'failures')), ['0123abcd.json']);
+  assert.strictEqual(fs.existsSync(path.join(home, 'missions', 'gone')), false);
+});
+
+test('the fake 429 server answers a rate limit with its reset headers', async (t) => {
+  const server = spawn(process.execPath, [path.join(__dirname, '..', 'fixtures', 'fake-429.js')], { stdio: ['ignore', 'pipe', 'inherit'] });
+  t.after(() => server.kill());
+  const port = await new Promise((resolve, reject) => {
+    let out = '';
+    server.stdout.on('data', (chunk) => {
+      out += chunk;
+      if (out.includes('\n')) resolve(Number(out.trim()));
+    });
+    server.once('error', reject);
+    server.once('exit', (code) => reject(new Error(`fake-429 exited with ${code}`)));
+  });
+  assert.ok(port > 0);
+
+  const response = await new Promise((resolve, reject) => {
+    const request = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/v1/messages' }, (res) => {
+      let body = '';
+      res.on('data', (chunk) => (body += chunk));
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body }));
+    });
+    request.once('error', reject);
+    request.end('{}');
+  });
+  assert.strictEqual(response.status, 429);
+  assert.strictEqual(response.headers['retry-after'], '3600');
+  assert.strictEqual(response.headers['anthropic-ratelimit-unified-status'], 'rejected');
+  const reset = Number(response.headers['anthropic-ratelimit-unified-reset']);
+  assert.ok(Math.abs(reset - (Math.floor(Date.now() / 1000) + 3600)) <= 5, `reset ${reset}`);
+  assert.strictEqual(JSON.parse(response.body).error.type, 'rate_limit_error');
 });
