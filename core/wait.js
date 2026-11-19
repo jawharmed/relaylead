@@ -37,53 +37,72 @@ function snapshotFile(name) {
 // Judged on the state the adapter reports, never on the pid alone: a Claude session can be done
 // with a live process, or working without one while it restarts. Only called for a task without a
 // result: a crew waiting at this point has stopped short of `relaylead task done|fail`.
-function crewEnded(shortId, session, lostSince, previousLostSince) {
+function crewEnded(shortId, session, lostSince, previousLostSince, now) {
   if (session && ENDED_STATES.includes(session.state)) return true;
   const lost = !session || (session.state === 'working' && !session.pid) || session.state === 'waiting';
   if (!lost) return false;
-  return graceOver(shortId, lostSince, previousLostSince);
+  return graceOver(shortId, lostSince, previousLostSince, now);
 }
 
 // Notes when `key` was first seen lost; true once it has been lost for the whole grace.
-function graceOver(key, lostSince, previousLostSince) {
-  lostSince[key] = previousLostSince[key] || new Date().toISOString();
-  return Date.now() - Date.parse(lostSince[key]) >= GRACE_MS;
+function graceOver(key, lostSince, previousLostSince, now) {
+  lostSince[key] = previousLostSince[key] || new Date(now).toISOString();
+  return now - Date.parse(lostSince[key]) >= GRACE_MS;
 }
 
-// The current view of the mission, after marking the tasks whose crew ended without a result.
-// `sessions` were listed before this call: a crew member writes its result before it ends, so when
-// its session is seen ended there, its result is already visible in listTasks below.
-function look(name, sessions, previousLostSince) {
+// The view of the mission at `now` (ms), and the tasks whose crew ended without a result (toFail),
+// shown failed in the view already. Writes nothing: waitForChanges marks them failed, the watcher
+// does it under the mission lock. `sessions` were listed before this call: a crew member writes its
+// result before it ends, so when its session is seen ended there, its result is already visible in
+// listTasks below. `lostSince` is when each session (or, under task:<id>, each running task without
+// a session) was first seen lost; the one returned holds those still lost. `tasks` is listTasks.
+function viewOf(name, sessions, lostSince, now) {
   const tasks = listTasks(name);
-  // Checked after those reads: a stop is written before its sessions are killed, so a crew seen
-  // ended by a stop is never taken for a crew failure. A wait left behind by a stopped lead ends here.
-  if (getState(name) === 'stopped') throw codedError('mission-stopped', { mission: name });
-  const lostSince = {};
+  const previous = lostSince || {};
+  const stillLost = {};
+  const toFail = [];
   for (const task of tasks) {
     if (task.state !== 'running') continue;
     // A retry between the change of attempt and its launch, or one a crash interrupted there. The
     // session stays null once failed: `relaylead task retry` launches the same attempt again.
     if (task.session === null) {
-      if (graceOver(`task:${task.id}`, lostSince, previousLostSince)) {
-        markFailed(name, task.id, RETRY_INTERRUPTED);
-        task.state = 'failed';
-      }
+      if (graceOver(`task:${task.id}`, stillLost, previous, now)) toFail.push({ id: task.id, shortId: null, summary: RETRY_INTERRUPTED });
       continue;
     }
     const session = sessions.find((candidate) => candidate.shortId === task.session);
-    if (crewEnded(task.session, session, lostSince, previousLostSince)) {
-      markFailed(name, task.id, NO_RESULT);
-      task.state = 'failed';
-    }
+    if (crewEnded(task.session, session, stillLost, previous, now)) toFail.push({ id: task.id, shortId: task.session, summary: NO_RESULT });
   }
+  const failing = new Set(toFail.map((one) => one.id));
   return {
     tasks,
     view: {
-      tasks: Object.fromEntries(tasks.map((task) => [task.id, task.state])),
+      tasks: Object.fromEntries(tasks.map((task) => [task.id, failing.has(task.id) ? 'failed' : task.state])),
       questions: Object.fromEntries(listQuestions(name).map((question) => [question.id, question.state])),
-      lostSince,
     },
+    toFail,
+    lostSince: stillLost,
   };
+}
+
+// The key of a view: the state and attempt of each task, the state of each question, keys sorted.
+// A task failed again after a retry makes another key than its first failure.
+function viewKeyOf(tasks, view) {
+  const byId = [...tasks].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return JSON.stringify({
+    questions: Object.fromEntries(Object.keys(view.questions).sort().map((id) => [id, view.questions[id]])),
+    tasks: Object.fromEntries(byId.map((task) => [task.id, { attempt: task.attempt, state: view.tasks[task.id] }])),
+  });
+}
+
+function readSnapshot(name) {
+  return { ...EMPTY_SNAPSHOT, ...readJson(snapshotFile(name), {}) };
+}
+
+// What the next `relaylead wait` would report: the view compared to the last snapshot of wait.
+// Writes nothing. `lostSince` is the caller's own (the watcher keeps it in watch.json).
+function unseenChanges(name, sessions, lostSince, now) {
+  const { tasks, view, toFail, lostSince: stillLost } = viewOf(name, sessions, lostSince, now);
+  return { changes: diff(readSnapshot(name), view), viewKey: viewKeyOf(tasks, view), toFail, lostSince: stillLost };
 }
 
 function diff(before, after) {
@@ -116,7 +135,7 @@ async function stopFinishedCrew(adapter, changes, tasks, sessions) {
 async function waitForChanges(name, timeoutSeconds = DEFAULT_TIMEOUT_S, report = () => {}, { env } = {}) {
   const mission = readMission(name);
   const adapter = getAdapter(mission.agent);
-  const snapshot = { ...EMPTY_SNAPSHOT, ...readJson(snapshotFile(name), {}) };
+  const snapshot = readSnapshot(name);
   const deadline = Date.now() + Math.min(timeoutSeconds, MAX_TIMEOUT_S) * 1000;
   let sessions = null;
   let listedAt = 0;
@@ -127,7 +146,11 @@ async function waitForChanges(name, timeoutSeconds = DEFAULT_TIMEOUT_S, report =
     }
     const refused = currentLeadError(name, env);
     if (refused) throw refused;
-    const { tasks, view } = look(name, sessions, snapshot.lostSince);
+    const { tasks, view, toFail, lostSince } = viewOf(name, sessions, snapshot.lostSince, Date.now());
+    // Checked after those reads: a stop is written before its sessions are killed, so a crew seen
+    // ended by a stop is never taken for a crew failure. A wait left behind by a stopped lead ends here.
+    if (getState(name) === 'stopped') throw codedError('mission-stopped', { mission: name });
+    for (const one of toFail) markFailed(name, one.id, one.summary);
     const changes = diff(snapshot, view);
     if (changes.length > 0 || Date.now() >= deadline) {
       report(changes);
@@ -135,12 +158,12 @@ async function waitForChanges(name, timeoutSeconds = DEFAULT_TIMEOUT_S, report =
       // Checked again: a lead replaced during the stops leaves the changes to its successor's wait.
       const replaced = currentLeadError(name, env);
       if (replaced) throw replaced;
-      writeJson(snapshotFile(name), view);
+      writeJson(snapshotFile(name), { ...view, lostSince });
       return changes;
     }
-    snapshot.lostSince = view.lostSince;
+    snapshot.lostSince = lostSince;
     await sleep(POLL_MS);
   }
 }
 
-module.exports = { waitForChanges };
+module.exports = { waitForChanges, viewOf, unseenChanges };

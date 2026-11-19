@@ -12,15 +12,17 @@ const { readJson, writeJson, writeText, withWindowsRetry } = require('./store');
 const { codedError } = require('./messages');
 const { watcherSettings } = require('./config');
 const { spawnDetached } = require('./detached');
-const { listSessions, isAlive } = require('./sessions');
+const { listSessions, recordSession, isAlive } = require('./sessions');
 const { readReadings } = require('./readings');
 const { stopSessionsAndWait } = require('./missions');
-const { listTasks } = require('./tasks');
+const { listTasks, markFailed } = require('./tasks');
+const { unseenChanges } = require('./wait');
+const { unreadCount } = require('./mailbox');
 const { writeJournal } = require('./guard');
 const { withMissionLock, takeOverStaleLock, EMPTY_LOCK_STALE_MS } = require('./mission-lock');
 const { sleep } = require('./timing');
 const { watchLog, watchLogFile } = require('./watch-log');
-const { decide, emptyWatch } = require('./watcher-rules');
+const { decide, emptyWatch, wakeWithoutEffect } = require('./watcher-rules');
 const { getAdapter } = require('../adapters');
 
 const FINISHED = ['done', 'stopped'];
@@ -139,13 +141,30 @@ async function observe(name) {
   } catch (err) {
     tasksError = err.message;
   }
+  const now = Date.now();
+  // What the lead has not seen, whatever its state (wait.js, which writes nothing); null leaves rules
+  // 5 and 14 out of this pass. A mission stopping after its breaker tripped has only its stop to replay.
+  let unseen = null;
+  if (rows && tasks && !record.stopping) {
+    try {
+      unseen = unseenChanges(name, rows, watch.crewLostSince, now);
+    } catch (err) {
+      tasksError = err.message;
+    }
+  }
   const registry = listSessions(name);
   const readings = {};
   for (const shortId of new Set([lead.shortId, ...registry.map((session) => session.shortId)])) {
     readings[shortId] = readReadings(name, shortId);
   }
+  // The unread mail of each listed session, and of the lead even when it is not listed: a wake works
+  // on a stopped session.
+  const mail = {};
+  for (const shortId of new Set([lead.shortId, ...(rows || []).map((row) => row.shortId)])) {
+    mail[shortId] = unreadCount(name, shortId);
+  }
   return {
-    now: Date.now(),
+    now,
     mission,
     record,
     lead,
@@ -157,8 +176,8 @@ async function observe(name) {
     tasks,
     readings,
     failures: readFailures(name),
-    unseen: null,
-    mail: {},
+    unseen,
+    mail,
     config: mission.config,
     watch,
   };
@@ -175,12 +194,41 @@ async function act(name, action, watch) {
     } else if (action.type === 'stop-session') {
       logLine(name, action.log);
       await stopSession(name, action.session);
+    } else if (action.type === 'mark-failed') {
+      logLine(name, action.log);
+      markFailed(name, action.id, action.summary);
+    } else if (action.type === 'wake-lead') {
+      logLine(name, action.log);
+      await wakeLead(name, action.reasons, watch);
     } else {
       throw new Error(`unknown action ${action.type}`);
     }
   } catch (err) {
     if (LOCK_GAVE_UP.includes(err.code)) return;
     watchLog(name, 'error', `${action.type}: ${err.message}`);
+  }
+}
+
+// The text of a wake ("Textes envoyés aux sessions").
+function wakeText(reasons) {
+  return `Relaylead woke you: ${reasons.join('; ')}. Carry on with the method: run \`relaylead task list\` first.`;
+}
+
+// Wakes the current lead (lead.json) and records the woken session. A wake that throws is a wake
+// without effect: its motive is due again, after the backoff. A lead woken is no longer lost: its next
+// loss gets a whole grace.
+async function wakeLead(name, reasons, watch) {
+  try {
+    const mission = readJson(missionFile(name, 'mission.json'));
+    const lead = readJson(missionFile(name, 'lead.json'));
+    const session = listSessions(name).find((candidate) => candidate.shortId === lead.shortId);
+    if (!session) throw new Error(`the lead ${lead.shortId} is not in the registry`);
+    const woken = await getAdapter(mission.agent).wake(session, wakeText(reasons));
+    recordSession(name, woken);
+    watch.leadLostSince = null;
+  } catch (err) {
+    Object.assign(watch, wakeWithoutEffect(watch, Date.now()));
+    throw err;
   }
 }
 

@@ -3,18 +3,22 @@ const assert = require('node:assert');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const { execFile } = require('node:child_process');
 const watcher = require('../core/watcher');
 const { run } = require('../core/cli');
 const { t: msg } = require('../core/messages');
 const { home, missionDir } = require('../core/paths');
 const { writeJson, readJson } = require('../core/store');
 const { recordSession, listSessions } = require('../core/sessions');
+const { startTask, listTasks } = require('../core/tasks');
+const { sendMail } = require('../core/mailbox');
 const fake = require('../adapters/fake');
-const { tmpDir, makeIo, waitFor, sessionEnded } = require('../fixtures/helpers');
+const { tmpDir, makeIo, waitFor, sessionEnded, userEnv } = require('../fixtures/helpers');
 const { freshHome, setupProject, writeMission, missionReport } = require('../fixtures/missions');
 
 // A pid no process has: a dead holder, or the process of a session listed by a stubbed agent.
 const DEAD_PID = 2147483646;
+const BIN = path.join(__dirname, '..', 'bin', 'relaylead.js');
 
 function lockFile() {
   return path.join(home(), 'watcher.lock');
@@ -105,10 +109,13 @@ async function launchIdleLead(dir, name) {
   return session;
 }
 
-// Mission demo with its lead and an extra lead, both run by the fake agent.
+// Mission demo with its lead and an extra lead, both run by the fake agent. The lead waits, and its
+// last wait has seen both tasks: nothing wakes it.
 async function demoWithTwoLeads(t) {
   const dir = setupProject(t, 'demo');
   writeMission('demo', dir);
+  writeJson(path.join(missionDir('demo'), 'state.json'), { state: 'waiting' });
+  writeJson(path.join(missionDir('demo'), 'wait-snapshot.json'), { tasks: { a: 'todo', b: 'todo' }, questions: {}, lostSince: {} });
   const current = await launchIdleLead(dir, 'demo/lead/1');
   const extra = await launchIdleLead(dir, 'demo/lead/9');
   writeLead('demo', current);
@@ -399,4 +406,144 @@ test('watcher run is refused in a session and needs a known mission', async () =
     assert.strictEqual(usage.code, 1, args.join(' '));
     assert.match(usage.err, /usage: relaylead watcher run \[--mission <name>\]/);
   }
+});
+
+function stateFile(mission) {
+  return path.join(missionDir(mission), 'state.json');
+}
+
+function watchFile(mission) {
+  return path.join(missionDir(mission), 'watch.json');
+}
+
+// The modification time of every file of the mission folder, and of watcher.log.
+function stamps(mission) {
+  const found = {};
+  const walk = (folder) => {
+    for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
+      const file = path.join(folder, entry.name);
+      if (entry.isDirectory()) walk(file);
+      else found[file] = fs.statSync(file).mtimeMs;
+    }
+  };
+  walk(missionDir(mission));
+  found[logFile()] = fs.statSync(logFile()).mtimeMs;
+  return found;
+}
+
+// `relaylead watcher run --mission demo` in a process of its own, as a targeted pass runs.
+function targetedPass() {
+  return new Promise((resolve, reject) => {
+    execFile(
+      process.execPath,
+      [BIN, 'watcher', 'run', '--mission', 'demo'],
+      { env: { ...userEnv(), RELAYLEAD_HOME: home() }, windowsHide: true, timeout: 60000 },
+      (err, stdout, stderr) => (err ? reject(new Error(`${err.message}\n${stderr}`)) : resolve(stdout)),
+    );
+  });
+}
+
+function leadLog(session) {
+  try {
+    return fs.readFileSync(session.logFile, 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+test('observe writes nothing', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  writeLead('demo', record('demo', 'demo/lead/1', 'lead'));
+  writeJson(stateFile('demo'), { state: 'waiting' });
+  // A crew lost for longer than the grace of wait: its task is to fail, by act alone.
+  const task = await startTask('demo', { id: 'a' });
+  const crew = listSessions('demo').find((session) => session.shortId === task.session);
+  await fake.stop(crew);
+  await waitFor(() => sessionEnded(crew), 30000, 'the crew session to end');
+  writeJson(watchFile('demo'), { crewLostSince: { [crew.shortId]: new Date(Date.now() - 61 * 1000).toISOString() } });
+  fs.writeFileSync(logFile(), '');
+  const before = stamps('demo');
+
+  const obs = await watcher.observe('demo');
+  assert.deepStrictEqual(obs.unseen.toFail, [{ id: 'a', shortId: crew.shortId, summary: 'crew session ended without a result' }]);
+  assert.strictEqual(obs.mail[crew.shortId], 0);
+  const { list } = fake;
+  fake.list = async () => {
+    throw new Error('claude agents timed out');
+  };
+  t.after(() => {
+    fake.list = list;
+  });
+  const failed = await watcher.observe('demo');
+  assert.strictEqual(failed.listError, 'claude agents timed out');
+  assert.strictEqual(failed.unseen, null);
+
+  assert.deepStrictEqual(stamps('demo'), before);
+  assert.strictEqual(listTasks('demo')[0].state, 'running');
+});
+
+test('two targeted passes at once wake the lead once', async (t) => {
+  const dir = setupProject(t, 'demo');
+  fs.writeFileSync(path.join(dir, 'tasks', 'c.md'), '---\ntitle: Third task\n---\n\nWrite the third file.\n');
+  writeMission('demo', dir);
+  writeJson(stateFile('demo'), { state: 'waiting', updatedAt: new Date().toISOString() });
+  const lead = await launchIdleLead(dir, 'demo/lead/1');
+  writeLead('demo', lead);
+  // The test plays the lead: it starts a and c, whose crew members finish them.
+  for (const id of ['a', 'c']) await startTask('demo', { id });
+  const crew = listSessions('demo').filter((session) => session.role === 'crew');
+  await waitFor(
+    () => crew.every(sessionEnded) && listTasks('demo').filter((task) => task.state === 'done').length === 2,
+    30000,
+    'a and c to be done',
+    () => missionReport('demo'),
+  );
+
+  await Promise.all([targetedPass(), targetedPass()]);
+  await waitFor(() => leadLog(lead).includes('woken:'), 30000, 'the lead to be woken', () => missionReport('demo'));
+  const woken = leadLog(lead).split('\n').filter((line) => line.includes('woken:'));
+  assert.strictEqual(woken.length, 1, missionReport('demo'));
+  assert.match(woken[0], /woken: Relaylead woke you: task a is now done; task b is now todo; task c is now done\. Carry on/);
+  const wakeLines = logText().split('\n').filter((line) => / demo wake-lead /.test(line));
+  assert.strictEqual(wakeLines.length, 1, logText());
+  // The second pass found the lead woken already.
+  const watch = readJson(watchFile('demo'));
+  assert.ok(Date.parse(watch.lastLeadActionAt) <= Date.now());
+  assert.strictEqual(watch.lastWakeAt, watch.lastLeadActionAt);
+  assert.ok(watch.lastWakeView);
+  assert.strictEqual(watch.ineffectiveWakes, 0);
+});
+
+test('a wake that throws counts as a wake without effect', async (t) => {
+  freshHome(t);
+  const dir = tmpDir('relaylead-project-');
+  fs.mkdirSync(path.join(dir, 'tasks'));
+  writeMission('demo', dir);
+  const lead = record('demo', 'demo/lead/1', 'lead');
+  writeLead('demo', lead);
+  writeJson(stateFile('demo'), { state: 'waiting' });
+  sendMail('demo', lead.shortId, 'hello');
+  const { list, wake } = fake;
+  fake.list = async () => [{ ...lead, state: 'done', pid: DEAD_PID, idle: true }];
+  fake.wake = async () => {
+    throw new Error('claude --bg --resume failed');
+  };
+  t.after(() => {
+    fake.list = list;
+    fake.wake = wake;
+  });
+
+  const actions = await watcher.tendMission('demo');
+  assert.deepStrictEqual(actions.map((action) => action.type), ['wake-lead']);
+  const watch = readJson(watchFile('demo'));
+  assert.strictEqual(watch.ineffectiveWakes, 1);
+  assert.strictEqual(watch.lastWakeAt, null);
+  assert.ok(Date.parse(watch.lastIneffectiveAt) >= Date.parse(watch.lastLeadActionAt));
+  const lines = logText().split('\n');
+  assert.match(lines[0], new RegExp(`^\\S+ demo wake-lead ${lead.shortId}: mail$`));
+  assert.match(lines[1], /^\S+ demo error wake-lead: claude --bg --resume failed$/);
+  assert.strictEqual(lines.length, 3, logText());
+  // Held back for 15 min: the next pass does nothing.
+  assert.deepStrictEqual(await watcher.tendMission('demo'), []);
 });
