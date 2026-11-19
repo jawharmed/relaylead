@@ -5,10 +5,14 @@ const { home, missionDir } = require('../../core/paths');
 const { writeJson, writeText } = require('../../core/store');
 const { allowedTools } = require('./args');
 
-// Same shape as the spike settings (no matcher). Double quotes: the paths may contain spaces (Windows included).
+// Double quotes: the paths may contain spaces (Windows included).
+function hookCommand(packageDir, script) {
+  return `"${process.execPath}" "${path.join(packageDir, 'core', 'hooks', `${script}.js`)}"`;
+}
+
+// Same shape as the spike settings (no matcher).
 function hookEntry(packageDir, script) {
-  const file = path.join(packageDir, 'core', 'hooks', `${script}.js`);
-  return [{ hooks: [{ type: 'command', command: `"${process.execPath}" "${file}"` }] }];
+  return [{ hooks: [{ type: 'command', command: hookCommand(packageDir, script) }] }];
 }
 
 // Where the mission's `relaylead` shim lives; it comes first on the session's PATH.
@@ -54,7 +58,10 @@ function sessionSettings({ mission, packageDir, profile, permissionMode, env = {
     hooks: {
       PreToolUse: hookEntry(packageDir, 'pretool'),
       PermissionRequest: hookEntry(packageDir, 'permission'),
+      PostToolUse: hookEntry(packageDir, 'posttool'),
     },
+    // Measures the context and its window; it shows nothing. Passed here, never in the user's settings.
+    statusLine: { type: 'command', command: hookCommand(packageDir, 'statusline') },
   };
   // A background session does not inherit the launcher's environment.
   if (process.env.RELAYLEAD_WRITE_RETRY_MS !== undefined) {
