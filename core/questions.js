@@ -1,10 +1,13 @@
-// Questions of the lead to the human. questions/<id>.json is written once, when the lead asks;
-// questions/<id>.answer.json is written only by answerQuestion.
+// Questions to the human, asked by the lead or by the hooks (a permission, an irreversible action).
+// questions/<id>.json is written once, when the question is asked; questions/<id>.answer.json is
+// written only by answerQuestion; questions/<id>.used.json only by the hooks, once a one-time
+// permission is used (core/grants.js).
 const path = require('node:path');
 const fs = require('node:fs');
 const { missionDir, slug } = require('./paths');
 const { writeJsonExclusive, readJson } = require('./store');
 const { codedError } = require('./messages');
+const { notify } = require('./notify');
 
 function questionsDir(mission) {
   return path.join(missionDir(mission), 'questions');
@@ -18,6 +21,10 @@ function answerFile(mission, id) {
   return path.join(questionsDir(mission), `${id}.answer.json`);
 }
 
+function usedFile(mission, id) {
+  return path.join(questionsDir(mission), `${id}.used.json`);
+}
+
 // The recommended option goes first, so the numbers a person sees are the numbers `answer` takes.
 function recommendedFirst(options, recommended) {
   if (recommended === undefined || recommended === null) return { options, recommended: null };
@@ -29,7 +36,8 @@ function recommendedFirst(options, recommended) {
 }
 
 // Asking again with the same key gives the existing question, open or answered: a settled question is never re-asked.
-function askQuestion(mission, { key, text, context, options, recommended }) {
+// `kind` is 'permission' or 'irreversible' for the questions of the hooks, null for the lead's.
+function askQuestion(mission, { key, text, context, options, recommended, kind }) {
   if (!key || !text) throw codedError('bad-question', { detail: 'a key and a text are needed' });
   if (!Array.isArray(options) || options.length < 2) {
     throw codedError('bad-question', { detail: 'give at least two --option' });
@@ -45,12 +53,16 @@ function askQuestion(mission, { key, text, context, options, recommended }) {
     key,
     text,
     context: context || null,
+    kind: kind || null,
     ...recommendedFirst(options, recommended),
     state: 'open',
     askedAt: new Date().toISOString(),
   };
   const created = writeJsonExclusive(questionFile(mission, id), question);
-  if (created) return { id, existing: false };
+  if (created) {
+    notify({ title: `Relaylead: ${mission}`, text: `Question ${id}: ${text}` });
+    return { id, existing: false };
+  }
   // Different keys can make the same id (A.b and a-b): the existing question is not the one asked.
   const stored = readJson(questionFile(mission, id));
   if (stored.key !== key) throw codedError('question-key-clash', { key, id, storedKey: stored.key });
@@ -71,7 +83,7 @@ function listQuestions(mission, { state } = {}) {
     if (err.code !== 'ENOENT') throw err;
   }
   return files
-    .filter((file) => file.endsWith('.json') && !file.endsWith('.answer.json'))
+    .filter((file) => file.endsWith('.json') && !file.endsWith('.answer.json') && !file.endsWith('.used.json'))
     .sort()
     .map((file) => withAnswer(mission, readJson(path.join(questionsDir(mission), file))))
     .filter((question) => !state || question.state === state);
@@ -94,4 +106,4 @@ function answerQuestion(mission, id, choice) {
   return chosen;
 }
 
-module.exports = { askQuestion, answerQuestion, listQuestions };
+module.exports = { askQuestion, answerQuestion, listQuestions, questionFile, answerFile, usedFile };

@@ -12,6 +12,7 @@ const { writeJson, readJson } = require('../core/store');
 const { recordSession, listSessions } = require('../core/sessions');
 const { startTask, listTasks } = require('../core/tasks');
 const { sendMail } = require('../core/mailbox');
+const { askQuestion: ask, listQuestions } = require('../core/questions');
 const fake = require('../adapters/fake');
 const { tmpDir, makeIo, waitFor, sessionEnded, userEnv } = require('../fixtures/helpers');
 const { freshHome, setupProject, writeMission, missionReport } = require('../fixtures/missions');
@@ -862,4 +863,49 @@ test('a crew told its context is full fails its task and the lead retries it', a
   const io = makeIo();
   assert.strictEqual(await run(['task', 'retry', 'a', '--mission', 'demo'], io), 0, io.err.text);
   assert.strictEqual(listTasks('demo')[0].attempt, 2);
+});
+
+test('a pass applies the recommended option of a lead question, and only reminds of a permission one', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeJson(path.join(home(), 'config.json'), { delivery: { type: 'files' }, questions: { onTimeout: 'recommended' } });
+  writeMission('demo', dir);
+  writeLead('demo', record('demo', 'demo/lead/1', 'lead'));
+  writeJson(stateFile('demo'), { state: 'working' });
+  stubAgent(t);
+  ask('demo', { key: 'db', text: 'Which database?', options: ['sqlite', 'postgres'], recommended: 2 });
+  const permission = ask('demo', {
+    key: 'perm-0123456789ab',
+    kind: 'permission',
+    text: 'make build',
+    options: ['Allow once', 'Always allow in this mission', 'Refuse'],
+    recommended: 3,
+  });
+  // A short delay, and the notifications written down by the script of fixtures/.
+  const notifications = path.join(tmpDir(), 'notifications.log');
+  const saved = ['RELAYLEAD_QUESTION_TIMEOUT_MS', 'RELAYLEAD_NOTIFY', 'RELAYLEAD_NOTIFY_BIN', 'RELAYLEAD_NOTIFY_LOG'].map((name) => [name, process.env[name]]);
+  t.after(() => {
+    for (const [name, value] of saved) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+  Object.assign(process.env, {
+    RELAYLEAD_QUESTION_TIMEOUT_MS: '1',
+    RELAYLEAD_NOTIFY_BIN: path.join(__dirname, '..', 'fixtures', 'notify-bin.js'),
+    RELAYLEAD_NOTIFY_LOG: notifications,
+  });
+  delete process.env.RELAYLEAD_NOTIFY;
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.strictEqual((await watcherRun('--mission', 'demo')).code, 0);
+  const questions = Object.fromEntries(listQuestions('demo').map((question) => [question.id, question]));
+  assert.strictEqual(questions['q-db'].answer.choice, 'postgres');
+  assert.strictEqual(questions[permission.id].state, 'open');
+  assert.match(logText(), /question-timeout-applied q-db postgres/);
+  assert.match(logText(), new RegExp(`question-reminder ${permission.id}`));
+  await waitFor(() => fs.existsSync(notifications), 5000, 'the reminder');
+  assert.match(fs.readFileSync(notifications, 'utf8'), /Question q-perm-0123456789ab waits for your answer: make build/);
+  // Reminded once in six hours.
+  await watcherRun('--mission', 'demo');
+  assert.strictEqual(logText().match(/question-reminder/g).length, 1);
 });

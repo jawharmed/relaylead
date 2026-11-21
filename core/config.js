@@ -11,7 +11,9 @@ const DEFAULTS = {
   parallel: 4,
   maxAttempts: 2,
   priority: 'normal',
-  questions: { onTimeout: 'wait' },
+  // A question open for timeoutMinutes: 'wait' only reminds the user, 'recommended' applies its
+  // recommended option, 'skip' its "Skip this task" option (core/watcher-rules.js, rule 30).
+  questions: { onTimeout: 'wait', timeoutMinutes: 60 },
   source: { type: 'tasks-dir', dir: 'tasks' },
   delivery: { type: 'local-merge', branch: 'relaylead/integration', runHooks: true },
   guard: {

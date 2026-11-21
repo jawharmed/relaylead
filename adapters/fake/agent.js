@@ -12,6 +12,7 @@ const { readMail, markRead } = require('../../core/mailbox');
 const { runFileSync } = require('../../core/run-file');
 
 const CLI = path.join(__dirname, '..', '..', 'bin', 'relaylead.js');
+const HOOKS = path.join(__dirname, '..', '..', 'core', 'hooks');
 // A delivery may fail for a moment (a git lock, a folder still busy on Windows): it is tried again
 // at the next turn of the loop, and the lead stops after this many failures.
 const DELIVERY_ATTEMPTS = 3;
@@ -214,7 +215,8 @@ function leadLoop() {
       return;
     }
     let running = tasks.filter((task) => task.state === 'running').length;
-    for (const task of tasks.filter(retryable)) {
+    // A task refused by the guard waits for the user's answer to its question: the user retries it.
+    for (const task of tasks.filter((candidate) => retryable(candidate) && !/\(question q-(perm|irr)-/.test(candidate.summary || ''))) {
       if (running >= mission.config.parallel) break;
       relaylead('task', 'retry', task.id);
       running++;
@@ -239,9 +241,33 @@ function leadLoop() {
   }
 }
 
+// Tries a Bash command the way Claude Code would: the PreToolUse hook first, then the permission
+// hook, each run as `node <hook>` with the tool call as JSON on stdin. The command itself is never
+// run. Returns the refusal message of the first hook that denies it, or null.
+function tryCommand(command) {
+  const input = JSON.stringify({
+    session_id: `fake-${process.env.RELAYLEAD_FAKE_SHORT_ID}`,
+    tool_name: 'Bash',
+    tool_input: { command },
+    cwd: process.cwd(),
+  });
+  const run = (hook) => {
+    const out = logged(`hook ${hook} ${command}`, () =>
+      runFileSync(process.execPath, [path.join(HOOKS, `${hook}.js`)], { input, encoding: 'utf8', windowsHide: true }),
+    );
+    return out.trim() ? JSON.parse(out).hookSpecificOutput : {};
+  };
+  const pretool = run('pretool');
+  if (pretool.permissionDecision === 'deny') return pretool.permissionDecisionReason;
+  const permission = run('permission');
+  return permission.decision.behavior === 'deny' ? permission.decision.message : null;
+}
+
 // Scripted crew member: "works" 1 s on its task, writes <id>.txt in its working folder (committed on
 // its branch, unless the delivery is files), reports it done, ends. A task named in RELAYLEAD_FAKE_FAIL_FIRST
-// (ids separated by commas) is reported failed on its first attempt instead.
+// (ids separated by commas) is reported failed on its first attempt instead. RELAYLEAD_FAKE_TRY, a
+// JSON object {task id: command}, makes the task try that command first (tryCommand): refused, the
+// task is reported failed with the refusal as its summary.
 function crew() {
   const id = process.env.RELAYLEAD_TASK;
   const gate = process.env.RELAYLEAD_FAKE_CREW_GATE;
@@ -267,9 +293,15 @@ function failContextFull(id) {
 
 function work(id) {
   const failFirst = (process.env.RELAYLEAD_FAKE_FAIL_FIRST || '').split(',').includes(id);
+  const command = JSON.parse(process.env.RELAYLEAD_FAKE_TRY || '{}')[id];
   setTimeout(() => {
     if (failFirst && process.env.RELAYLEAD_ATTEMPT === '1') {
       relaylead('task', 'fail', id, '--summary', 'fake failure');
+      return;
+    }
+    const refusal = command ? tryCommand(command) : null;
+    if (refusal) {
+      relaylead('task', 'fail', id, '--summary', refusal);
       return;
     }
     fs.writeFileSync(`${id}.txt`, `fake work on ${id}\n`);

@@ -9,10 +9,14 @@
 // {changes, viewKey, toFail, lostSince}, null without the list or the tasks), mail (unread messages
 // by short id), config, watch (watch.json)}.
 //
+// obs.questions: the open questions (questions.js listQuestions), null when they could not be read.
+//
 // Actions: {type: 'stop-session', session, log}, {type: 'log', text, journal}, {type: 'mark-failed',
 // id, summary, log}, {type: 'wake-lead', reasons, log}, {type: 'relaunch-lead', resume} and
 // {type: 'trip-breaker', afterLock: true}, {type: 'hand-over', reason: 'asked'|'forced'|'idle', note,
-// tokens} and {type: 'mail', shortId, text, log}.
+// tokens}, {type: 'mail', shortId, text, log}, {type: 'answer-question', id, choice, log} (answers it
+// as the user would, and writes `log` to both logs) and {type: 'remind-question', id, text, log} (a
+// notification to the user).
 const { contextOf } = require('./readings');
 
 // An active lead whose last heartbeat is older than this is reported, never stopped.
@@ -37,6 +41,8 @@ const rateLimitHoldMs = () => Number(process.env.RELAYLEAD_RATE_LIMIT_HOLD_MS) |
 // A lead idle while the mission works, silent this long, has ended its turn (a command lasts 10 min
 // at most).
 const INTERRUPT_SILENCE_MS = 11 * 60 * 1000;
+// Rule 30: a question left open is recalled to the user at most this often.
+const QUESTION_REMIND_MS = 6 * 60 * 60 * 1000;
 
 // watch.json, the watcher's memory of a mission. A missing field has this value.
 function emptyWatch() {
@@ -61,6 +67,7 @@ function emptyWatch() {
     silentNoticeFor: null,
     failuresSeen: {},
     tripped: false,
+    notifiedQuestions: {},
   };
 }
 
@@ -166,6 +173,7 @@ function decide(obs) {
     else result.again = Boolean(unseen && unseen.changes.length > 0) || (obs.mail || {})[obs.lead.shortId] > 0;
   }
   if (actions.slice(before).every((action) => action.type === 'log')) adviseLead(obs, watch, status, actions, log);
+  tendQuestions(obs, watch, actions); // rule 30
   return result;
 }
 
@@ -454,6 +462,39 @@ function wakeAllowed(obs, watch, log) {
   return !(count > 0 && obs.now - Date.parse(watch.lastIneffectiveAt) < WAKE_BACKOFF_MS[count - 1]);
 }
 
+// The settings of questions.onTimeout: a wrong value is 'wait', a wrong delay 60 minutes. The delay
+// is shortened by RELAYLEAD_QUESTION_TIMEOUT_MS in the tests; read at each call.
+function questionSettings(config) {
+  const settings = (config && config.questions) || {};
+  const onTimeout = ['wait', 'recommended', 'skip'].includes(settings.onTimeout) ? settings.onTimeout : 'wait';
+  const minutes = Number.isFinite(settings.timeoutMinutes) && settings.timeoutMinutes > 0 ? settings.timeoutMinutes : 60;
+  return { onTimeout, timeoutMs: Number(process.env.RELAYLEAD_QUESTION_TIMEOUT_MS) || minutes * 60 * 1000 };
+}
+
+// Rule 30: each question open for longer than the delay. With 'recommended', its recommended option
+// (always the first) is applied; with 'skip', its "Skip this task" option, or the recommended one.
+// A question about a permission or an irreversible action is never answered for the user, nor is any
+// question with 'wait': the user is reminded, at the end of the delay, then every 6 hours at most.
+function tendQuestions(obs, watch, actions) {
+  const { onTimeout, timeoutMs } = questionSettings(obs.config);
+  for (const question of obs.questions || []) {
+    if (!(obs.now - Date.parse(question.askedAt) >= timeoutMs)) continue;
+    // Judged by the id too: a question q-irr-… or q-perm-… is never answered for the user, whatever its kind.
+    const forTheUser = question.kind === 'permission' || question.kind === 'irreversible' || /^q-(irr|perm)-/.test(question.id);
+    if (!forTheUser && onTimeout !== 'wait') {
+      const skip = question.options.find((option) => option === 'Skip this task');
+      const choice = onTimeout === 'skip' && skip ? skip : question.options[0];
+      actions.push({ type: 'answer-question', id: question.id, choice, log: `question-timeout-applied ${question.id} ${choice}` });
+      continue;
+    }
+    const remindedAt = Date.parse(watch.notifiedQuestions[question.id]);
+    if (obs.now - remindedAt < QUESTION_REMIND_MS) continue;
+    watch.notifiedQuestions[question.id] = iso(obs.now);
+    const text = `Question ${question.id} waits for your answer: ${question.text}`;
+    actions.push({ type: 'remind-question', id: question.id, text, log: `question-reminder ${question.id}` });
+  }
+}
+
 module.exports = {
   decide,
   leadStatus,
@@ -467,4 +508,6 @@ module.exports = {
   restartGraceMs,
   leadQuietMs,
   rateLimitHoldMs,
+  questionSettings,
+  QUESTION_REMIND_MS,
 };

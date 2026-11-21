@@ -3,11 +3,12 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-// A test file run alone (`node --test test/missions.test.js`) starts no watcher loop either, as under
-// `npm test` (fixtures/run-tests.js). Its loops end with it: the file named by RELAYLEAD_TEST_RUN_FILE
+// A test file run alone (`node --test test/missions.test.js`) starts no watcher loop and shows no
+// notification either, as under `npm test` (fixtures/run-tests.js). Its loops end with it: the file named by RELAYLEAD_TEST_RUN_FILE
 // is refreshed every 10 s while this process lives, and goes when it exits; a loop ends once the file
 // is gone or 60 s old (core/watcher.js), so also after a Ctrl-C or a kill -9, which skip 'exit'.
 if (process.env.RELAYLEAD_WATCHER === undefined) process.env.RELAYLEAD_WATCHER = 'off';
+if (process.env.RELAYLEAD_NOTIFY === undefined) process.env.RELAYLEAD_NOTIFY = 'off';
 if (!process.env.RELAYLEAD_TEST_RUN_FILE) {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'relaylead-run-'));
   const file = path.join(folder, 'running');

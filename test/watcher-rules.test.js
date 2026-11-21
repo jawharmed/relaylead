@@ -13,6 +13,8 @@ const {
   restartGraceMs,
   leadQuietMs,
   rateLimitHoldMs,
+  questionSettings,
+  QUESTION_REMIND_MS,
 } = require('../core/watcher-rules');
 
 const MINUTE = 60 * 1000;
@@ -876,4 +878,61 @@ test('a crew member past the hard threshold gets one context-full mail, only wit
 test('a hard handover and a wake never come in the same pass', () => {
   const { actions } = decide(observation({ readings: context(230000), mail: { [LEAD]: 1 } }));
   assert.deepStrictEqual(actions.map((action) => action.type), ['hand-over']);
+});
+
+// Rule 30. A question of the lead asked `ageMs` ago, or of the hooks with `kind`.
+function openQuestion(id, ageMs, fields = {}) {
+  return { id, key: id, text: `about ${id}`, options: ['yes', 'Skip this task'], recommended: 1, kind: null, state: 'open', askedAt: iso(T0 - ageMs), ...fields };
+}
+
+function questionActions(onTimeout, questions, watch = emptyWatch(), now = T0) {
+  const config = onTimeout === undefined ? {} : { questions: { onTimeout, timeoutMinutes: 60 } };
+  const result = decide(observation({ now, config, questions, watch }));
+  return { actions: result.actions.filter((action) => action.type.endsWith('-question')), watch: result.watch };
+}
+
+test('recommended applies the recommended option of a question open past the delay', () => {
+  const { actions } = questionActions('recommended', [openQuestion('q-a', 61 * MINUTE), openQuestion('q-b', 30 * MINUTE)]);
+  assert.deepStrictEqual(actions, [{ type: 'answer-question', id: 'q-a', choice: 'yes', log: 'question-timeout-applied q-a yes' }]);
+});
+
+test('skip applies "Skip this task", or the recommended option without it', () => {
+  const questions = [openQuestion('q-a', 61 * MINUTE), openQuestion('q-b', 61 * MINUTE, { options: ['go', 'stop'] })];
+  const { actions } = questionActions('skip', questions);
+  assert.deepStrictEqual(actions.map((action) => [action.id, action.choice]), [['q-a', 'Skip this task'], ['q-b', 'go']]);
+});
+
+test('wait only reminds, once in six hours', () => {
+  let { actions, watch } = questionActions('wait', [openQuestion('q-a', 61 * MINUTE)]);
+  assert.deepStrictEqual(actions, [
+    { type: 'remind-question', id: 'q-a', text: 'Question q-a waits for your answer: about q-a', log: 'question-reminder q-a' },
+  ]);
+  assert.deepStrictEqual(watch.notifiedQuestions, { 'q-a': iso(T0) });
+  const later = questionActions('wait', [openQuestion('q-a', 61 * MINUTE)], watch, T0 + 5 * 60 * MINUTE);
+  assert.deepStrictEqual(later.actions, []);
+  const next = questionActions('wait', [openQuestion('q-a', 61 * MINUTE)], watch, T0 + QUESTION_REMIND_MS);
+  assert.deepStrictEqual(next.actions.map((action) => action.type), ['remind-question']);
+});
+
+test('a permission or irreversible question is never answered for the user', () => {
+  const questions = [
+    openQuestion('q-irr-0123456789ab', 61 * MINUTE, { kind: 'irreversible', options: ['Refuse', 'Allow once'] }),
+    openQuestion('q-perm-0123456789ab', 61 * MINUTE, { kind: 'permission', options: ['Refuse', 'Allow once', 'Always allow in this mission'] }),
+  ];
+  for (const onTimeout of ['recommended', 'skip']) {
+    const { actions } = questionActions(onTimeout, questions);
+    assert.deepStrictEqual(actions.map((action) => action.type), ['remind-question', 'remind-question'], onTimeout);
+  }
+});
+
+test('an unknown onTimeout value is wait', () => {
+  const { actions } = questionActions('always', [openQuestion('q-a', 61 * MINUTE)]);
+  assert.deepStrictEqual(actions.map((action) => action.type), ['remind-question']);
+  assert.deepStrictEqual(questionSettings({ questions: { onTimeout: 'always', timeoutMinutes: 'x' } }), { onTimeout: 'wait', timeoutMs: 60 * MINUTE });
+});
+
+test('a question q-irr-… or q-perm-… without kind is never answered for the user', () => {
+  const questions = [openQuestion('q-perm-0123456789ab', 61 * MINUTE, { options: ['Always allow in this mission', 'Refuse'] })];
+  const { actions } = questionActions('recommended', questions);
+  assert.deepStrictEqual(actions.map((action) => action.type), ['remind-question']);
 });

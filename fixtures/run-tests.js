@@ -26,7 +26,9 @@ const refresh = setInterval(() => {
   }
 }, 10 * 1000);
 refresh.unref();
-const env = { ...process.env, RELAYLEAD_WATCHER: 'off', RELAYLEAD_TEST_RUN_FILE: testRunFile };
+// RELAYLEAD_NOTIFY=off: no question of the run shows a notification; only the tests of notify.js
+// remove it, with a script of fixtures/ in place of osascript.
+const env = { ...process.env, RELAYLEAD_WATCHER: 'off', RELAYLEAD_NOTIFY: 'off', RELAYLEAD_TEST_RUN_FILE: testRunFile };
 
 function endTestRun() {
   try {

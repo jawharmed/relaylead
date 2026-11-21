@@ -420,6 +420,22 @@ test('a Grep glob naming a secret or the state folder is refused', () => {
   assert.deepStrictEqual(grep({ pattern: 'x', glob: '*.{ts,js}' }), ALLOW);
 });
 
+test('a Grep glob of several patterns is refused when one of them is (#60)', () => {
+  const grep = (glob) => checkToolUse({ tool_name: 'Grep', tool_input: { pattern: 'KEY', glob }, cwd: tmpDir() }, GUARD);
+  assertDenied(grep('*.js .env'), 'access to secret file .env');
+  assertDenied(grep('*.js,.env'), 'access to secret file .env');
+  assert.deepStrictEqual(grep('*.js *.ts'), ALLOW);
+});
+
+test('a Grep without glob on a parent of the state folder is refused', () => {
+  const { parent, stateDir } = stateLayout();
+  const project = tmpDir();
+  const grep = (tool_input) => checkToolUse({ tool_name: 'Grep', tool_input, cwd: project }, GUARD, stateDir);
+  assertDenied(grep({ pattern: 'x', path: parent }), 'access to the mission state folder');
+  fs.mkdirSync(path.join(project, 'src'));
+  assert.deepStrictEqual(grep({ pattern: 'x', path: path.join(project, 'src') }), ALLOW);
+});
+
 test('the mission state folder is refused under ~, $HOME or $RELAYLEAD_HOME', (t) => {
   const reason = 'access to the mission state folder';
   // Only paths are compared: nothing is read or written under the real home folder.
@@ -524,4 +540,45 @@ test('the refusal message says what to do next', () => {
     denyMessage('force push'),
     'Blocked by Relaylead: force push. Continue with the rest of the task, one command per call.',
   );
+});
+
+test('actions that cannot be undone are refused as irreversible', () => {
+  const dir = repoOn('relaylead/x');
+  const irreversible = (command, reason) => {
+    assert.deepStrictEqual(bash(command, dir), { decision: 'deny', reason: `irreversible: ${reason}`, irreversible: true });
+  };
+  irreversible('git reset --hard', 'git reset --hard');
+  irreversible('git reset --hard HEAD~1', 'git reset --hard');
+  irreversible('git clean -fd', 'git clean -f');
+  irreversible('git branch -D old', 'git branch -D');
+  irreversible('git branch --delete --force old', 'git branch -D');
+  irreversible('git push --delete origin old', 'git push --delete');
+  irreversible('git push origin :old', 'git push --delete');
+  irreversible('git checkout -- .', 'git checkout -- .');
+  irreversible('git restore .', 'git restore .');
+  irreversible('git stash drop', 'git stash drop');
+  irreversible('git stash clear', 'git stash clear');
+  irreversible('rm -rf ../other', 'recursive delete outside the working folder');
+  irreversible('rm -r ~/projects', 'recursive delete outside the working folder');
+  irreversible('rm -rf .', 'recursive delete outside the working folder');
+  irreversible('rm -rf $DIR', 'recursive delete outside the working folder');
+  // Ordinary work stays allowed.
+  for (const command of ['rm -rf build', 'rm -r ./tmp/cache', 'rm ../notes.txt', 'git reset HEAD~1', 'git clean -n', 'git branch -d old', 'git stash', 'git checkout -- a.js', 'echo git reset --hard']) {
+    assert.deepStrictEqual(bash(command, dir), ALLOW, command);
+  }
+});
+
+test('an absolute refusal is never turned into an irreversible one', () => {
+  const dir = repoOn('relaylead/x');
+  assertDenied(bash('git reset --hard && git push --force origin relaylead/x', dir), 'force push');
+  assertDenied(bash('git reset --hard; cat .env', dir), 'access to secret file .env');
+});
+
+test('an action hash is the same for the same words', () => {
+  const { actionText, actionHash } = require('../core/guard');
+  const text = actionText({ tool_name: 'Bash', tool_input: { command: '  git   reset --hard ' } });
+  assert.strictEqual(text, 'git reset --hard');
+  assert.match(actionHash('Bash', text), /^[0-9a-f]{12}$/);
+  assert.strictEqual(actionHash('Bash', text), actionHash('Bash', 'git reset --hard'));
+  assert.notStrictEqual(actionHash('Bash', text), actionHash('Read', text));
 });
