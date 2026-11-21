@@ -308,3 +308,16 @@ test('a handover note is cut to one line of 500 characters', async (t) => {
   assert.ok(written.startsWith('first line second xxx'));
   assert.ok(written.endsWith('…'));
 });
+
+test('a lead reserved in the same millisecond as lead.json is the one being launched', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  const at = new Date().toISOString();
+  writeJson(missionFile('lead.json'), { sessionId: 'fake-1', shortId: 'aaaa1111', sessionName: 'demo/lead/1', startedAt: at });
+  writeJson(missionFile('lead-launch.json'), { n: 2, name: 'demo/lead/2', at });
+  const io = makeIo(leadEnv('demo/lead/2'));
+  assert.strictEqual(await run(['state', 'set', 'working'], io), 0, io.err.text);
+  const old = makeIo(leadEnv('demo/lead/1'));
+  assert.strictEqual(await run(['state', 'set', 'waiting'], old), 1);
+  assert.match(old.err.text, /demo\/lead\/2 took over/);
+});
