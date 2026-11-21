@@ -6,7 +6,7 @@ const { buildPlist, installScheduler, uninstallScheduler, schedulerStatus, plist
 const { tmpDir } = require('../fixtures/helpers');
 
 const FAKE = path.join(__dirname, '..', 'fixtures', 'launchctl', 'fake-launchctl.js');
-const KEYS = ['RELAYLEAD_HOME', 'RELAYLEAD_LAUNCHD_DIR', 'RELAYLEAD_LAUNCHCTL', 'RELAYLEAD_PLATFORM', 'FAKE_LAUNCHCTL_STATE'];
+const KEYS = ['FAKE_LAUNCHCTL_UNLOAD_POLLS', 'RELAYLEAD_HOME', 'RELAYLEAD_LAUNCHD_DIR', 'RELAYLEAD_LAUNCHCTL', 'RELAYLEAD_PLATFORM', 'FAKE_LAUNCHCTL_STATE'];
 
 // Fresh home, LaunchAgents folder and fake launchctl state; the environment is put back afterwards.
 function setup(t) {
@@ -54,7 +54,7 @@ test('install writes the plist and loads it; a second install does not duplicate
   installScheduler();
   assert.deepStrictEqual(fs.readdirSync(process.env.RELAYLEAD_LAUNCHD_DIR), ['dev.relaylead.watcher.plist']);
   assert.deepStrictEqual(schedulerStatus(), { installed: true, loaded: true });
-  const verbs = calls(state).map((args) => args[0]);
+  const verbs = calls(state).map((args) => args[0]).filter((verb) => verb !== 'print');
   assert.deepStrictEqual(verbs.slice(0, 4), ['bootout', 'bootstrap', 'bootout', 'bootstrap']);
 });
 
@@ -73,4 +73,15 @@ test('on another platform, install and uninstall refuse with platform-unsupporte
   process.env.RELAYLEAD_PLATFORM = 'linux';
   assert.throws(() => installScheduler(), { code: 'platform-unsupported' });
   assert.throws(() => uninstallScheduler(), { code: 'platform-unsupported' });
+});
+
+test('a second install waits for the service to be gone before bootstrap', (t) => {
+  const state = setup(t);
+  installScheduler();
+  // bootout returns early: the service stays visible to print for 3 more calls.
+  process.env.FAKE_LAUNCHCTL_UNLOAD_POLLS = '3';
+  installScheduler();
+  assert.deepStrictEqual(schedulerStatus(), { installed: true, loaded: true });
+  const verbs = calls(state).map((args) => args[0]);
+  assert.strictEqual(verbs.filter((verb) => verb === 'bootstrap').length, 2, 'no bootstrap was retried');
 });

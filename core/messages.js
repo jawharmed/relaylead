@@ -194,7 +194,7 @@ const messages = {
     'plugin-removed': 'plugin removed: {id}\n',
     'nothing-installed': 'nothing to uninstall: relaylead install was not run\n',
     purged: 'deleted {dir}\n',
-    'purge-refused': 'refusing to delete {dir}: it does not look like the relaylead folder',
+    'purge-refused': 'refusing to delete {dir}: it does not look like a relaylead folder (no install.json nor install marker, and not named .relaylead)',
     'node-too-old': 'Node.js {min} or later is needed, found {found}',
     'agent-missing': 'the agent "{agent}" was not found; install Claude Code, then run relaylead init again',
     'api-key-stored': 'API key stored in {file}, readable by you only\n',
@@ -212,6 +212,7 @@ const messages = {
       'Review what a mission delivered before you merge it.',
       '',
     ].join('\n'),
+    'uninstall-warning': 'warning: could not remove the {step} ({detail}); do it by hand with: {command}\n',
     'init-next': 'next: relaylead install (scheduler and plugin), then relaylead doctor\n',
   },
   fr: {

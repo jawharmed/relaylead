@@ -8,10 +8,14 @@ const LOADED = path.join(STATE_DIR, 'loaded');
 const args = process.argv.slice(2);
 fs.appendFileSync(path.join(STATE_DIR, 'calls.log'), JSON.stringify(args) + '\n');
 
+// FAKE_LAUNCHCTL_UNLOAD_POLLS=n: after a bootout the service stays visible to `print` for n more calls,
+// and a bootstrap meanwhile fails with error 5, like the real launchctl that returns early.
+const UNLOADING = path.join(STATE_DIR, 'unloading');
+const unloading = fs.existsSync(UNLOADING) ? Number(fs.readFileSync(UNLOADING, 'utf8')) : 0;
 const loaded = fs.existsSync(LOADED);
 if (args[0] === 'bootstrap') {
   // The real one refuses a service that is already loaded.
-  if (loaded) {
+  if (loaded || unloading > 0) {
     process.stderr.write('Bootstrap failed: 5: Input/output error\n');
     process.exitCode = 5;
   } else {
@@ -23,9 +27,11 @@ if (args[0] === 'bootstrap') {
     process.exitCode = 3;
   } else {
     fs.rmSync(LOADED);
+    if (process.env.FAKE_LAUNCHCTL_UNLOAD_POLLS) fs.writeFileSync(UNLOADING, process.env.FAKE_LAUNCHCTL_UNLOAD_POLLS);
   }
 } else if (args[0] === 'print') {
-  process.exitCode = loaded ? 0 : 113;
+  if (unloading > 0) fs.writeFileSync(UNLOADING, String(unloading - 1));
+  process.exitCode = loaded || unloading > 0 ? 0 : 113;
 } else {
   process.stderr.write(`fake launchctl: unexpected arguments ${JSON.stringify(args)}\n`);
   process.exitCode = 2;

@@ -22,20 +22,38 @@ function claudePlugin(args) {
   }
 }
 
-function installPlugin() {
-  claudePlugin(['marketplace', 'add', PLUGIN_DIR]);
-  claudePlugin(['install', PLUGIN_ID]);
-}
-
-function uninstallPlugin() {
-  claudePlugin(['uninstall', PLUGIN_ID]);
-  claudePlugin(['marketplace', 'remove', MARKETPLACE]);
+function marketplaceKnown() {
+  return JSON.parse(claudePlugin(['marketplace', 'list', '--json'])).some((market) => market.name === MARKETPLACE);
 }
 
 // Whether the plugin is installed. Throws when `claude plugin list` fails.
 function pluginInstalled() {
-  const list = JSON.parse(claudePlugin(['list', '--json']));
-  return list.some((plugin) => plugin.id === PLUGIN_ID);
+  return JSON.parse(claudePlugin(['list', '--json'])).some((plugin) => plugin.id === PLUGIN_ID);
 }
 
-module.exports = { PLUGIN_DIR, MARKETPLACE, PLUGIN_ID, installPlugin, uninstallPlugin, pluginInstalled };
+// Each step is skipped when already done, and reported to `done(step)` once it has worked, so a failure
+// halfway leaves a record of what was added.
+function installPlugin(done) {
+  if (!marketplaceKnown()) claudePlugin(['marketplace', 'add', PLUGIN_DIR]);
+  done('marketplace');
+  if (!pluginInstalled()) claudePlugin(['install', PLUGIN_ID]);
+  done('plugin');
+}
+
+// Each step on its own: one that fails does not stop the other. Returns the failures
+// [{ step, command, detail }]; something already gone counts as done.
+function uninstallPlugin() {
+  const failures = [];
+  const attempt = (step, isThere, args) => {
+    try {
+      if (isThere()) claudePlugin(args);
+    } catch (err) {
+      failures.push({ step, command: `claude plugin ${args.join(' ')}`, detail: err.message });
+    }
+  };
+  attempt('plugin', pluginInstalled, ['uninstall', PLUGIN_ID]);
+  attempt('marketplace', marketplaceKnown, ['marketplace', 'remove', MARKETPLACE]);
+  return failures;
+}
+
+module.exports = { PLUGIN_DIR, MARKETPLACE, PLUGIN_ID, installPlugin, uninstallPlugin, pluginInstalled, marketplaceKnown };

@@ -38,17 +38,19 @@ test('installPlugin and uninstallPlugin call claude plugin with the right argume
       else process.env[key] = value;
     }
   });
-  const calls = () => fs.readFileSync(path.join(state, 'calls.log'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  // The `list` calls that check what is there are left out.
+  const calls = () =>
+    fs.readFileSync(path.join(state, 'calls.log'), 'utf8').trim().split('\n').map((line) => JSON.parse(line)).filter((args) => !args.includes('list'));
 
-  installPlugin();
+  installPlugin(() => {});
   assert.deepStrictEqual(calls(), [
     ['plugin', 'marketplace', 'add', PLUGIN_DIR],
     ['plugin', 'install', 'relaylead@relaylead-local'],
   ]);
   assert.strictEqual(pluginInstalled(), true);
 
-  uninstallPlugin();
-  assert.deepStrictEqual(calls().slice(3), [
+  uninstallPlugin(() => {});
+  assert.deepStrictEqual(calls().slice(2), [
     ['plugin', 'uninstall', 'relaylead@relaylead-local'],
     ['plugin', 'marketplace', 'remove', 'relaylead-local'],
   ]);

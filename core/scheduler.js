@@ -8,6 +8,7 @@ const { writeText } = require('./store');
 const { watcherSettings } = require('./config');
 const { assertSupported } = require('./platform');
 const { codedError } = require('./messages');
+const { sleepSync } = require('./timing');
 
 const LABEL = 'dev.relaylead.watcher';
 const PACKAGE_DIR = path.join(__dirname, '..');
@@ -103,12 +104,35 @@ function installScheduler() {
   } catch {
     // not loaded yet: nothing to remove
   }
-  try {
-    launchctl(['bootstrap', domain(), file]);
-  } catch (err) {
-    throw failure('bootstrap', err);
-  }
+  waitUntilUnloaded();
+  bootstrap(file);
   return file;
+}
+
+// bootout may return before the service is gone, and a bootstrap right after then fails with
+// error 5: wait until `print` fails (every 100 ms, 3 s at most).
+function waitUntilUnloaded() {
+  for (let waited = 0; waited < 3000; waited += 100) {
+    try {
+      launchctl(['print', `${domain()}/${LABEL}`]);
+    } catch {
+      return;
+    }
+    sleepSync(100);
+  }
+}
+
+// Tries bootstrap up to three times, 500 ms apart, before giving up.
+function bootstrap(file) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      launchctl(['bootstrap', domain(), file]);
+      return;
+    } catch (err) {
+      if (attempt === 3) throw failure('bootstrap', err);
+      sleepSync(500);
+    }
+  }
 }
 
 // Does nothing when no plist is there.

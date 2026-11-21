@@ -28,6 +28,7 @@
 //   agents-fail-after-wake  `agents` fails once a session has been woken
 //   agents-fail-after-one   `agents` answers once, then fails
 //   plugin-fail             `plugin list` fails
+//   plugin-install-fail     `plugin install` fails
 // `plugin ...` commands keep the marketplaces and plugins in FAKE_CLAUDE_STATE/plugins.json. Each call
 // writes the ANTHROPIC_API_KEY it got in FAKE_CLAUDE_STATE/env.log ("-" when unset): a test passes it a
 // made-up value, never a real key.
@@ -221,29 +222,42 @@ function agents() {
   return 0;
 }
 
-// `plugin marketplace add|remove`, `plugin install|uninstall|list`, as in Claude Code 2.1.330.
+// `plugin marketplace add|remove|list`, `plugin install|uninstall|list`. Strict like Claude Code: adding
+// what is there, or removing what is not, fails. `plugin-install-fail` makes `plugin install` fail.
 function plugin(args) {
   const file = path.join(STATE_DIR, 'plugins.json');
   const state = readJson(file, { marketplaces: [], plugins: [] });
   const [verb, argument] = args;
+  const fail = (text) => {
+    process.stderr.write(`Error: ${text}\n`);
+    return 1;
+  };
   if (verb === 'marketplace') {
-    const name = readJson(path.join(args[2], '.claude-plugin', 'marketplace.json'), { name: args[2] }).name;
-    if (args[1] === 'add') state.marketplaces = [...new Set([...state.marketplaces, name])];
-    else state.marketplaces = state.marketplaces.filter((known) => known !== args[2]);
+    if (args[1] === 'list') {
+      process.stdout.write(JSON.stringify(state.marketplaces.map((name) => ({ name }))) + '\n');
+      return 0;
+    }
+    if (args[1] === 'add') {
+      const name = readJson(path.join(args[2], '.claude-plugin', 'marketplace.json'), { name: args[2] }).name;
+      if (state.marketplaces.includes(name)) return fail(`marketplace ${name} already exists`);
+      state.marketplaces.push(name);
+    } else {
+      if (!state.marketplaces.includes(args[2])) return fail(`marketplace ${args[2]} not found`);
+      state.marketplaces = state.marketplaces.filter((known) => known !== args[2]);
+    }
   } else if (verb === 'install') {
-    state.plugins = [...new Set([...state.plugins, argument])];
+    if (SCENARIO.has('plugin-install-fail')) return fail('could not install');
+    if (state.plugins.includes(argument)) return fail(`${argument} is already installed`);
+    state.plugins.push(argument);
   } else if (verb === 'uninstall') {
+    if (!state.plugins.includes(argument)) return fail(`${argument} is not installed`);
     state.plugins = state.plugins.filter((id) => id !== argument);
   } else if (verb === 'list') {
-    if (SCENARIO.has('plugin-fail')) {
-      process.stderr.write('Error: plugin list failed\n');
-      return 1;
-    }
+    if (SCENARIO.has('plugin-fail')) return fail('plugin list failed');
     process.stdout.write(JSON.stringify(state.plugins.map((id) => ({ id, version: '0.1.0', scope: 'user', enabled: true }))) + '\n');
     return 0;
   } else {
-    process.stderr.write(`fake claude: unexpected plugin arguments ${JSON.stringify(args)}\n`);
-    return 2;
+    return fail(`unexpected plugin arguments ${JSON.stringify(args)}`);
   }
   writeJson(file, state);
   process.stdout.write('ok\n');
