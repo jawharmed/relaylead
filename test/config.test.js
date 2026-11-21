@@ -30,6 +30,18 @@ test('loadConfig works when no config file exists', () => {
   assert.deepStrictEqual(loadConfig({ dir: tmpDir() }), DEFAULTS);
 });
 
+test('a project file with the GitHub source and delivery is merged with the defaults', () => {
+  process.env.RELAYLEAD_HOME = tmpDir();
+  const project = tmpDir();
+  writeJson(path.join(project, '.relaylead.json'), {
+    source: { type: 'github-issues', repo: 'owner/name', label: 'relaylead' },
+    delivery: { type: 'github-pr', remote: 'origin' },
+  });
+  const config = loadConfig({ dir: project });
+  assert.deepStrictEqual(config.source, { type: 'github-issues', dir: 'tasks', repo: 'owner/name', label: 'relaylead' });
+  assert.deepStrictEqual(config.delivery, { type: 'github-pr', branch: 'relaylead/integration', runHooks: true, remote: 'origin' });
+});
+
 test('watcherSettings reads the machine file, and RELAYLEAD_WATCHER=off turns the loop and helpers off', (t) => {
   const home = tmpDir();
   process.env.RELAYLEAD_HOME = home;

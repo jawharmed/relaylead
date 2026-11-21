@@ -240,7 +240,7 @@ function leadLoop() {
 }
 
 // Scripted crew member: "works" 1 s on its task, writes <id>.txt in its working folder (committed on
-// its branch with local-merge), reports it done, ends. A task named in RELAYLEAD_FAKE_FAIL_FIRST
+// its branch, unless the delivery is files), reports it done, ends. A task named in RELAYLEAD_FAKE_FAIL_FIRST
 // (ids separated by commas) is reported failed on its first attempt instead.
 function crew() {
   const id = process.env.RELAYLEAD_TASK;
@@ -273,7 +273,7 @@ function work(id) {
       return;
     }
     fs.writeFileSync(`${id}.txt`, `fake work on ${id}\n`);
-    if (readMission().config.delivery.type === 'local-merge') {
+    if (readMission().config.delivery.type !== 'files') {
       git('add', `${id}.txt`);
       git('commit', '-m', id);
     }

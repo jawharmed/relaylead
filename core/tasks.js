@@ -14,6 +14,7 @@ const { listQuestions } = require('./questions');
 const { getAdapter } = require('../adapters');
 const { getDelivery } = require('../deliveries');
 const tasksDirSource = require('../sources/tasks-dir');
+const githubIssuesSource = require('../sources/github-issues');
 const { withMissionLock } = require('./mission-lock');
 
 // The option the lead adds to the question of a task that asks first (catalog/profiles/lead.md).
@@ -58,8 +59,9 @@ function sourceRoot(mission) {
 
 function readSource(mission) {
   const source = mission.config.source;
-  if (source.type !== 'tasks-dir') throw new Error(`unknown task source "${source.type}"`);
-  return tasksDirSource.list(sourceRoot(mission), source.dir);
+  if (source.type === 'tasks-dir') return tasksDirSource.list(sourceRoot(mission), source.dir);
+  if (source.type === 'github-issues') return githubIssuesSource.list(source, { cwd: mission.dir });
+  throw new Error(`unknown task source "${source.type}": use tasks-dir or github-issues`);
 }
 
 // Delivered when the source says done (local-merge marks it there) or the record says delivered
