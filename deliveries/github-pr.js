@@ -46,9 +46,9 @@ function openPr(mission, task, branch) {
   return { number: Number(url.split('/').pop()), state: 'OPEN', url };
 }
 
-// The lead reviews the pull request and posts its review with `gh pr review` (catalog/methods/code.md).
-// Changes requested refuse the delivery; an approval is not needed: on GitHub, the author of a pull
-// request cannot approve it, and the lead posts with the user's own account.
+// No review is waited for: the pull request is opened and merged in the same delivery. A review
+// that requested changes on an earlier pull request of the branch (a delivery played again) still
+// refuses the delivery; an approval is never needed.
 function checkReview(mission, task, pr) {
   const { reviewDecision } = JSON.parse(ghIn(mission, ['pr', 'view', String(pr.number), '--json', 'reviewDecision,state']));
   if (reviewDecision === 'CHANGES_REQUESTED') throw codedError('pr-changes-requested', { id: task.id, url: pr.url });
