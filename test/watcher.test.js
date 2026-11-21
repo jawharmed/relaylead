@@ -686,3 +686,117 @@ test('a targeted pass does not restart a watcher the user stopped', async (t) =>
   assert.strictEqual(watcher.watcherRunning().running, false);
   assert.strictEqual(fs.existsSync(path.join(home(), 'watcher-loop.json')), false);
 });
+
+// Mission demo, working, whose lead is recorded but run by no agent and listed failed (killed): it is
+// absent. fake.wake and fake.launch are left as they are.
+function absentLeadMission(t) {
+  freshHome(t);
+  const dir = tmpDir('relaylead-project-');
+  fs.mkdirSync(path.join(dir, 'tasks'));
+  writeMission('demo', dir);
+  const lead = record('demo', 'demo/lead/1', 'lead');
+  writeLead('demo', lead);
+  writeJson(stateFile('demo'), { state: 'working' });
+  const { list } = fake;
+  fake.list = async (mission) => listSessions(mission).map((session) =>
+    session.shortId === lead.shortId ? { ...session, state: 'failed', pid: null, idle: true } : { ...session, state: 'done', pid: null, idle: true },
+  );
+  t.after(() => {
+    fake.list = list;
+  });
+  return lead;
+}
+
+function failingAgent(t, names) {
+  const saved = Object.fromEntries(names.map((name) => [name, fake[name]]));
+  for (const name of names) {
+    fake[name] = async () => {
+      throw new Error(`${name} failed`);
+    };
+  }
+  t.after(() => Object.assign(fake, saved));
+}
+
+test('a failed resume falls back to a new lead session in the same pass', async (t) => {
+  withEnv(t, { RELAYLEAD_FAKE_END_FIRST_TURN: '1' });
+  const lead = absentLeadMission(t);
+  t.after(async () => {
+    for (const session of listSessions('demo')) await fake.stop(session);
+  });
+  // A low context: the lead is to be resumed.
+  const { recordHeartbeat } = require('../core/readings');
+  recordHeartbeat('demo', lead.shortId, { tool: 'Bash', contextTokens: 50000 });
+  failingAgent(t, ['wake']);
+  const prompts = [];
+  const { launch } = fake;
+  fake.launch = async (spec) => {
+    prompts.push(spec.prompt);
+    return launch(spec);
+  };
+  t.after(() => {
+    fake.launch = launch;
+  });
+
+  const actions = await watcher.tendMission('demo');
+  assert.deepStrictEqual(actions.map((action) => action.type), ['relaunch-lead']);
+  assert.deepStrictEqual(actions[0], { type: 'relaunch-lead', resume: true });
+  assert.strictEqual(readJson(path.join(missionDir('demo'), 'lead.json')).sessionName, 'demo/lead/2');
+  assert.strictEqual(prompts.length, 1);
+  const restart = prompts[0].indexOf('## Restart');
+  assert.ok(restart !== -1 && restart < prompts[0].indexOf('## This mission'), prompts[0]);
+  assert.match(prompts[0], /The previous lead session demo\/lead\/1 ended unexpectedly/);
+  assert.match(logText(), new RegExp(`relaunch-lead ${lead.shortId} as demo/lead/2`));
+  const watch = readJson(watchFile('demo'));
+  assert.strictEqual(watch.failedRelaunches, 0);
+  assert.ok(watch.lastRelaunchAt);
+});
+
+test('a relaunch that throws counts once', async (t) => {
+  absentLeadMission(t);
+  failingAgent(t, ['wake', 'launch']);
+
+  await watcher.tendMission('demo');
+  let watch = readJson(watchFile('demo'));
+  assert.strictEqual(watch.failedRelaunches, 1);
+  assert.strictEqual(watch.lastRelaunchAt, null);
+  assert.match(logText(), /demo error relaunch-lead: launch failed/);
+  await watcher.tendMission('demo');
+  watch = readJson(watchFile('demo'));
+  assert.strictEqual(watch.failedRelaunches, 2);
+});
+
+test('the breaker stops the mission and says why', async (t) => {
+  absentLeadMission(t);
+  writeJson(watchFile('demo'), { failedRelaunches: 2, lastRelaunchAt: new Date(Date.now() - 10 * 60 * 1000).toISOString() });
+
+  const actions = await watcher.tendMission('demo');
+  assert.ok(actions.some((action) => action.type === 'trip-breaker'));
+  const state = readJson(stateFile('demo'));
+  const note = 'stopped by the watcher: the lead could not be restarted 3 times in a row';
+  assert.deepStrictEqual([state.state, state.note, state.stopping], ['stopped', note, undefined]);
+  assert.match(fs.readFileSync(path.join(missionDir('demo'), 'journal.log'), 'utf8'), new RegExp(note));
+  assert.match(logText(), /demo breaker-tripped after 3 failed relaunches/);
+});
+
+test('a breaker stop that fails is replayed', async (t) => {
+  absentLeadMission(t);
+  writeJson(watchFile('demo'), { failedRelaunches: 2, lastRelaunchAt: new Date(Date.now() - 10 * 60 * 1000).toISOString() });
+  const missions = require('../core/missions');
+  const { stopMission } = missions;
+  missions.stopMission = async () => {
+    missions.stopMission = stopMission;
+    const err = new Error('stop pending');
+    err.code = 'stop-pending';
+    throw err;
+  };
+  t.after(() => {
+    missions.stopMission = stopMission;
+  });
+
+  await watcher.tendMission('demo');
+  assert.strictEqual(readJson(stateFile('demo')).state, 'working');
+  assert.strictEqual(readJson(watchFile('demo')).tripped, true);
+  await watcher.tendMission('demo');
+  const state = readJson(stateFile('demo'));
+  assert.deepStrictEqual([state.state, state.stopping], ['stopped', undefined]);
+});

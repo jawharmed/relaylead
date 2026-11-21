@@ -10,8 +10,8 @@ const { readJson, writeJson } = require('../../core/store');
 const { missionDir, home } = require('../../core/paths');
 const { listTasks } = require('../../core/tasks');
 const fake = require('../../adapters/fake');
-const { tmpDir, waitFor, userEnv } = require('../../fixtures/helpers');
-const { gitRepo } = require('../../fixtures/git');
+const { tmpDir, waitFor, userEnv, killSession } = require('../../fixtures/helpers');
+const { git, gitRepo } = require('../../fixtures/git');
 const { missionReport } = require('../../fixtures/missions');
 
 const BIN = path.join(__dirname, '..', '..', 'bin', 'relaylead.js');
@@ -148,3 +148,41 @@ test('an idle lead is woken when a crew member finishes', { timeout: 3 * MISSION
   assertEachTaskOnce(mission);
 });
 
+
+// Runs `relaylead watcher run` every second until `done()` is true.
+async function passUntil(done, what, report) {
+  const end = Date.now() + MISSION_MS;
+  while (!(await done())) {
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}\n${report()}`);
+    const pass = await relaylead(['watcher', 'run'], home());
+    assert.strictEqual(pass.code, 0, pass.err);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+}
+
+function watcherLog() {
+  const file = path.join(home(), 'watcher.log');
+  return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+}
+
+test('a lead killed in the middle of a mission is resumed and the mission ends without loss', { timeout: 3 * MISSION_MS }, async (t) => {
+  const gate = tmpDir('relaylead-gate-');
+  const missions = setup(t, { RELAYLEAD_FAKE_CREW_GATE: gate, RELAYLEAD_RESTART_GRACE_MS: '300', RELAYLEAD_LEAD_QUIET_MS: '300' });
+  const dir = gitRepo(toyFiles());
+  const mission = await launch(t, missions, dir);
+  const report = () => missionReport(mission) + '\n--- watcher.log\n' + watcherLog();
+
+  await waitFor(() => listTasks(mission).some((task) => task.id === 'a' && task.state === 'running'), MISSION_MS, 'a to run', report);
+  const lead = listSessions(mission).find((session) => session.shortId === leadOf(mission).shortId);
+  killSession(lead);
+  await passUntil(() => / relaunch-lead /.test(watcherLog()), 'the lead to be relaunched', report);
+  assert.match(watcherLog(), new RegExp(`relaunch-lead ${lead.shortId} resumed`), report());
+  fs.writeFileSync(path.join(gate, 'a'), '');
+  fs.writeFileSync(path.join(gate, 'b'), '');
+  await answerWhenIdle(mission, dir);
+  await waitFor(() => stateOf(mission) === 'done', MISSION_MS, 'the mission to be done', report);
+
+  assert.strictEqual(leadOf(mission).sessionName, `${mission}/lead/1`);
+  assertEachTaskOnce(mission);
+  for (const id of ['a', 'b']) assert.strictEqual(git(dir, 'show', `relaylead/integration:${id}.txt`), `fake work on ${id}`);
+});

@@ -10,7 +10,9 @@
 // by short id), config, watch (watch.json)}.
 //
 // Actions: {type: 'stop-session', session, log}, {type: 'log', text, journal}, {type: 'mark-failed',
-// id, summary, log} and {type: 'wake-lead', reasons, log}.
+// id, summary, log}, {type: 'wake-lead', reasons, log}, {type: 'relaunch-lead', resume} and
+// {type: 'trip-breaker', afterLock: true}.
+const { contextOf } = require('./readings');
 
 // An active lead whose last heartbeat is older than this is reported, never stopped.
 const SILENT_MS = 30 * 60 * 1000;
@@ -27,6 +29,8 @@ const leadQuietMs = () => Number(process.env.RELAYLEAD_LEAD_QUIET_MS) || 10000;
 const INEFFECTIVE_AFTER_MS = 5 * 60 * 1000;
 // After 1, 2, then 3 wakes without effect, the next one waits this long; past 3, the lead is stuck.
 const WAKE_BACKOFF_MS = [15, 30, 60].map((minutes) => minutes * 60 * 1000);
+// After this many relaunches in a row that failed, the watcher stops the mission (the breaker).
+const MAX_FAILED_RELAUNCHES = 3;
 // A lead held by a usage limit is not woken for this long after its failure; read at each call.
 const rateLimitHoldMs = () => Number(process.env.RELAYLEAD_RATE_LIMIT_HOLD_MS) || 5 * 60 * 60 * 1000;
 // A lead idle while the mission works, silent this long, has ended its turn (a command lasts 10 min
@@ -122,7 +126,11 @@ function decide(obs) {
   const actions = [];
   const result = { actions, watch, again: false };
   const log = (text, journal = false) => actions.push({ type: 'log', text, journal });
-  // A tripped mission still stopping: its stop is all there is to do.
+  // Rule 1: a tripped mission, its stop not done yet: its stop is replayed, and nothing else is done.
+  if (watch.tripped) {
+    actions.push({ type: 'trip-breaker', afterLock: true });
+    return result;
+  }
   if (obs.record.stopping) return result;
 
   logFailures(obs, watch, log);
@@ -144,6 +152,8 @@ function decide(obs) {
   }
   watchLead(obs, watch, log);
   judgeWakes(obs, watch);
+  judgeRelaunches(obs, watch);
+  if (status === 'absent') tendAbsentLead(obs, watch, actions, log);
   if (status === 'idle') result.again = tendIdleLead(obs, watch, unseen, actions, log);
   if (status === 'active') result.again = Boolean(unseen && unseen.changes.length > 0) || (obs.mail || {})[obs.lead.shortId] > 0;
   return result;
@@ -262,6 +272,36 @@ function judgeWakes(obs, watch) {
   if (failedAfterWake || unanswered) Object.assign(watch, wakeWithoutEffect(watch, obs.now));
 }
 
+// The count of the breaker ("Décompte du disjoncteur"): any heartbeat of the current lead after the
+// last relaunch, or after the last failed one, sets it back to 0.
+function judgeRelaunches(obs, watch) {
+  const beat = heartbeatMs(obs);
+  if (beat > Date.parse(watch.lastRelaunchAt) || beat > Date.parse(watch.lastFailedRelaunchAt)) {
+    watch.failedRelaunches = 0;
+    watch.lastRelaunchAt = null;
+    watch.lastFailedRelaunchAt = null;
+  }
+}
+
+// Rules 8 and 10, for an absent lead. A relaunch that no heartbeat has followed failed: it counts.
+// Past 3 in a row, the breaker trips (the mission is stopped after the lock); otherwise the lead is
+// relaunched, resumed when its context is known and under the soft threshold.
+function tendAbsentLead(obs, watch, actions, log) {
+  if (Number.isFinite(Date.parse(watch.lastRelaunchAt))) {
+    watch.failedRelaunches += 1;
+    watch.lastFailedRelaunchAt = iso(obs.now);
+    watch.lastRelaunchAt = null;
+  }
+  if (watch.failedRelaunches >= MAX_FAILED_RELAUNCHES) {
+    watch.tripped = true;
+    log(`breaker-tripped after ${MAX_FAILED_RELAUNCHES} failed relaunches`, true);
+    actions.push({ type: 'trip-breaker', afterLock: true });
+    return;
+  }
+  const context = contextOf(obs.readings[obs.lead.shortId] || {}, { role: 'lead', config: obs.config, now: obs.now, active: false });
+  actions.push({ type: 'relaunch-lead', resume: Boolean(context) && context.tokens < context.soft });
+}
+
 // Rules 11 and 14 to 16, for an idle lead: one wake at most, for every motive there is. True when a
 // wake is held back only for a moment (quiet time, a crew failed by this pass): a patient pass looks
 // again.
@@ -351,6 +391,7 @@ module.exports = {
   INEFFECTIVE_AFTER_MS,
   WAKE_BACKOFF_MS,
   INTERRUPT_SILENCE_MS,
+  MAX_FAILED_RELAUNCHES,
   restartGraceMs,
   leadQuietMs,
   rateLimitHoldMs,

@@ -656,7 +656,8 @@ async function stopAndFree(mission, record, stopAll) {
 // cleaned, so running stop again finishes a cleanup that failed; warnings are its Error[]. A stop
 // that fails does not keep the other sessions running: its error is thrown at the end, and the stop
 // can be run again. A done mission stays done.
-async function stopMission(name) {
+// `note` goes into the stopped state (the watcher's breaker says why it stopped the mission).
+async function stopMission(name, { note } = {}) {
   const mission = readMission(name);
   const current = readStateRecord(name);
   if (!needsStop(mission, current)) {
@@ -664,16 +665,16 @@ async function stopMission(name) {
   }
   // A replay keeps the state as it is, with its date: that date tells how old the pids are.
   const replay = FINISHED.includes(current.state);
-  const record = replay ? current : { state: 'stopped' };
+  const record = replay ? current : { state: 'stopped', note };
   // Written first, so a `state set` from a session being stopped is refused instead of erasing the stop.
-  if (!replay) writeState(name, { state: 'stopped', stopping: true });
+  if (!replay) writeState(name, { state: 'stopped', note, stopping: true });
   // The sessions are stopped under the mission lock, behind a start or a delivery that is running.
   // When that wait gives up, the state stays stopped and the folder stays locked: stop can be run again.
   // A stuck holder (start-stuck) is not turned into stop-pending: running stop again would fail until
   // that process is ended, and its error says so.
   try {
     const { outcome, warnings } = await withMissionLock(name, 'stop', () =>
-      stopAndFree(mission, record, () => stopSessions(mission, !replay)),
+      stopAndFree(mission, record, () => stopSessions(mission, !replay, note)),
     );
     return { outcome: outcome === 'stopped' && record.state === 'done' ? 'already-done' : outcome, warnings };
   } catch (err) {
@@ -685,10 +686,10 @@ async function stopMission(name) {
 }
 
 // Returns what stopSessionsAndWait returns.
-async function stopSessions(mission, justStopped) {
+async function stopSessions(mission, justStopped, note) {
   const result = await stopSessionsAndWait(mission, listSessions(mission.name));
   // Written again: a `state set` that read the state just before the first write may have landed since.
-  if (justStopped) writeState(mission.name, { state: 'stopped', stopping: true });
+  if (justStopped) writeState(mission.name, { state: 'stopped', note, stopping: true });
   return result;
 }
 

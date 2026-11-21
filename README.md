@@ -60,6 +60,8 @@ A watcher, without AI, looks after the missions that are not finished: it stops 
 
 The lead waits with `relaylead wait` while a task runs, and ends its turn when it only waits for you: your answer (`relaylead answer`), or the end of a crew member's task, wakes it within seconds. A lead that does not respond to its wakes is reported `lead-stuck` in the log, never stopped: run `relaylead show <mission>` and write to it.
 
+A lead whose session ends while the mission works (killed, or after a restart of the machine) is restarted by the watcher: the same session when its context is still low, otherwise a new lead session that starts again from the files. After 3 restarts in a row that fail, the watcher stops the mission and says why in its state and in `journal.log`.
+
 The `watcher` settings are read from `~/.relaylead/config.json` only. The loop does not survive a restart of the machine until `relaylead install` (to come) hands it to launchd: after a restart, run `relaylead watcher start`.
 
 ## Develop
@@ -121,6 +123,8 @@ Un veilleur, sans IA, veille sur les missions qui ne sont pas finies : il arrêt
 - Chaque action du veilleur est une ligne de `~/.relaylead/watcher.log`, déplacé vers `watcher.log.1` au-delà de 1 Mio.
 
 Le lead attend par `relaylead wait` tant qu'une tâche tourne, et finit son tour quand il n'attend plus que vous : votre réponse (`relaylead answer`), ou la fin de la tâche d'un équipier, le réveille dans les secondes qui suivent. Un lead qui ne répond pas à ses réveils est signalé `lead-stuck` dans le journal, jamais arrêté : lancez `relaylead show <mission>` et écrivez-lui.
+
+Un lead dont la session s'arrête pendant que la mission travaille (tuée, ou après un redémarrage de la machine) est relancé par le veilleur : la même session si son contexte est encore bas, sinon une nouvelle session de lead qui repart des fichiers. Après 3 relances ratées d'affilée, le veilleur arrête la mission et dit pourquoi dans son état et dans `journal.log`.
 
 Les réglages `watcher` se lisent dans `~/.relaylead/config.json` seulement. La boucle ne survit pas au redémarrage de la machine tant que `relaylead install` (à venir) ne l'a pas confiée à launchd : après un redémarrage, lancez `relaylead watcher start`.
 

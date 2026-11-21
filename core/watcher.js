@@ -14,7 +14,8 @@ const { watcherSettings } = require('./config');
 const { spawnDetached } = require('./detached');
 const { listSessions, recordSession, isAlive } = require('./sessions');
 const { readReadings } = require('./readings');
-const { stopSessionsAndWait } = require('./missions');
+const missions = require('./missions');
+const { stopSessionsAndWait, launchLead, launchWhileOpen } = missions;
 const { listTasks, markFailed } = require('./tasks');
 const { unseenChanges } = require('./wait');
 const { unreadCount } = require('./mailbox');
@@ -203,6 +204,10 @@ async function act(name, action, watch) {
     } else if (action.type === 'wake-lead') {
       logLine(name, action.log);
       await wakeLead(name, action.reasons, watch);
+    } else if (action.type === 'relaunch-lead') {
+      await relaunchLead(name, action.resume, watch);
+    } else if (action.type === 'trip-breaker') {
+      await tripBreaker(name);
     } else {
       throw new Error(`unknown action ${action.type}`);
     }
@@ -233,6 +238,74 @@ async function wakeLead(name, reasons, watch) {
     Object.assign(watch, wakeWithoutEffect(watch, Date.now()));
     throw err;
   }
+}
+
+const BREAKER_NOTE = 'stopped by the watcher: the lead could not be restarted 3 times in a row';
+
+// Rule 8, after the mission lock: stopMission takes it itself. stopMission is read from the module
+// object, so a test can replace it. A stop that throws is replayed at the next pass (rule 1).
+async function tripBreaker(name) {
+  await missions.stopMission(name, { note: BREAKER_NOTE });
+  writeJournal(name, 'watcher', BREAKER_NOTE);
+  watchLog(name, 'breaker-stopped', BREAKER_NOTE);
+}
+
+const RESTART_TEXT = 'Relaylead restarted you after your session ended. Carry on with the method: run `relaylead task list` first.';
+
+// The section a new lead gets before the mission after a relaunch ("## Restart").
+function restartSection(old) {
+  return `## Restart\n\nThe previous lead session ${old} ended unexpectedly. You take its place: you remember nothing, the files hold everything. Start with \`relaylead task list\`.`;
+}
+
+// What the watcher remembers of the wakes of a lead: forgotten when the lead changes.
+const WAKE_MEMORY = { lastWakeAt: null, lastWakeView: null, interruptWakeFor: null, ineffectiveWakes: 0 };
+
+// The breaker's count after a relaunch or a handover that threw ("Décompte du disjoncteur", b).
+function countFailedRelaunch(watch) {
+  watch.failedRelaunches += 1;
+  watch.lastFailedRelaunchAt = new Date().toISOString();
+  watch.lastRelaunchAt = null;
+}
+
+// Rule 10: the absent lead is resumed (`resume`: the same session, woken with RESTART_TEXT), or, when
+// that throws or is not to be tried, replaced by a new lead session with the ## Restart section. All
+// within launchWhileOpen: a stop that comes meanwhile stops the session launched. A mission stopped or
+// done meanwhile: nothing more, and nothing counted. lastLeadActionAt is set at the start: a relaunch
+// that throws then counts as a wake without effect too, at the next judgement of the wakes.
+async function relaunchLead(name, resume, watch) {
+  const startedAt = new Date().toISOString();
+  watch.lastRelaunchAt = startedAt;
+  watch.lastLeadActionAt = startedAt;
+  const mission = readJson(missionFile(name, 'mission.json'));
+  const old = readJson(missionFile(name, 'lead.json'));
+  const adapter = getAdapter(mission.agent);
+  let resumed = false;
+  const launch = async () => {
+    if (resume) {
+      try {
+        const session = listSessions(name).find((candidate) => candidate.shortId === old.shortId);
+        if (!session) throw new Error(`the lead ${old.shortId} is not in the registry`);
+        const woken = await adapter.wake(session, RESTART_TEXT);
+        recordSession(name, woken);
+        resumed = true;
+        return woken;
+      } catch (err) {
+        watchLog(name, 'error', `resume-lead: ${err.message}`);
+      }
+    }
+    return launchLead(mission, { section: restartSection(old.sessionName) });
+  };
+  let session;
+  try {
+    session = await launchWhileOpen(name, launch, (launched) => stopSessionsAndWait(mission, [launched]));
+  } catch (err) {
+    if (['mission-stopped', 'mission-done'].includes(err.code)) return;
+    countFailedRelaunch(watch);
+    throw err;
+  }
+  watch.leadLostSince = null;
+  if (!resumed) Object.assign(watch, WAKE_MEMORY);
+  watchLog(name, 'relaunch-lead', resumed ? `${old.shortId} resumed` : `${old.shortId} as ${session.name}`);
 }
 
 // Stops a session and waits for its end, in two steps (stopSessionsAndWait). Throws when the stop
@@ -317,12 +390,13 @@ function missionNames() {
   }
 }
 
-// Whether a mission is to be watched: neither finished nor being stopped. Throws when its
-// mission.json cannot be read.
+// Whether a mission is to be watched: neither finished nor being stopped, unless the stop is that of
+// its breaker, to be replayed. Throws when its mission.json cannot be read.
 function needsWatching(name) {
   if (!readJson(missionFile(name, 'mission.json'), null)) return false;
   const record = readState(name);
-  return !FINISHED.includes(record.state) && !record.stopping;
+  if (record.stopping) return readWatch(name).tripped; // the stop of its breaker is to be replayed
+  return !FINISHED.includes(record.state);
 }
 
 // {pid, since} of the pass lock, or null once it is gone; pid 0 while it is being written.

@@ -14,6 +14,7 @@ const {
   launchLead,
   launchWhileOpen,
   readMission,
+  stopMission,
 } = require('../core/missions');
 const { takeOverStaleLock, withMissionLock } = require('../core/mission-lock');
 const { listSessions, recordSession, isAlive } = require('../core/sessions');
@@ -1294,4 +1295,16 @@ test('a new lead that runs its first command before lead.json names it is accept
   const lead = readJson(path.join(missionDir('demo'), 'lead.json'));
   assert.strictEqual(lead.sessionName, 'demo/lead/2');
   assert.ok(second.updatedAt <= lead.startedAt);
+});
+
+test('a stop may say why in the stopped state', async (t) => {
+  freshHome(t);
+  const dir = tmpDir('relaylead-project-');
+  fs.mkdirSync(path.join(dir, 'tasks'));
+  writeMission('demo', dir);
+  writeJson(path.join(missionDir('demo'), 'state.json'), { state: 'working' });
+  const { outcome } = await stopMission('demo', { note: 'stopped by the watcher' });
+  assert.strictEqual(outcome, 'stopped');
+  const state = readJson(path.join(missionDir('demo'), 'state.json'));
+  assert.deepStrictEqual([state.state, state.note, state.stopping], ['stopped', 'stopped by the watcher', undefined]);
 });
