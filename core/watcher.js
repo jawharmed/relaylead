@@ -14,6 +14,8 @@ const { watcherSettings } = require('./config');
 const { spawnDetached } = require('./detached');
 const { listSessions, recordSession, isAlive } = require('./sessions');
 const { readReadings } = require('./readings');
+const { readUsage } = require('./usage');
+const { readPause, writePause, removePause } = require('./usage-pause');
 const missions = require('./missions');
 const { stopSessionsAndWait, launchLead, launchWhileOpen, writeState } = missions;
 const { listTasks, markFailed } = require('./tasks');
@@ -191,6 +193,9 @@ async function observe(name) {
     failures: readFailures(name),
     unseen,
     mail,
+    // The usage limits are those of Claude Code alone in this version, which the fake agent plays too.
+    usage: readUsage('claude', now),
+    pause: readPause(name),
     config: mission.config,
     watch,
     questions,
@@ -230,6 +235,13 @@ async function act(name, action, watch) {
     } else if (action.type === 'remind-question') {
       logLine(name, action.log);
       notify({ title: `Relaylead: ${name}`, text: action.text });
+    } else if (action.type === 'pause-mission') {
+      logLine(name, action.log);
+      writePause(name, action);
+      if (action.wake) await wakeLead(name, ['usage'], watch, USAGE_TEXT);
+    } else if (action.type === 'resume-mission') {
+      logLine(name, action.log);
+      removePause(name);
     } else {
       throw new Error(`unknown action ${action.type}`);
     }
@@ -244,16 +256,19 @@ function wakeText(reasons) {
   return `Relaylead woke you: ${reasons.join('; ')}. Carry on with the method: run \`relaylead task list\` first.`;
 }
 
-// Wakes the current lead (lead.json) and records the woken session. A wake that throws is a wake
-// without effect: its motive is due again, after the backoff. A lead woken is no longer lost: its next
-// loss gets a whole grace.
-async function wakeLead(name, reasons, watch) {
+// The text of the wake that pauses a mission for the usage limit.
+const USAGE_TEXT = 'Usage limit near: commit and push your work, write your state, end your turn.';
+
+// Wakes the current lead (lead.json) and records the woken session; `text` is that of a wake for
+// these reasons, unless given. A wake that throws is a wake without effect: its motive is due again,
+// after the backoff. A lead woken is no longer lost: its next loss gets a whole grace.
+async function wakeLead(name, reasons, watch, text = wakeText(reasons)) {
   try {
     const mission = readJson(missionFile(name, 'mission.json'));
     const lead = readJson(missionFile(name, 'lead.json'));
     const session = listSessions(name).find((candidate) => candidate.shortId === lead.shortId);
     if (!session) throw new Error(`the lead ${lead.shortId} is not in the registry`);
-    const woken = await getAdapter(mission.agent).wake(session, wakeText(reasons));
+    const woken = await getAdapter(mission.agent).wake(session, text);
     recordSession(name, woken);
     watch.leadLostSince = null;
   } catch (err) {

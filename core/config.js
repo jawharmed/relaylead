@@ -32,6 +32,13 @@ const DEFAULTS = {
   // How claude signs in: `login` (the Claude account already connected) or `api-key` (the key is in
   // keyFile, `<home>/api-key` when null; core/auth.js).
   auth: { mode: 'login', keyFile: null },
+  // The usage limits of the account (core/usage.js): a mission pauses once the 5-hour or the 7-day
+  // usage reaches the threshold of its priority, in percent; after a usage limit hit without a time
+  // to resume at, it tries again after these minutes, then the next ones, then the last one again.
+  usage: {
+    thresholds: { low: { week: 70, fiveHour: 80 }, normal: { week: 90, fiveHour: 85 }, high: { week: 98, fiveHour: 85 } },
+    retryMinutes: [15, 30, 60],
+  },
 };
 
 function isPlainObject(value) {

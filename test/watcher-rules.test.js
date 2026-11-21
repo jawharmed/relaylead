@@ -15,6 +15,8 @@ const {
   rateLimitHoldMs,
   questionSettings,
   QUESTION_REMIND_MS,
+  usageVerdict,
+  parseResetTime,
 } = require('../core/watcher-rules');
 
 const MINUTE = 60 * 1000;
@@ -207,12 +209,21 @@ test('the rules table', () => {
       actions: [],
     },
     {
-      rule: '11: a rate-limited idle lead is not woken',
+      rule: '20: a usage limit hit by the lead pauses the mission and stops its sessions at once',
       obs: idle({
         unseen: unseen(A_DONE),
         readings: { [LEAD]: { ...beat(T0 - 2 * MINUTE, '(stop)'), failure: { at: iso(T0 - MINUTE), error: 'rate_limit' } } },
       }),
-      actions: [{ type: 'log', text: `lead-rate-limited ${LEAD}` }],
+      actions: [
+        {
+          type: 'pause-mission',
+          resumeAt: T0 + 15 * MINUTE,
+          reason: `rate_limit ${LEAD}`,
+          wake: false,
+          log: `usage-pause until ${iso(T0 + 15 * MINUTE)}: rate_limit ${LEAD}`,
+        },
+        { type: 'stop-session', shortId: LEAD, log: `usage-stop ${LEAD}` },
+      ],
     },
     {
       rule: '14: an idle lead is woken for a change it has not seen',
@@ -570,25 +581,6 @@ test('an absent lead of a waiting mission is left alone, then woken by a change'
   }
 });
 
-test('a rate-limited idle lead is neither woken nor handed over, until the hold expires', () => {
-  assert.strictEqual(rateLimitHoldMs(), 5 * 60 * MINUTE);
-  // Its context is past the soft threshold (40000 + 150000), and a change is unseen.
-  const failure = { at: iso(T0 - MINUTE), error: 'rate_limit', message: 'limit reached' };
-  const readings = { [LEAD]: { ...beat(T0 - 2 * MINUTE, '(stop)', { contextTokens: 300000, baseTokens: 40000 }), failure } };
-  const at = () => idle({ readings, unseen: unseen(A_DONE) });
-  const onLead = (actions) => actions.filter((action) => ['wake-lead', 'hand-over'].includes(action.type));
-  const held = timeline(at, { count: 10, stepMs: 30 * MINUTE });
-  assert.deepStrictEqual(onLead(held.actions), []);
-  assert.deepStrictEqual(logs(held.actions), [`lead-rate-limited ${LEAD}`]);
-  assert.strictEqual(held.watch.rateLimitNoticeFor, failure.at);
-  // 5 h after the failure, the lead is tended again.
-  const expired = timeline(at, { start: T0 + 299 * MINUTE + 1000, watch: held.watch });
-  assert.strictEqual(onLead(expired.actions).length, 1);
-  // A failure older than the last heartbeat is over: the lead has worked since.
-  const over = { [LEAD]: { ...beat(T0 - 30 * 1000, '(stop)'), failure } };
-  assert.deepStrictEqual(timeline(() => idle({ readings: over, unseen: unseen(A_DONE) })).minutes, [0]);
-});
-
 test('no wake within 10 s of a lead action', () => {
   assert.strictEqual(leadQuietMs(), 10000);
   const watch = { ...emptyWatch(), lastLeadActionAt: iso(T0 - 5000) };
@@ -714,12 +706,7 @@ test('a woken turn that fails after its first heartbeat is woken again', () => {
           ? { [LEAD]: beat(T0 - 30 * MINUTE, '(stop)') }
           : { [LEAD]: { ...beat(T0 + MINUTE), failure: { at: iso(T0 + 4 * MINUTE), error } } },
     });
-  // A usage limit: held 5 h after the failure, then woken (15 min have long passed).
-  const limited = timeline(turnFailing('rate_limit'), { count: 62, stepMs: 5 * MINUTE });
-  assert.deepStrictEqual(limited.minutes, [0, 305]);
-  assert.deepStrictEqual(logs(limited.actions), [`lead-rate-limited ${LEAD}`]);
-  assert.strictEqual(limited.watch.ineffectiveWakes, 1);
-  // Any other failure: woken again after the backoff, counted once.
+  // A failure that is not a usage limit (that one pauses the mission): woken again after the backoff, counted once.
   const failed = timeline(turnFailing('server_error'), { count: 5, stepMs: 5 * MINUTE });
   assert.deepStrictEqual(failed.minutes, [0, 20]);
   assert.strictEqual(failed.watch.ineffectiveWakes, 1);
@@ -935,4 +922,144 @@ test('a question q-irr-… or q-perm-… without kind is never answered for the 
   const questions = [openQuestion('q-perm-0123456789ab', 61 * MINUTE, { options: ['Always allow in this mission', 'Refuse'] })];
   const { actions } = questionActions('recommended', questions);
   assert.deepStrictEqual(actions.map((action) => action.type), ['remind-question']);
+});
+
+// A usage measured `minutes` before T0, the 5-hour window at `fiveHour` % resetting at 1 h past T0,
+// the week at `week` % resetting a day later.
+function usage(fiveHour, week, minutes = 1) {
+  return {
+    at: iso(T0 - minutes * MINUTE),
+    fiveHour: { percent: fiveHour, resetsAt: iso(T0 + 60 * MINUTE) },
+    sevenDay: { percent: week, resetsAt: iso(T0 + 24 * 60 * MINUTE) },
+  };
+}
+
+function withPriority(priority, fields) {
+  return observation({ mission: { name: 'demo', priority, createdAt: iso(T0 - 60 * MINUTE), config: {} }, ...fields });
+}
+
+test('a measured usage pauses at the threshold of the priority, until its window resets', () => {
+  const thresholds = { low: { week: 70, fiveHour: 80 }, normal: { week: 90, fiveHour: 85 }, high: { week: 98, fiveHour: 85 } };
+  for (const [priority, limits] of Object.entries(thresholds)) {
+    assert.strictEqual(usageVerdict(withPriority(priority, { usage: usage(limits.fiveHour - 1, limits.week - 1) })), null, priority);
+    const fiveHour = usageVerdict(withPriority(priority, { usage: usage(limits.fiveHour, 10) }));
+    assert.strictEqual(fiveHour.resumeAt, T0 + 60 * MINUTE, priority);
+    const week = usageVerdict(withPriority(priority, { usage: usage(10, limits.week) }));
+    assert.strictEqual(week.resumeAt, T0 + 24 * 60 * MINUTE, priority);
+    // Both past: the later reset.
+    assert.strictEqual(usageVerdict(withPriority(priority, { usage: usage(100, 100) })).resumeAt, T0 + 24 * 60 * MINUTE, priority);
+  }
+  assert.strictEqual(usageVerdict(withPriority('normal', { usage: usage(90, 10) })).reason, 'five-hour 90% >= 85%');
+  // A stale usage says nothing; the thresholds come from the configuration of the mission.
+  assert.strictEqual(usageVerdict(withPriority('normal', { usage: usage(99, 99, 31) })), null);
+  const config = { usage: { thresholds: { normal: { fiveHour: 50 } } } };
+  const configured = observation({ mission: { name: 'demo', priority: 'normal', config }, config, usage: usage(50, 10) });
+  assert.strictEqual(usageVerdict(configured).resumeAt, T0 + 60 * MINUTE);
+});
+
+test('the time a usage limit resets is read from its message', () => {
+  // In the machine's time zone, the next time it comes after the failure.
+  const at = (hour, minute) => {
+    const date = new Date(T0);
+    date.setHours(hour, minute, 0, 0);
+    return date.getTime();
+  };
+  const since = at(1, 0);
+  assert.strictEqual(parseResetTime("You've hit your 5-hour limit · resets 2:54am (Europe/Paris)", since), at(2, 54));
+  assert.strictEqual(parseResetTime('resets 11pm', since), at(23, 0));
+  assert.strictEqual(parseResetTime('resets 12:30am', since), at(0, 30) + 24 * 60 * MINUTE);
+  assert.strictEqual(parseResetTime('Limit reached, resets 9:15pm', at(22, 0)), at(21, 15) + 24 * 60 * MINUTE);
+  for (const text of ['limit reached', 'resets soon', 'resets 13pm', null]) assert.strictEqual(parseResetTime(text, since), null, text);
+});
+
+test('a usage limit hit pauses until the time of its message, otherwise after 15, 30, then 60 min', () => {
+  const failure = (message, minutes = 1) => ({ at: iso(T0 - minutes * MINUTE), error: 'rate_limit', message });
+  const limited = (fail, watch = emptyWatch()) =>
+    usageVerdict(observation({ watch, readings: { [LEAD]: { ...beat(T0 - 2 * MINUTE), failure: fail } } }));
+  const resetsAt = new Date(T0 + 3 * 60 * MINUTE);
+  const text = `You've hit your 5-hour limit · resets ${resetsAt.getHours() % 12 || 12}:${String(resetsAt.getMinutes()).padStart(2, '0')}${resetsAt.getHours() < 12 ? 'am' : 'pm'}`;
+  assert.deepStrictEqual(limited(failure(text)), { resumeAt: resetsAt.getTime(), reason: `rate_limit ${LEAD}`, failureAt: iso(T0 - MINUTE) });
+  const tries = [0, 1, 2, 3, 7].map((usageTries) => (limited(failure('limit reached'), { ...emptyWatch(), usageTries }).resumeAt - T0) / MINUTE);
+  assert.deepStrictEqual(tries, [15, 30, 60, 60, 60]);
+  // A crew member's limit counts too.
+  const crew = session(CREW, 'demo/crew/1', 'crew');
+  const fromCrew = observation({ registry: [leadRecord, crew], readings: { [LEAD]: beat(T0 - MINUTE), [CREW]: { heartbeat: null, failure: failure('x') } } });
+  assert.strictEqual(usageVerdict(fromCrew).reason, `rate_limit ${CREW}`);
+  // Not one before the last heartbeat, older than 5 h, of another error, or already paused for.
+  assert.strictEqual(limited(failure('x', 3)), null);
+  const old = { registry: [leadRecord, crew], readings: { [LEAD]: beat(T0 - MINUTE), [CREW]: { heartbeat: null, failure: failure('x', 301) } } };
+  assert.strictEqual(usageVerdict(observation(old)), null);
+  assert.strictEqual(limited({ ...failure('x'), error: 'server_error' }), null);
+  assert.strictEqual(limited(failure('x'), { ...emptyWatch(), usagePausedFor: iso(T0 - MINUTE) }), null);
+});
+
+test('a measured usage past the threshold wakes a running lead to push its work, and stops nothing yet', () => {
+  const { actions, watch } = decide(observation({ usage: usage(90, 10) }));
+  assert.deepStrictEqual(actions, [
+    { type: 'pause-mission', resumeAt: T0 + 60 * MINUTE, reason: 'five-hour 90% >= 85%', wake: true, log: `usage-pause until ${iso(T0 + 60 * MINUTE)}: five-hour 90% >= 85%` },
+  ]);
+  assert.strictEqual(watch.usageTries, 0);
+  // A lead without a process is not woken: the sessions are stopped at once.
+  const crew = session(CREW, 'demo/crew/1', 'crew');
+  const absent = decide(observation({ usage: usage(90, 10), registry: [leadRecord, crew], rows: [row(leadRecord, { state: 'failed', pid: null }), row(crew)] }));
+  assert.deepStrictEqual(absent.actions.map((action) => [action.type, action.wake]), [['pause-mission', false], ['stop-session', undefined]]);
+});
+
+test('a paused mission stops its sessions once its lead has ended its turn or past the grace, and starts nothing', () => {
+  const crew = session(CREW, 'demo/crew/1', 'crew');
+  const pause = { at: iso(T0 - MINUTE), reason: 'five-hour 90% >= 85%', resumeAt: iso(T0 + 60 * MINUTE) };
+  const paused = (fields) => observation({ pause, registry: [leadRecord, crew], rows: [row(leadRecord), row(crew)], ...fields });
+  // Active, within the grace: nothing, not even a pause again.
+  assert.deepStrictEqual(decide(paused({ usage: usage(90, 10) })).actions, []);
+  // Past the grace, or once the lead is idle: the crew, then the lead.
+  for (const obs of [paused({ now: T0 + 2 * MINUTE }), paused({ rows: [IDLE_ROW, row(crew)] })]) {
+    assert.deepStrictEqual(stopped(decide(obs).actions), [CREW, LEAD]);
+  }
+  // Nothing runs, before the time to resume: no relaunch of the absent lead, no crew failed as lost,
+  // no wake for its changes, nothing counted for the breaker.
+  const down = paused({
+    now: T0 + 59 * MINUTE,
+    rows: [row(leadRecord, { state: 'failed', pid: null }), row(crew, { state: 'failed', pid: null })],
+    unseen: unseen(A_FAILED, { toFail: [{ id: 'a', shortId: CREW, summary: 'lost' }] }),
+    watch: { ...emptyWatch(), lastRelaunchAt: iso(T0 - 10 * MINUTE) },
+  });
+  const left = decide(down);
+  assert.deepStrictEqual(left.actions, []);
+  assert.strictEqual(left.watch.failedRelaunches, 0);
+});
+
+test('a paused mission resumes at its time once the measured usage is under the threshold or unknown', () => {
+  const pause = { at: iso(T0 - 70 * MINUTE), reason: 'five-hour 90% >= 85%', resumeAt: iso(T0) };
+  const down = (fields) =>
+    observation({ pause, rows: [row(leadRecord, { state: 'failed', pid: null })], watch: { ...emptyWatch(), leadLostSince: iso(T0 - 60 * MINUTE) }, ...fields });
+  assert.deepStrictEqual(decide(down({ usage: usage(90, 10) })).actions, []);
+  assert.deepStrictEqual(decide(down({ now: T0 - 1000, usage: usage(10, 10) })).actions, []);
+  for (const fields of [{ usage: usage(10, 10) }, { usage: null }]) {
+    const { actions, watch } = decide(down(fields));
+    assert.deepStrictEqual(actions, [{ type: 'resume-mission', log: `usage-resumed ${LEAD}` }, { type: 'relaunch-lead', resume: false }]);
+    assert.strictEqual(watch.leadLostSince, null);
+  }
+});
+
+test('the tries after usage limits without a time grow until the lead works again', () => {
+  const failure = (minutes) => ({ at: iso(T0 + minutes * MINUTE), error: 'rate_limit', message: 'limit reached' });
+  const first = decide(observation({ now: T0 + MINUTE, readings: { [LEAD]: { ...beat(T0 - MINUTE), failure: failure(0) } } }));
+  assert.strictEqual(first.watch.usageTries, 1);
+  assert.strictEqual(first.actions[0].resumeAt, T0 + 16 * MINUTE);
+  // Resumed, the lead fails again without having worked: 30 min this time.
+  const again = decide(observation({ now: T0 + 20 * MINUTE, watch: first.watch, readings: { [LEAD]: { ...beat(T0 - MINUTE), failure: failure(19) } } }));
+  assert.strictEqual(again.watch.usageTries, 2);
+  assert.strictEqual(again.actions[0].resumeAt, T0 + 50 * MINUTE);
+  // A heartbeat after the last limit: the tries start again.
+  const worked = decide(observation({ now: T0 + 60 * MINUTE, watch: again.watch, readings: { [LEAD]: { ...beat(T0 + 59 * MINUTE), failure: failure(19) } } }));
+  assert.strictEqual(worked.watch.usageTries, 0);
+});
+
+test('a paused mission still answers and reminds of its questions, and starts nothing', () => {
+  const pause = { at: iso(T0 - 70 * MINUTE), reason: 'five-hour 90% >= 85%', resumeAt: iso(T0 + 60 * MINUTE) };
+  const config = { questions: { onTimeout: 'recommended', timeoutMinutes: 60 } };
+  const questions = [openQuestion('q-a', 61 * MINUTE), openQuestion('q-perm-0123456789ab', 61 * MINUTE, { kind: 'permission' })];
+  const rows = [row(leadRecord, { state: 'failed', pid: null })];
+  const { actions } = decide(observation({ pause, config, questions, rows, unseen: unseen(A_DONE) }));
+  assert.deepStrictEqual(actions.map((action) => action.type), ['answer-question', 'remind-question']);
 });
