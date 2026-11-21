@@ -182,13 +182,15 @@ test('permission hook allows a listed command and denies the rest', () => {
   assert.deepStrictEqual(decide('Bash', { command: 'git status --short' }), allow);
   assert.deepStrictEqual(decide('Bash', { command: 'npm test' }), allow);
   assert.deepStrictEqual(decide('Read', { file_path: path.join(cwd, 'a.js') }), allow);
-  assert.deepStrictEqual(decide('Bash', { command: 'git status && rm -r src' }), {
+  const denied = decide('Bash', { command: 'git status && rm -r src' });
+  const id = questionFiles(home)[0].replace(/\.json$/, '');
+  assert.match(id, /^q-perm-[0-9a-f]{12}$/);
+  assert.deepStrictEqual(denied, {
     hookSpecificOutput: {
       hookEventName: 'PermissionRequest',
       decision: {
         behavior: 'deny',
-        message:
-          'Blocked by Relaylead: Bash command not in the allowed tools. Continue with the rest of the task, one command per call.',
+        message: `Blocked by Relaylead: Bash command not in the allowed tools. Asked the user (question ${id}), continue with the rest of the task, one command per call.`,
       },
     },
   });
@@ -199,8 +201,56 @@ test('permission hook allows a listed command and denies the rest', () => {
     lines.map((line) => line.split(' ').slice(1).join(' ')),
     ['Bash Bash command not in the allowed tools', 'Write Write not in the allowed tools'],
   );
-  // No question is created: the permission question belongs to lot 3.
-  assert.strictEqual(fs.existsSync(path.join(home, 'missions', 'demo', 'questions')), false);
+  // One question per request out of the lists, about the whole command.
+  const questions = questionFiles(home).map((file) => readQuestion(home, file));
+  const options = ['Refuse', 'Allow once', 'Always allow in this mission'];
+  assert.deepStrictEqual(
+    questions.map((question) => [question.kind, question.text, question.options]).sort(),
+    [
+      ['permission', 'git status && rm -r src', options],
+      ['permission', path.join(cwd, 'a.js'), options],
+    ].sort(),
+  );
+});
+
+test('permission hook follows the user\'s answer to its question', () => {
+  const home = missionHome({});
+  const env = { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'demo' };
+  const cwd = tmpDir();
+  const decide = (command) =>
+    JSON.parse(runHook(PERMISSION, { tool_name: 'Bash', tool_input: { command }, cwd }, env)).hookSpecificOutput.decision.behavior;
+  const idOf = (command) => {
+    decide(command);
+    const file = questionFiles(home).find((name) => /^q-perm-[0-9a-f]{12}\.json$/.test(name) && readQuestion(home, name).text === command);
+    return file.replace(/\.json$/, '');
+  };
+
+  const always = idOf('make build');
+  answer(home, always, 'Always allow in this mission');
+  assert.deepStrictEqual([decide('make build'), decide('make build')], ['allow', 'allow']);
+
+  const once = idOf('make lint');
+  answer(home, once, 'Allow once');
+  assert.deepStrictEqual([decide('make lint'), decide('make lint')], ['allow', 'deny']);
+
+  const refused = idOf('make clean');
+  answer(home, refused, 'Refuse');
+  assert.strictEqual(decide('make clean'), 'deny');
+  // No new question for an answered one.
+  const asked = questionFiles(home).filter((name) => /^q-perm-[0-9a-f]+\.json$/.test(name));
+  assert.strictEqual(asked.length, 3);
+});
+
+test('permission hook asks at most 10 open permission questions', () => {
+  const home = missionHome({});
+  const env = { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'demo' };
+  const cwd = tmpDir();
+  for (let i = 1; i <= 11; i++) {
+    const out = JSON.parse(runHook(PERMISSION, { tool_name: 'Bash', tool_input: { command: `make step${i}` }, cwd }, env));
+    assert.strictEqual(out.hookSpecificOutput.decision.behavior, 'deny');
+  }
+  assert.strictEqual(questionFiles(home).length, 10);
+  assert.match(journal(home), /no question asked: 10 permission questions already open\n$/);
 });
 
 test('permission hook answers even with a wrong-shaped guard', () => {
