@@ -20,6 +20,8 @@ const { listTasks, markFailed } = require('./tasks');
 const { unseenChanges } = require('./wait');
 const { unreadCount, sendMail } = require('./mailbox');
 const { writeJournal } = require('./guard');
+const { listQuestions, answerQuestion } = require('./questions');
+const { notify } = require('./notify');
 const { withMissionLock, takeOverStaleLock, EMPTY_LOCK_STALE_MS } = require('./mission-lock');
 const { sleep } = require('./timing');
 const { watchLog, watchLogFile } = require('./watch-log');
@@ -167,6 +169,13 @@ async function observe(name) {
   for (const shortId of new Set([lead.shortId, ...(rows || []).map((row) => row.shortId)])) {
     mail[shortId] = unreadCount(name, shortId);
   }
+  // The open questions, for rule 30; null when one cannot be read.
+  let questions = null;
+  try {
+    questions = listQuestions(name, { state: 'open' });
+  } catch {
+    // being written, or unreadable: rule 30 waits for the next pass
+  }
   return {
     now,
     mission,
@@ -184,6 +193,7 @@ async function observe(name) {
     mail,
     config: mission.config,
     watch,
+    questions,
   };
 }
 
@@ -213,6 +223,13 @@ async function act(name, action, watch) {
     } else if (action.type === 'mail') {
       logLine(name, action.log);
       sendMail(name, action.shortId, action.text);
+    } else if (action.type === 'answer-question') {
+      answerQuestion(name, action.id, action.choice); // throws when the user answered meanwhile
+      logLine(name, action.log);
+      writeJournal(name, 'watcher', action.log);
+    } else if (action.type === 'remind-question') {
+      logLine(name, action.log);
+      notify({ title: `Relaylead: ${name}`, text: action.text });
     } else {
       throw new Error(`unknown action ${action.type}`);
     }
