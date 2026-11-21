@@ -69,9 +69,22 @@ function takeMail() {
 
 // The env carries RELAYLEAD_MISSION and RELAYLEAD_HOME; no shell and no PATH lookup. A failed command
 // is still an action of the session: its heartbeat is written and its mail taken too.
+// A message that asks the session to give up: a lead to hand over, a crew member whose context is
+// full to fail its task. Seen in the mail taken after a command, it ends the lead's loop (HANDOVER).
+let toldTo = null;
+const HANDOVER = new Error('told to hand over');
+
+function readOrders(texts) {
+  for (const text of texts) {
+    if (text.includes('relaylead state set handover')) toldTo = toldTo || 'handover';
+    if (text.includes('relaylead task fail')) toldTo = toldTo || 'fail';
+  }
+}
+
 function relaylead(...args) {
+  let result;
   try {
-    return logged(`relaylead ${args.join(' ')}`, () =>
+    result = logged(`relaylead ${args.join(' ')}`, () =>
       runFileSync(process.execPath, [CLI, ...args], {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -80,8 +93,10 @@ function relaylead(...args) {
     );
   } finally {
     commandHeartbeat();
-    takeMail();
+    readOrders(takeMail());
   }
+  if (toldTo === 'handover' && process.argv[2] === 'lead') throw HANDOVER;
+  return result;
 }
 
 // Like a real crew member's git (gc and maintenance left as they are), but the agent does not wait
@@ -157,6 +172,12 @@ function lead() {
   try {
     leadLoop();
   } catch (err) {
+    if (err === HANDOVER) {
+      toldTo = 'handed-over';
+      relaylead('state', 'set', 'handover', '--note', 'fake handover');
+      endTurn();
+      return;
+    }
     // The text of not-current-lead (core/messages.js), in English or in French.
     if (!/is no longer the lead of mission|n'est plus le lead de la mission/.test(String(err.stderr || ''))) throw err;
     log('not the current lead: ending the turn');
@@ -227,11 +248,21 @@ function crew() {
   if (!gate) return work(id);
   // Behind the gate (a folder): waits for <gate>/<id>, reading its mail every 50 ms.
   const timer = setInterval(() => {
-    takeMail();
+    readOrders(takeMail());
+    if (toldTo === 'fail') {
+      clearInterval(timer);
+      return failContextFull(id);
+    }
     if (!fs.existsSync(path.join(gate, id))) return;
     clearInterval(timer);
     work(id);
   }, 50);
+}
+
+// Told its context is full: fails its task, and ends.
+function failContextFull(id) {
+  relaylead('task', 'fail', id, '--summary', 'context full: fake');
+  process.exit(0);
 }
 
 function work(id) {
@@ -246,6 +277,7 @@ function work(id) {
       git('add', `${id}.txt`);
       git('commit', '-m', id);
     }
+    if (toldTo === 'fail') return failContextFull(id);
     relaylead('task', 'done', id, '--summary', 'fake work');
   }, 1000);
 }

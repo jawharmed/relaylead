@@ -15,10 +15,10 @@ const { spawnDetached } = require('./detached');
 const { listSessions, recordSession, isAlive } = require('./sessions');
 const { readReadings } = require('./readings');
 const missions = require('./missions');
-const { stopSessionsAndWait, launchLead, launchWhileOpen } = missions;
+const { stopSessionsAndWait, launchLead, launchWhileOpen, writeState } = missions;
 const { listTasks, markFailed } = require('./tasks');
 const { unseenChanges } = require('./wait');
-const { unreadCount } = require('./mailbox');
+const { unreadCount, sendMail } = require('./mailbox');
 const { writeJournal } = require('./guard');
 const { withMissionLock, takeOverStaleLock, EMPTY_LOCK_STALE_MS } = require('./mission-lock');
 const { sleep } = require('./timing');
@@ -208,6 +208,11 @@ async function act(name, action, watch) {
       await relaunchLead(name, action.resume, watch);
     } else if (action.type === 'trip-breaker') {
       await tripBreaker(name);
+    } else if (action.type === 'hand-over') {
+      await handOver(name, action, watch);
+    } else if (action.type === 'mail') {
+      logLine(name, action.log);
+      sendMail(name, action.shortId, action.text);
     } else {
       throw new Error(`unknown action ${action.type}`);
     }
@@ -306,6 +311,54 @@ async function relaunchLead(name, resume, watch) {
   watch.leadLostSince = null;
   if (!resumed) Object.assign(watch, WAKE_MEMORY);
   watchLog(name, 'relaunch-lead', resumed ? `${old.shortId} resumed` : `${old.shortId} as ${session.name}`);
+}
+
+// The section a new lead gets before the mission after a handover ("## Handover").
+function handoverSection(old, reason, note) {
+  const how = {
+    asked: `which handed over with this note: ${note || '-'}`,
+    forced: 'which handed over when its context was full',
+    idle: 'which was idle past its context threshold',
+  }[reason];
+  return `## Handover\n\nYou take over from the lead session ${old}, ${how}. You remember nothing, the files hold everything. Start with \`relaylead task list\`.`;
+}
+
+// Rules 9, 12 and 13: the old lead is stopped if it has a process, `starting` is written (before the
+// launch: the new lead acts before launch returns, and its `working` must not be erased), then the next
+// lead is launched within launchWhileOpen, which stops it if a stop came meanwhile. A mission finished,
+// stopped or being stopped: nothing. A handover that throws otherwise counts for the breaker, and the
+// state it found is written back, so the handover is tried again. lastLeadActionAt is set at the start:
+// a handover that throws then counts as a wake without effect too, at the next judgement of the wakes.
+async function handOver(name, { reason, note, tokens }, watch) {
+  const startedAt = new Date().toISOString();
+  watch.lastRelaunchAt = startedAt;
+  watch.lastLeadActionAt = startedAt;
+  const record = readState(name);
+  if (FINISHED.includes(record.state) || record.stopping) return;
+  const mission = readJson(missionFile(name, 'mission.json'));
+  const old = readJson(missionFile(name, 'lead.json'));
+  const stop = (launched) => stopSessionsAndWait(mission, [launched]);
+  const detail = { asked: note || '-', forced: `forced at ${tokens} tokens`, idle: 'idle past the soft threshold' }[reason];
+  let session;
+  try {
+    const oldSession = listSessions(name).find((candidate) => candidate.shortId === old.shortId);
+    const rows = await getAdapter(mission.agent).list(name);
+    if (oldSession && rows.some((row) => row.shortId === old.shortId && row.pid)) await stopSession(name, oldSession);
+    const now = readState(name);
+    if (FINISHED.includes(now.state) || now.stopping) return;
+    writeState(name, { state: 'starting', note: `taken over from ${old.sessionName}: ${detail}` });
+    session = await launchWhileOpen(name, () => launchLead(mission, { section: handoverSection(old.sessionName, reason, note) }), stop);
+  } catch (err) {
+    if (['mission-stopped', 'mission-done'].includes(err.code)) return;
+    countFailedRelaunch(watch);
+    const now = readState(name);
+    if (now.state === 'starting' && !now.stopping) writeJson(missionFile(name, 'state.json'), record);
+    throw err;
+  }
+  watch.handoverNoticeFor = null;
+  watch.leadLostSince = null;
+  Object.assign(watch, WAKE_MEMORY);
+  watchLog(name, 'hand-over', `${old.sessionName} to ${session.name}: ${detail}`);
 }
 
 // Stops a session and waits for its end, in two steps (stopSessionsAndWait). Throws when the stop

@@ -186,3 +186,41 @@ test('a lead killed in the middle of a mission is resumed and the mission ends w
   assertEachTaskOnce(mission);
   for (const id of ['a', 'b']) assert.strictEqual(git(dir, 'show', `relaylead/integration:${id}.txt`), `fake work on ${id}`);
 });
+
+test('a lead past a low threshold hands over and the mission ends without loss', { timeout: 3 * MISSION_MS }, async (t) => {
+  const missions = setup(t, {
+    RELAYLEAD_FAKE_TOKENS_PER_COMMAND: '1000',
+    RELAYLEAD_LEAD_QUIET_MS: '300',
+    RELAYLEAD_RESTART_GRACE_MS: '300',
+  });
+  const dir = gitRepo({ ...toyFiles(), '.relaylead.json': JSON.stringify({ context: { budgets: { lead: 6000 } } }) });
+  const mission = await launch(t, missions, dir);
+  const report = () => missionReport(mission) + '\n--- watcher.log\n' + watcherLog();
+
+  let answered = false;
+  await passUntil(
+    async () => {
+      if (stateOf(mission) === 'done') return true;
+      const question = readJson(path.join(missionDir(mission), 'questions', 'q-b.json'), null);
+      if (!answered && question && stateOf(mission) === 'waiting' && (await leadIdle(mission))) {
+        const reply = await relaylead(['answer', mission, 'q-b', '1'], dir);
+        assert.strictEqual(reply.code, 0, reply.err);
+        answered = true;
+      }
+      return false;
+    },
+    'the mission to be done',
+    report,
+  );
+
+  const leads = listSessions(mission).filter((session) => session.role === 'lead');
+  assert.ok(leads.some((session) => session.name === `${mission}/lead/2`), report());
+  assert.match(watcherLog(), / hand-over /);
+  const current = leadOf(mission).shortId;
+  const rows = await fake.list(mission);
+  for (const old of leads.filter((session) => session.shortId !== current)) {
+    assert.ok(!rows.find((row) => row.shortId === old.shortId).pid, `${old.name} still runs\n${report()}`);
+  }
+  assertEachTaskOnce(mission);
+  for (const id of ['a', 'b']) assert.strictEqual(git(dir, 'show', `relaylead/integration:${id}.txt`), `fake work on ${id}`);
+});

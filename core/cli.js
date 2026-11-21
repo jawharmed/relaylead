@@ -207,8 +207,10 @@ commands.state = async (args, io) => {
     io.out.write(getState(mission) + '\n');
   } else {
     refuseReplacedLead(mission, io);
-    const outcome = await setState(mission, state, options.note);
+    const outcome = await setState(mission, state, options.note, { by: io.env.RELAYLEAD_SESSION || 'user' });
     if (outcome === 'skipped') io.out.write(t('missionStopSkipped', { mission }, language(io)));
+    // The watcher stops the old lead and starts the next one at once.
+    if (state === 'handover') await startTargetedPass(mission);
   }
   return 0;
 };

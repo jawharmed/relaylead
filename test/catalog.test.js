@@ -167,3 +167,14 @@ test('the lead method ends the turn only when no task runs', () => {
   assert.ok(lead.includes('not-current-lead'));
   assert.ok(lead.includes('`relaylead wait --timeout 0`'));
 });
+
+test('the lead and developer profiles say how to hand over', () => {
+  process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
+  const dir = tmpDir('relaylead-project-');
+  const lead = loadProfile('lead', { dir }).instructions;
+  assert.ok(lead.includes('## Handing over'));
+  assert.ok(lead.includes('relaylead state set handover --note'));
+  const developer = loadProfile('developer', { dir }).instructions;
+  assert.ok(developer.includes('## Context full'));
+  assert.ok(developer.includes('relaylead task fail <id> --summary "context full:'));
+});

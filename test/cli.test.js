@@ -282,3 +282,29 @@ test('task done and answer start a targeted pass only when helpers are on', asyn
   assert.strictEqual(await run(['answer', 'demo', 'q-l', '2'], makeIo()), 0);
   assert.deepStrictEqual(calls, [pass, pass]);
 });
+
+test('state set handover records who asked and starts a targeted pass', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  nameLead('demo/lead/1');
+  const calls = watcherHelpers(t, undefined);
+  assert.strictEqual(await run(['state', 'set', 'handover', '--note', 'a delivered, b next'], makeIo(leadEnv('demo/lead/1'))), 0);
+  const state = readJson(missionFile('state.json'));
+  assert.deepStrictEqual([state.state, state.note, state.by], ['handover', 'a delivered, b next', 'demo/lead/1']);
+  assert.deepStrictEqual(calls, [['watcher', 'run', '--mission', 'demo']]);
+  // Asked by the user.
+  assert.strictEqual(await run(['state', 'set', 'handover', '--mission', 'demo'], makeIo()), 0);
+  assert.strictEqual(readJson(missionFile('state.json')).by, 'user');
+});
+
+test('a handover note is cut to one line of 500 characters', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  watcherHelpers(t, 'off');
+  const note = `first line\nsecond ${'x'.repeat(600)}`;
+  assert.strictEqual(await run(['state', 'set', 'handover', '--note', note, '--mission', 'demo'], makeIo()), 0);
+  const written = readJson(missionFile('state.json')).note;
+  assert.strictEqual(written.length, 500);
+  assert.ok(written.startsWith('first line second xxx'));
+  assert.ok(written.endsWith('…'));
+});

@@ -17,7 +17,9 @@ const { withMissionLock, takeOverStaleLock, EMPTY_LOCK_STALE_MS } = require('./m
 const { watchLog } = require('./watch-log');
 
 // States the lead may declare. 'stopped' is written by the core only.
-const STATES = ['starting', 'working', 'waiting', 'done'];
+const STATES = ['starting', 'working', 'waiting', 'handover', 'done'];
+// The note of a handover goes into the next lead's first message: one line, this long at most.
+const HANDOVER_NOTE_MAX = 500;
 const REAP_POLL_MS = 2000;
 // The states after which no session of the mission may run.
 const FINISHED = ['done', 'stopped'];
@@ -346,11 +348,18 @@ function shownState(record) {
 }
 
 // `stopping: true` keeps the folder locked while the sessions of a stopped or done mission are being
-// stopped. Only the core writes it.
-function writeState(name, { state, note, stopping }) {
+// stopped. Only the core writes it. `by` says who asked for a handover.
+function writeState(name, { state, note, stopping, by }) {
   const record = { state, note, updatedAt: now() };
+  if (by) record.by = by;
   if (stopping) record.stopping = true;
   writeJson(missionFile(name, 'state.json'), record);
+}
+
+// A handover note on one line, HANDOVER_NOTE_MAX characters at most (cut and ended by …).
+function handoverNote(note) {
+  const line = String(note || '').replace(/\s+/g, ' ').trim();
+  return line.length > HANDOVER_NOTE_MAX ? `${line.slice(0, HANDOVER_NOTE_MAX - 1)}…` : line;
 }
 
 function getState(name) {
@@ -360,7 +369,8 @@ function getState(name) {
 
 // For `done`, returns 'stopped' once the sessions are stopped, or 'skipped' when a done replayed
 // was too old to stop its sessions again; null otherwise (any other state, or nothing left to stop).
-async function setState(name, state, note) {
+// A handover records `by`, the session that asked for it (or 'user'), and its note on one line.
+async function setState(name, state, note, { by } = {}) {
   const mission = readMission(name);
   if (!STATES.includes(state)) throw codedError('bad-state', { state, states: STATES.join(', ') });
   // A lead restarted after a stop must not erase the stop. Once done, only `done` again is taken:
@@ -368,6 +378,10 @@ async function setState(name, state, note) {
   const current = readStateRecord(name);
   if (current.state === 'stopped') throw codedError('mission-stopped', { mission: name });
   if (current.state === 'done' && state !== 'done') throw codedError('mission-finished', { mission: name });
+  if (state === 'handover') {
+    writeState(name, { state, note: handoverNote(note), by: by || 'user' });
+    return null;
+  }
   if (state !== 'done') {
     writeState(name, { state, note });
     return null;
@@ -769,6 +783,8 @@ module.exports = {
   readMission,
   getState,
   setState,
+  writeState,
+  handoverNote,
   reapLead,
   markReaperEnded,
   attachLead,

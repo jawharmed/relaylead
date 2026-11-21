@@ -800,3 +800,66 @@ test('a breaker stop that fails is replayed', async (t) => {
   const state = readJson(stateFile('demo'));
   assert.deepStrictEqual([state.state, state.stopping], ['stopped', undefined]);
 });
+
+test('a handover stops the old lead, starts the next one and writes starting', async (t) => {
+  withEnv(t, { RELAYLEAD_FAKE_END_FIRST_TURN: '1' });
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  const old = await launchIdleLead(dir, 'demo/lead/1');
+  writeLead('demo', old);
+  writeJson(stateFile('demo'), { state: 'handover', note: 'a delivered, b next', by: 'demo/lead/1' });
+  const seen = [];
+  const { launch } = fake;
+  fake.launch = async (spec) => {
+    seen.push({ state: readJson(stateFile('demo')), prompt: spec.prompt });
+    return launch(spec);
+  };
+  t.after(() => {
+    fake.launch = launch;
+  });
+
+  const actions = await watcher.tendMission('demo');
+  assert.deepStrictEqual(actions.map((action) => action.type), ['hand-over']);
+  assert.strictEqual(readJson(path.join(missionDir('demo'), 'lead.json')).sessionName, 'demo/lead/2');
+  assert.strictEqual(sessionEnded(old), true);
+  assert.strictEqual(seen.length, 1);
+  assert.deepStrictEqual([seen[0].state.state, seen[0].state.note], ['starting', 'taken over from demo/lead/1: a delivered, b next']);
+  const { prompt } = seen[0];
+  const handover = prompt.indexOf('## Handover');
+  assert.ok(handover !== -1 && handover < prompt.indexOf('## This mission'), prompt);
+  assert.match(prompt, /You take over from the lead session demo\/lead\/1, which handed over with this note: a delivered, b next\./);
+  assert.match(logText(), /demo hand-over demo\/lead\/1 to demo\/lead\/2: a delivered, b next/);
+});
+
+test('a failed handover counts towards the breaker', async (t) => {
+  absentLeadMission(t);
+  writeJson(stateFile('demo'), { state: 'handover', note: 'n', by: 'demo/lead/1' });
+  failingAgent(t, ['launch']);
+
+  await watcher.tendMission('demo');
+  assert.strictEqual(readJson(watchFile('demo')).failedRelaunches, 1);
+  assert.strictEqual(readJson(stateFile('demo')).state, 'handover');
+  assert.match(logText(), /demo error hand-over: launch failed/);
+});
+
+test('a crew told its context is full fails its task and the lead retries it', async (t) => {
+  const { recordStatusline } = require('../core/readings');
+  withEnv(t, { RELAYLEAD_FAKE_CREW_GATE: tmpDir('relaylead-gate-') });
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  writeJson(stateFile('demo'), { state: 'working' });
+  const lead = await launchIdleLead(dir, 'demo/lead/1');
+  writeLead('demo', lead);
+  const task = await startTask('demo', { id: 'a' });
+  const usage = (tokens) => ({ context_window: { context_window_size: 100000, current_usage: { input_tokens: tokens } } });
+  recordStatusline('demo', task.session, usage(30000)); // the base
+  recordStatusline('demo', task.session, usage(50000)); // past the hard threshold of 48000
+
+  const actions = await watcher.tendMission('demo');
+  assert.ok(actions.some((action) => action.type === 'mail' && action.log === `notify-context-full ${task.session} task a`), JSON.stringify(actions));
+  await waitFor(() => listTasks('demo')[0].state === 'failed', 30000, 'a to fail', () => missionReport('demo'));
+  assert.strictEqual(listTasks('demo')[0].summary, 'context full: fake');
+  const io = makeIo();
+  assert.strictEqual(await run(['task', 'retry', 'a', '--mission', 'demo'], io), 0, io.err.text);
+  assert.strictEqual(listTasks('demo')[0].attempt, 2);
+});
