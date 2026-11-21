@@ -364,7 +364,8 @@ const messages = {
 // Returns the message for `key` in `lang` (default English), replacing {name} by vars.name.
 function t(key, vars, lang) {
   const table = messages[lang] || messages.en;
-  const template = table[key];
+  // A text not translated yet (the v1 installation texts) is shown in English.
+  const template = table[key] === undefined ? messages.en[key] : table[key];
   return template.replace(/\{(\w+)\}/g, (_, name) => String(vars && vars[name]));
 }
 
