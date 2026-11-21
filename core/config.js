@@ -27,6 +27,9 @@ const DEFAULTS = {
   // The watcher (core/watcher.js), read from the machine file alone: autoStart, its loop started by
   // `relaylead launch`; helpers, its targeted passes; everySeconds, the time between two passes of the loop.
   watcher: { autoStart: true, helpers: true, everySeconds: 300 },
+  // How claude signs in: `login` (the Claude account already connected) or `api-key` (the key is in
+  // keyFile, `<home>/api-key` when null; core/auth.js).
+  auth: { mode: 'login', keyFile: null },
 };
 
 function isPlainObject(value) {

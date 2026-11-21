@@ -10,6 +10,8 @@ const { MIN_VERSION, buildLaunchArgs, compareVersion } = require('./args');
 const { writeSessionSettings } = require('./settings');
 const { parseLaunchOutput, mapState } = require('./sessions');
 const { sleep } = require('../../core/timing');
+const { loadConfig } = require('../../core/config');
+const { apiKeyEnv } = require('../../core/auth');
 
 const PACKAGE_DIR = path.join(__dirname, '..', '..');
 const POLL_MS = 250;
@@ -50,21 +52,25 @@ function claudeCommand() {
 
 // Runs `claude <args>` and resolves with its exit code, stdout and stderr. After `timeoutMs`, Node
 // kills it and the call fails with `claude-timeout` naming `label`.
-function runClaude(args, { cwd, label = `claude ${args.join(' ')}`, timeoutMs = commandTimeoutMs() } = {}) {
+function runClaude(args, { cwd, env, label = `claude ${args.join(' ')}`, timeoutMs = commandTimeoutMs() } = {}) {
   const { file, prefix } = claudeCommand();
   return new Promise((resolve, reject) => {
     const child = spawn(file, [...prefix, ...args], {
       cwd,
+      env,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
-      timeout: timeoutMs,
-      killSignal: 'SIGKILL',
     });
+    // Our own timer, not spawn's `timeout`: when claude does not exist, spawn's timer keeps the process alive.
+    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (chunk) => (stdout += chunk));
     child.stderr.on('data', (chunk) => (stderr += chunk));
-    child.once('error', (err) => reject(err.code === 'ENOENT' ? codedError('claude-not-found', {}) : err));
+    child.once('error', (err) => {
+      clearTimeout(timer);
+      reject(err.code === 'ENOENT' ? codedError('claude-not-found', {}) : err);
+    });
     child.once('exit', () => {
       // `killed` is only set by the timeout. A process it started may still hold the pipes: stop reading them.
       if (!child.killed) return;
@@ -72,8 +78,17 @@ function runClaude(args, { cwd, label = `claude ${args.join(' ')}`, timeoutMs = 
       child.stderr.destroy();
       reject(codedError('claude-timeout', { command: label, seconds: timeoutMs / 1000 }));
     });
-    child.once('close', (code) => resolve({ code, stdout, stderr }));
+    child.once('close', (code) => {
+      clearTimeout(timer);
+      resolve({ code, stdout, stderr });
+    });
   });
+}
+
+// The environment of a launch or a wake: ours, plus the API key in `api-key` mode (core/auth.js is
+// the only reader of the key). Not used by the calls that only list or stop sessions.
+function sessionEnv() {
+  return { ...process.env, ...apiKeyEnv(loadConfig()) };
 }
 
 function failed(command, { stdout, stderr }) {
@@ -91,6 +106,7 @@ async function checkVersion() {
   if (!compareVersion(versions[key], MIN_VERSION)) {
     throw codedError('claude-too-old', { found: versions[key] || 'unknown', min: MIN_VERSION });
   }
+  return versions[key];
 }
 
 // A prompt starting with "-" would be read by claude as an option.
@@ -179,7 +195,7 @@ async function launch(spec) {
     permissionMode: spec.permissionMode,
     prompt: spec.prompt,
   });
-  const { stdout, stderr } = await runClaude(args, { cwd: spec.cwd, label: 'claude --bg', timeoutMs: launchTimeoutMs() });
+  const { stdout, stderr } = await runClaude(args, { cwd: spec.cwd, env: sessionEnv(), label: 'claude --bg', timeoutMs: launchTimeoutMs() });
   const output = stdout + stderr;
   const result = parseLaunchOutput(output);
   if (result.error === 'untrusted-dir') throw codedError('untrusted-dir', { dir: spec.cwd });
@@ -243,7 +259,7 @@ async function wake(session, message) {
   await stop(session);
   await waitUntilEnded(session, listedPid || session.pid, settleBoundMs(wakeTimeoutMs(), { fallback: !listedPid }));
   const args = ['--bg', '--resume', session.sessionId, message];
-  const { stdout, stderr } = await runClaude(args, { cwd: session.cwd, label: 'claude --bg --resume', timeoutMs: launchTimeoutMs() });
+  const { stdout, stderr } = await runClaude(args, { cwd: session.cwd, env: sessionEnv(), label: 'claude --bg --resume', timeoutMs: launchTimeoutMs() });
   const output = stdout + stderr;
   const result = parseLaunchOutput(output);
   if (result.error === 'untrusted-dir') throw codedError('untrusted-dir', { dir: session.cwd });
@@ -295,6 +311,8 @@ async function wokenSession(session) {
 
 module.exports = {
   name: 'claude',
+  claudeCommand,
+  checkVersion,
   capabilities: ['launch', 'list', 'stop', 'attach', 'wake'],
   // `claude stop <id>` is harmless on a session already stopped: `relaylead stop` may run again.
   stopById: true,

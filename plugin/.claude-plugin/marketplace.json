@@ -1,0 +1,11 @@
+{
+  "name": "relaylead-local",
+  "owner": { "name": "relaylead" },
+  "plugins": [
+    {
+      "name": "relaylead",
+      "source": "./",
+      "description": "Slash commands for relaylead"
+    }
+  ]
+}

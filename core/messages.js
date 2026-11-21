@@ -15,6 +15,10 @@ const messages = {
       '  question  ask the user a question',
       '  answer    answer a question',
       '  watcher   watch the missions: restart, wake and relieve their leads',
+      '  init      set up relaylead on this machine and in this project',
+      '  install   register the scheduler and the Claude Code plugin (macOS)',
+      '  uninstall remove what install added (--purge also deletes ~/.relaylead)',
+      '  doctor    check the prerequisites and the installation',
       '',
       'Options:',
       '  --help, -h     show this help',
@@ -177,6 +181,39 @@ const messages = {
       'the pull request {url} of task "{id}" cannot be merged: it conflicts with the integration branch; have the conflict fixed on its branch, then deliver again',
     // Not an error: the address of a delivered task's pull request, shown with the delivery's warnings.
     'pr-merged': 'task "{id}": pull request {url} merged',
+    // Lot 4: installation.
+    'platform-unsupported': 'relaylead install works on macOS only for now (this system: {platform})',
+    'scheduler-installed': 'scheduler installed ({file})\n',
+    'scheduler-removed': 'scheduler removed\n',
+    'scheduler-failed': 'scheduler step "{step}" failed: {detail}',
+    'api-key-missing':
+      'API key mode is on but the key file {file} is missing or empty; set it with: relaylead init --api-key-env NAME (or --api-key-file PATH)',
+    'api-key-env-empty': 'the environment variable {name} is not set or empty',
+    'plugin-installed': 'plugin installed: {id}\n',
+    'plugin-skipped': 'plugin skipped: claude not found\n',
+    'plugin-removed': 'plugin removed: {id}\n',
+    'nothing-installed': 'nothing to uninstall: relaylead install was not run\n',
+    purged: 'deleted {dir}\n',
+    'purge-refused': 'refusing to delete {dir}: it does not look like a relaylead folder (no install.json nor install marker, and not named .relaylead)',
+    'node-too-old': 'Node.js {min} or later is needed, found {found}',
+    'agent-missing': 'the agent "{agent}" was not found; install Claude Code, then run relaylead init again',
+    'api-key-stored': 'API key stored in {file}, readable by you only\n',
+    'api-key-approval-hint':
+      'if Claude Code asks you to approve the API key, run `claude` once in a terminal and accept\n',
+    'init-machine-written': 'machine settings written to {file}\n',
+    'init-machine-kept': 'machine settings kept as they are ({file})\n',
+    'init-project-written': 'project settings written to {file}\n',
+    'init-project-kept': 'project settings kept as they are ({file})\n',
+    'init-trust-hint':
+      'if Claude Code has never run in {dir}, run `claude` once there and accept the trust question, so missions can start\n',
+    'init-advice': [
+      'Access tips: give the sessions only the access they need.',
+      'Keep secrets (.env files, keys) out of the project folder when you can.',
+      'Review what a mission delivered before you merge it.',
+      '',
+    ].join('\n'),
+    'uninstall-warning': 'warning: could not remove the {step} ({detail}); do it by hand with: {command}\n',
+    'init-next': 'next: relaylead install (scheduler and plugin), then relaylead doctor\n',
   },
   fr: {
     help: [
@@ -359,7 +396,8 @@ const messages = {
 // Returns the message for `key` in `lang` (default English), replacing {name} by vars.name.
 function t(key, vars, lang) {
   const table = messages[lang] || messages.en;
-  const template = table[key];
+  // A text not translated yet (the v1 installation texts) is shown in English.
+  const template = table[key] === undefined ? messages.en[key] : table[key];
   return template.replace(/\{(\w+)\}/g, (_, name) => String(vars && vars[name]));
 }
 

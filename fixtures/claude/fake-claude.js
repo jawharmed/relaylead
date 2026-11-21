@@ -27,6 +27,11 @@
 //   noisy                   every command also writes a warning on stderr
 //   agents-fail-after-wake  `agents` fails once a session has been woken
 //   agents-fail-after-one   `agents` answers once, then fails
+//   plugin-fail             `plugin list` fails
+//   plugin-install-fail     `plugin install` fails
+// `plugin ...` commands keep the marketplaces and plugins in FAKE_CLAUDE_STATE/plugins.json. Each call
+// writes the ANTHROPIC_API_KEY it got in FAKE_CLAUDE_STATE/env.log ("-" when unset): a test passes it a
+// made-up value, never a real key.
 // Every call is appended to FAKE_CLAUDE_STATE/calls.log (one JSON array of arguments per line). A test
 // ends every sleeper it started by writing FAKE_CLAUDE_STATE/stop-all.
 const crypto = require('node:crypto');
@@ -217,13 +222,57 @@ function agents() {
   return 0;
 }
 
+// `plugin marketplace add|remove|list`, `plugin install|uninstall|list`. Strict like Claude Code: adding
+// what is there, or removing what is not, fails. `plugin-install-fail` makes `plugin install` fail.
+function plugin(args) {
+  const file = path.join(STATE_DIR, 'plugins.json');
+  const state = readJson(file, { marketplaces: [], plugins: [] });
+  const [verb, argument] = args;
+  const fail = (text) => {
+    process.stderr.write(`Error: ${text}\n`);
+    return 1;
+  };
+  if (verb === 'marketplace') {
+    if (args[1] === 'list') {
+      process.stdout.write(JSON.stringify(state.marketplaces.map((name) => ({ name }))) + '\n');
+      return 0;
+    }
+    if (args[1] === 'add') {
+      const name = readJson(path.join(args[2], '.claude-plugin', 'marketplace.json'), { name: args[2] }).name;
+      if (state.marketplaces.includes(name)) return fail(`marketplace ${name} already exists`);
+      state.marketplaces.push(name);
+    } else {
+      if (!state.marketplaces.includes(args[2])) return fail(`marketplace ${args[2]} not found`);
+      state.marketplaces = state.marketplaces.filter((known) => known !== args[2]);
+    }
+  } else if (verb === 'install') {
+    if (SCENARIO.has('plugin-install-fail')) return fail('could not install');
+    if (state.plugins.includes(argument)) return fail(`${argument} is already installed`);
+    state.plugins.push(argument);
+  } else if (verb === 'uninstall') {
+    if (!state.plugins.includes(argument)) return fail(`${argument} is not installed`);
+    state.plugins = state.plugins.filter((id) => id !== argument);
+  } else if (verb === 'list') {
+    if (SCENARIO.has('plugin-fail')) return fail('plugin list failed');
+    process.stdout.write(JSON.stringify(state.plugins.map((id) => ({ id, version: '0.1.0', scope: 'user', enabled: true }))) + '\n');
+    return 0;
+  } else {
+    return fail(`unexpected plugin arguments ${JSON.stringify(args)}`);
+  }
+  writeJson(file, state);
+  process.stdout.write('ok\n');
+  return 0;
+}
+
 function main(args) {
   appendLog('calls.log', JSON.stringify(args) + '\n');
+  appendLog('env.log', (process.env.ANTHROPIC_API_KEY || '-') + '\n');
   if (SCENARIO.has('noisy')) process.stderr.write('warning: this is a noisy fake\n');
   if (args[0] === '--version') {
     process.stdout.write(SCENARIO.has('old-version') ? '2.1.300 (Claude Code)\n' : '2.1.325 (Claude Code)\n');
     return 0;
   }
+  if (args[0] === 'plugin') return plugin(args.slice(1));
   if (args[0] === 'agents') return agents();
   if (args[0] === 'stop') return stop(args[1]);
   // Silent: attach inherits the terminal, and the calls log is enough for the tests.
