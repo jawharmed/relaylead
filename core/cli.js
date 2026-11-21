@@ -23,6 +23,7 @@ const { home } = require('./paths');
 const detached = require('./detached');
 const { install, uninstall } = require('./install');
 const { doctor } = require('./doctor');
+const { init } = require('./init');
 const pkg = require('../package.json');
 
 // Options that take no value.
@@ -405,6 +406,12 @@ async function printDoctor(io) {
   for (const line of lines) io.out.write(`${line.level} ${line.name}: ${line.detail}\n`);
   return lines.some((line) => line.level === 'fail') ? 1 : 0;
 }
+
+commands.init = async (args, io) => {
+  refuseInSession('init', io);
+  await init(parseArgs(args).options, io, language(io));
+  return 0;
+};
 
 // Internal, not in the help: started by `state set done`, it stops the lead once its turn is over.
 // The createdAt of its mission (absent when started by an older relaylead) keeps it off a newer
