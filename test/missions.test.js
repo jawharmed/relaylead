@@ -171,6 +171,8 @@ test('launch starts the watcher when autoStart is on, says so on stderr, and not
     await waitFor(() => !fs.existsSync(loopFile), 30000, 'the loop to end after the test');
     if (saved === undefined) delete process.env.RELAYLEAD_WATCHER;
     else process.env.RELAYLEAD_WATCHER = saved;
+    // The loop may have relaunched a lead that the cleanup of freshHome, which ran first, had stopped.
+    for (const mission of listMissions()) for (const session of listSessions(mission.name)) await fake.stop(session);
   });
   const launch = (name) => cli(['launch', '--agent', 'fake', '--name', name, '--dir', tmpDir('relaylead-project-')]);
 

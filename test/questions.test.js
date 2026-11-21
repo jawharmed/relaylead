@@ -7,7 +7,9 @@ const { askQuestion, answerQuestion, listQuestions } = require('../core/question
 const { getState } = require('../core/missions');
 const { listTasks } = require('../core/tasks');
 const { waitForChanges } = require('../core/wait');
-const { writeJsonExclusive, readJson } = require('../core/store');
+const { writeJsonExclusive, readJson, writeJson } = require('../core/store');
+const { missionDir } = require('../core/paths');
+const fake = require('../adapters/fake');
 const { makeIo, waitFor, tmpDir } = require('../fixtures/helpers');
 const { setupProject, writeMission, missionReport } = require('../fixtures/missions');
 
@@ -126,6 +128,15 @@ test('wait reports an answered question', async (t) => {
 test('fake mission waits for the answer then finishes', async (t) => {
   const dir = setupProject(t, 'demo');
   fs.writeFileSync(path.join(dir, 'tasks', 'a.md'), '---\ntitle: First task\nask: Start the first task?\n---\n\nWrite it.\n');
+  // The lead ends its turn while it waits for the answer, which wakes it by a targeted pass of the
+  // watcher: RELAYLEAD_WATCHER is lifted for the test, and the machine config keeps the loop off.
+  const watcherVar = process.env.RELAYLEAD_WATCHER;
+  delete process.env.RELAYLEAD_WATCHER;
+  t.after(() => {
+    if (watcherVar !== undefined) process.env.RELAYLEAD_WATCHER = watcherVar;
+  });
+  const configFile = path.join(process.env.RELAYLEAD_HOME, 'config.json');
+  writeJson(configFile, { ...readJson(configFile, {}), watcher: { autoStart: false } });
 
   const launched = makeIo();
   assert.strictEqual(await run(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir], launched), 0, launched.err.text);
@@ -137,6 +148,17 @@ test('fake mission waits for the answer then finishes', async (t) => {
   assert.strictEqual(listTasks('demo').find((task) => task.id === 'a').state, 'todo');
   assert.notStrictEqual(getState('demo'), 'done');
 
+  // Answered once the lead has ended its turn: only the wake can take the mission further.
+  await waitFor(
+    async () => {
+      const lead = readJson(path.join(missionDir('demo'), 'lead.json'), null);
+      const row = lead && (await fake.list('demo')).find((one) => one.shortId === lead.shortId);
+      return getState('demo') === 'waiting' && Boolean(row && row.pid && row.idle === true);
+    },
+    30000,
+    'the lead to end its turn waiting for the answer',
+    report,
+  );
   const answered = makeIo();
   assert.strictEqual(await run(['answer', 'demo', 'q-a', 'yes'], answered), 0, answered.err.text);
   await waitFor(() => getState('demo') === 'done', 45000, 'the mission to be done', report);
