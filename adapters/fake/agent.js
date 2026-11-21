@@ -7,7 +7,8 @@ const { markEnded } = require('./watch-stop');
 const { missionDir, slug } = require('../../core/paths');
 const { readJson } = require('../../core/store');
 const { DEFAULTS } = require('../../core/config');
-const { recordHeartbeat, readReadings } = require('../../core/readings');
+const { recordHeartbeat, readReadings, recordFailure } = require('../../core/readings');
+const { recordUsage } = require('../../core/usage');
 const { readMail, markRead } = require('../../core/mailbox');
 const { runFileSync } = require('../../core/run-file');
 
@@ -49,6 +50,47 @@ function commandHeartbeat() {
   const last = mission ? readReadings(mission, process.env.RELAYLEAD_FAKE_SHORT_ID).heartbeat : null;
   const before = last && Number.isFinite(last.contextTokens) ? last.contextTokens : Number(process.env.RELAYLEAD_FAKE_BASE_TOKENS) || 40000;
   heartbeat('Bash', before + (Number(process.env.RELAYLEAD_FAKE_TOKENS_PER_COMMAND) || 0));
+}
+
+// The usage of the account, as the measuring status line would write it after each answer:
+// RELAYLEAD_FAKE_USAGE_FIVE_HOUR and RELAYLEAD_FAKE_USAGE_SEVEN_DAY (percent), both windows resetting
+// RELAYLEAD_FAKE_USAGE_RESETS_IN_S seconds from now (3600 by default). Nothing without them, and never
+// fails the agent.
+function fakeUsage() {
+  const resetsAt = Math.floor(Date.now() / 1000) + (Number(process.env.RELAYLEAD_FAKE_USAGE_RESETS_IN_S) || 3600);
+  const window = (name) => {
+    const percent = process.env[name];
+    return percent === undefined || percent === '' ? undefined : { used_percentage: Number(percent), resets_at: resetsAt };
+  };
+  try {
+    recordUsage('claude', { five_hour: window('RELAYLEAD_FAKE_USAGE_FIVE_HOUR'), seven_day: window('RELAYLEAD_FAKE_USAGE_SEVEN_DAY') });
+  } catch (err) {
+    log(`usage failed: ${err.message}`);
+  }
+}
+
+// A time as Claude Code writes it in the message of a usage limit: 2:54am.
+function clockTime(date) {
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${date.getHours() % 12 || 12}:${minutes}${date.getHours() < 12 ? 'am' : 'pm'}`;
+}
+
+// RELAYLEAD_FAKE_RATE_LIMIT=1: the turn fails on the usage limit at once, as the StopFailure hook
+// records it (no Stop hook, so no heartbeat), the limit resetting in an hour. Then the session stays
+// alive and idle, like a Claude session.
+function rateLimited() {
+  const resetsAt = new Date(Date.now() + 60 * 60 * 1000);
+  try {
+    recordFailure(process.env.RELAYLEAD_MISSION, process.env.RELAYLEAD_FAKE_SHORT_ID, {
+      error: 'rate_limit',
+      last_assistant_message: `You've hit your 5-hour limit · resets ${clockTime(resetsAt)}`,
+    });
+  } catch (err) {
+    log(`failure not recorded: ${err.message}`);
+  }
+  fs.writeFileSync(process.env.RELAYLEAD_FAKE_IDLE, '');
+  log('turn failed: rate_limit');
+  idle();
 }
 
 // The session's mail, as its PostToolUse hook would pass it on: each message goes to the log, then
@@ -94,6 +136,7 @@ function relaylead(...args) {
     );
   } finally {
     commandHeartbeat();
+    fakeUsage();
     readOrders(takeMail());
   }
   if (toldTo === 'handover' && process.argv[2] === 'lead') throw HANDOVER;
@@ -336,6 +379,7 @@ if (process.env.RELAYLEAD_FAKE_WAKE_MESSAGE) log(`woken: ${process.env.RELAYLEAD
 const role = process.argv[2];
 // For the tests: a session that ends its first turn at once, keeping its role in the registry.
 if (process.env.RELAYLEAD_FAKE_END_FIRST_TURN === '1') endTurn();
+else if (process.env.RELAYLEAD_FAKE_RATE_LIMIT === '1') rateLimited();
 else if (role === 'lead') lead();
 else if (role === 'crew' && process.env.RELAYLEAD_TASK) crew();
 else idle();

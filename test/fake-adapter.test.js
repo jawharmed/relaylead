@@ -317,3 +317,26 @@ test('a fake session takes its mail after each command', async (t) => {
   await waitFor(() => !fs.existsSync(later), 30000, 'the second mail to be read', explain);
   assert.ok(logText(lead).includes('mail: hello again'));
 });
+
+test('a fake session writes the usage of the account at each command, as the status line would', async (t) => {
+  const env = { RELAYLEAD_MISSION: 'demo', RELAYLEAD_FAKE_USAGE_FIVE_HOUR: '90', RELAYLEAD_FAKE_USAGE_RESETS_IN_S: '600' };
+  const session = await launchSession(t, env, 'lead', { mission: true });
+  recordSession('demo', session);
+  const { readUsage } = require('../core/usage');
+  await waitFor(() => readUsage('claude'), 30000, 'the usage', () => logText(session));
+  const usage = readUsage('claude');
+  assert.strictEqual(usage.fiveHour.percent, 90);
+  assert.strictEqual(usage.sevenDay, null);
+  const resetsIn = Date.parse(usage.fiveHour.resetsAt) - Date.now();
+  assert.ok(resetsIn > 500 * 1000 && resetsIn <= 600 * 1000, String(resetsIn));
+});
+
+test('a fake session told to hit the usage limit records the failure and ends its turn without a heartbeat', async (t) => {
+  const session = await launchSession(t, { RELAYLEAD_MISSION: 'demo', RELAYLEAD_FAKE_RATE_LIMIT: '1' }, 'lead');
+  recordSession('demo', session);
+  await waitFor(() => fs.existsSync(session.idleFile), 30000, 'the turn to fail', () => logText(session));
+  const { heartbeat, failure } = readReadings('demo', session.shortId);
+  assert.strictEqual(heartbeat, null);
+  assert.strictEqual(failure.error, 'rate_limit');
+  assert.match(failure.message, /^You've hit your 5-hour limit · resets \d{1,2}:\d\d(am|pm)$/);
+});
