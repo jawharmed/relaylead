@@ -1,6 +1,9 @@
 {
   "name": "relaylead-local",
-  "owner": { "name": "relaylead" },
+  "description": "Slash commands to launch and follow Relaylead missions",
+  "owner": {
+    "name": "relaylead"
+  },
   "plugins": [
     {
       "name": "relaylead",

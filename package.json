@@ -1,8 +1,26 @@
 {
   "name": "relaylead",
   "version": "0.1.0",
-  "description": "Run a team of AI coding-agent sessions on a mission",
+  "description": "Run a team of Claude Code sessions in the background on a mission, with a watcher, guardrails and questions only before the irreversible (macOS)",
   "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "ai-agents",
+    "agents",
+    "automation",
+    "cli",
+    "github-issues",
+    "pull-request",
+    "macos"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jawharmed/relaylead.git"
+  },
+  "homepage": "https://github.com/jawharmed/relaylead#readme",
+  "bugs": {
+    "url": "https://github.com/jawharmed/relaylead/issues"
+  },
   "bin": {
     "relaylead": "bin/relaylead.js"
   },
@@ -15,11 +33,15 @@
     "catalog",
     "plugin",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "docs/guide.md"
   ],
   "engines": {
     "node": ">=18"
   },
+  "os": [
+    "darwin"
+  ],
   "scripts": {
     "test": "node fixtures/run-tests.js"
   }
