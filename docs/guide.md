@@ -179,7 +179,7 @@ Stops the mission and all its sessions. The clean task worktrees are removed, ig
 
 ### `relaylead remove <mission> [--force]`
 
-Removes a finished (done or stopped) mission: its task worktrees (ignored files included), its task branches `relaylead/<mission>/...` and its state under `~/.relaylead/missions/`. The integration branch and its worktree stay, with the delivered work. It refuses, before deleting anything, a task branch with commits not merged into the integration branch and a task worktree with uncommitted changes or locked, and names them. `--force` deletes them anyway and prints each deleted branch with its last commit, so it can be recreated with `git branch <name> <commit>`.
+Removes a finished (done or stopped) mission: its task worktrees (ignored files included), its task branches `relaylead/<mission>/...` and its state under `~/.relaylead/missions/`. The mission's sessions are also taken out of the `claude agents` list (`claude rm`; their conversations stay in `claude --resume`). The integration branch and its worktree stay, with the delivered work. It refuses, before deleting anything, a task branch with commits not merged into the integration branch and a task worktree with uncommitted changes or locked, and names them. `--force` deletes them anyway and prints each deleted branch with its last commit, so it can be recreated with `git branch <name> <commit>`.
 
 ### `relaylead task`
 

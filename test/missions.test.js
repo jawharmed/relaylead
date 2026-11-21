@@ -900,7 +900,7 @@ test('an old stopping marker does not replay a stop by pid', async (t) => {
   assert.strictEqual(fs.existsSync(lock), false);
 });
 
-test('remove stops the fake sessions by id', async (t) => {
+test('remove stops the fake sessions by id, then has the agent forget them, even when that fails', async (t) => {
   freshHome(t);
   writeMission('demo', tmpDir('relaylead-project-')); // no lead: the test plays it
   await launchCrew(tmpDir('relaylead-project-'), 1);
@@ -914,11 +914,18 @@ test('remove stops the fake sessions by id', async (t) => {
     await original(session);
     await waitFor(() => sessionEnded(session), 30000, 'the crew member to end');
   });
+  // The fake agent keeps no list of its own; here it plays one whose removal fails.
+  const forgotten = [];
+  stub(t, 'forget', () => async (session) => {
+    forgotten.push(session.shortId);
+    throw new Error('could not forget');
+  });
 
   const removed = await cli(['remove', 'demo']);
 
   assert.strictEqual(removed.code, 0, removed.err);
   assert.strictEqual(stopCalls, 1);
+  assert.strictEqual(forgotten.length, 1);
   assert.strictEqual(fs.existsSync(missionDir('demo')), false);
 });
 

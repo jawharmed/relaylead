@@ -731,7 +731,7 @@ function launchRunning(name) {
 }
 
 // `relaylead remove`: frees the name and the folder of a finished mission. Its sessions are stopped
-// again by an adapter that stops by id, its task worktrees and branches are removed by the delivery,
+// again by an adapter that stops by id, then forgotten by the agent, its task worktrees and branches are removed by the delivery,
 // then its folder under missions/ is deleted. Returns the deleted branches ("<name> <sha>"), each
 // also passed to onBranchDeleted as soon as it is deleted.
 async function removeMission(name, { force = false, onBranchDeleted } = {}) {
@@ -758,6 +758,11 @@ async function removeMission(name, { force = false, onBranchDeleted } = {}) {
     const adapter = getAdapter(mission.agent);
     if (adapter.stopById) {
       for (const session of listSessions(name)) await adapter.stop(session);
+    }
+    // Then out of the agent's own list of sessions, when it keeps one (claude agents). Best effort: a
+    // session left listed is harmless, and must not keep the mission from being removed.
+    if (adapter.forget) {
+      for (const session of listSessions(name)) await adapter.forget(session).catch(() => {});
     }
     // A project folder deleted since has no worktree or branch left to remove.
     const branches = fs.existsSync(mission.dir)

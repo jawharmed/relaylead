@@ -29,6 +29,7 @@
 //   agents-fail-after-one   `agents` answers once, then fails
 //   plugin-fail             `plugin list` fails
 //   plugin-install-fail     `plugin install` fails
+//   rm-fail                 `rm` fails for a known session
 // `[--settings JSON] auth status --json` answers like Claude Code 2.1.330: apiKeySource
 // ANTHROPIC_API_KEY when that variable is set, apiKeyHelper when the settings have one, else the
 // connected account. It never runs the helper.
@@ -277,6 +278,22 @@ function authStatus(args) {
   return 0;
 }
 
+// Removes a session from the list. An unknown id: the answer of Claude Code 2.1.330, exit 1.
+function rm(shortId) {
+  const sessions = readSessions();
+  if (!sessions.some((session) => session.id === shortId)) {
+    process.stdout.write(`No session matching '${shortId}'\n`);
+    return 1;
+  }
+  if (SCENARIO.has('rm-fail')) {
+    process.stderr.write('Error: the background service did not answer\n');
+    return 1;
+  }
+  writeSessions(sessions.filter((session) => session.id !== shortId));
+  process.stdout.write(`Removed ${shortId}\n`);
+  return 0;
+}
+
 function main(args) {
   appendLog('calls.log', JSON.stringify(args) + '\n');
   appendLog('env.log', (process.env.ANTHROPIC_API_KEY || '-') + '\n');
@@ -288,6 +305,7 @@ function main(args) {
   if (args[0] === 'plugin') return plugin(args.slice(1));
   if (args[0] === 'agents') return agents();
   if (args[0] === 'stop') return stop(args[1]);
+  if (args[0] === 'rm') return rm(args[1]);
   if (args.includes('auth')) return authStatus(args);
   // Silent: attach inherits the terminal, and the calls log is enough for the tests.
   if (args[0] === 'attach') return 0;

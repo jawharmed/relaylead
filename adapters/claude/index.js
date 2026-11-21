@@ -257,6 +257,15 @@ async function stop(session) {
   throw failed(`claude stop ${session.shortId}`, result);
 }
 
+// `claude rm`: takes a session out of the `claude agents` list once its mission is removed. Its
+// conversation stays on disk (`claude --resume` lists it). A session claude no longer lists is fine.
+async function forget(session) {
+  const result = await runClaude(['rm', session.shortId]);
+  if (result.code === 0) return;
+  if (!(await findRow(session.shortId))) return;
+  throw failed(`claude rm ${session.shortId}`, result);
+}
+
 // No timeout: the user stays attached as long as they like. A session ended by a signal gives 1.
 async function attach(session) {
   const { file, prefix } = claudeCommand();
@@ -334,12 +343,13 @@ module.exports = {
   claudeCommand,
   checkVersion,
   authWithKeyFile,
-  capabilities: ['launch', 'list', 'stop', 'attach', 'wake'],
+  capabilities: ['launch', 'list', 'stop', 'attach', 'wake', 'forget'],
   // `claude stop <id>` is harmless on a session already stopped: `relaylead stop` may run again.
   stopById: true,
   launch,
   list,
   stop,
+  forget,
   attach,
   wake,
 };
