@@ -39,7 +39,7 @@ function commands(github, words) {
   return github.calls().filter((call) => words.every((word, index) => call[index] === word));
 }
 
-test('deliver pushes the branch, opens and merges a pull request, closes the issue', (t) => {
+test('deliver pushes the branch, opens and merges a pull request, deletes the branch on the remote, closes the issue', (t) => {
   const { dir, remote, github, mission } = setup(t, [issue(1, 'one')]);
   const task = work(mission, 'issue-1', 'one.txt', 'one\n');
   const warnings = githubPr.deliver(mission, task);
@@ -55,6 +55,7 @@ test('deliver pushes the branch, opens and merges a pull request, closes the iss
   assert.strictEqual(git(dir, 'show', `${INTEGRATION}:one.txt`), 'one');
   assert.deepStrictEqual(warnings.map((warning) => [warning.code, warning.vars.url]), [['pr-merged', state.prs[0].url]]);
   assert.ok(!fs.existsSync(path.join(dir, '.relaylead', 'worktrees', 'issue-1')));
+  assert.strictEqual(git(remote, 'branch', '--list', 'relaylead/m/issue-1'), '');
 });
 
 test('deliver played again after a failure past the merge opens no second pull request', (t) => {
