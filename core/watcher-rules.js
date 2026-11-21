@@ -113,19 +113,23 @@ function lostFor(obs) {
   return Number.isFinite(since) ? obs.now - since : 0;
 }
 
-// Rules 2 to 7, 11 and 14 to 16. Returns {actions, watch}: watch is a new object, obs is left as it is.
+// Rules 2 to 7, 11 and 14 to 16. Returns {actions, watch, again}: watch is a new object, obs is left as
+// it is. `again` asks a patient pass (a targeted one) to look again soon: the lead is active with
+// something to wake it for once its turn ends, or a wake is held back by the quiet time, or by a crew
+// failed in this pass.
 function decide(obs) {
   const watch = { ...emptyWatch(), ...JSON.parse(JSON.stringify(obs.watch || {})) };
   const actions = [];
+  const result = { actions, watch, again: false };
   const log = (text, journal = false) => actions.push({ type: 'log', text, journal });
   // A tripped mission still stopping: its stop is all there is to do.
-  if (obs.record.stopping) return { actions, watch };
+  if (obs.record.stopping) return result;
 
   logFailures(obs, watch, log);
   // Without the list, nothing is known of the sessions.
   if (obs.listError) {
     log(`list-failed ${obs.listError}`);
-    return { actions, watch };
+    return result;
   }
   if (obs.tasksError) log(`tasks-failed ${obs.tasksError}`);
   stopExtraLeads(obs, actions);
@@ -140,8 +144,9 @@ function decide(obs) {
   }
   watchLead(obs, watch, log);
   judgeWakes(obs, watch);
-  if (status === 'idle') tendIdleLead(obs, watch, unseen, actions, log);
-  return { actions, watch };
+  if (status === 'idle') result.again = tendIdleLead(obs, watch, unseen, actions, log);
+  if (status === 'active') result.again = Boolean(unseen && unseen.changes.length > 0) || (obs.mail || {})[obs.lead.shortId] > 0;
+  return result;
 }
 
 // Rule 5: a crew lost past the grace of wait, while the lead is not active (an active lead's own wait
@@ -257,14 +262,17 @@ function judgeWakes(obs, watch) {
   if (failedAfterWake || unanswered) Object.assign(watch, wakeWithoutEffect(watch, obs.now));
 }
 
-// Rules 11 and 14 to 16, for an idle lead: one wake at most, for every motive there is.
+// Rules 11 and 14 to 16, for an idle lead: one wake at most, for every motive there is. True when a
+// wake is held back only for a moment (quiet time, a crew failed by this pass): a patient pass looks
+// again.
 function tendIdleLead(obs, watch, unseen, actions, log) {
-  if (rateLimited(obs, watch, log)) return; // rule 11
+  if (rateLimited(obs, watch, log)) return false; // rule 11
   const motives = wakeMotives(obs, watch, unseen);
-  if (motives.length === 0) return;
+  if (motives.length === 0) return false;
   // A crew being failed by this pass: the lead is woken once its task is failed, at the next pass.
-  if (unseen && unseen.toFail.length > 0) return;
-  if (!wakeAllowed(obs, watch, log)) return;
+  if (unseen && unseen.toFail.length > 0) return true;
+  if (obs.now - Date.parse(watch.lastLeadActionAt) < leadQuietMs()) return true;
+  if (!wakeAllowed(obs, watch, log)) return false;
   watch.lastWakeAt = iso(obs.now);
   watch.lastLeadActionAt = iso(obs.now);
   for (const motive of motives) Object.assign(watch, motive.remember);
@@ -273,6 +281,7 @@ function tendIdleLead(obs, watch, unseen, actions, log) {
     reasons: motives.flatMap((motive) => motive.reasons),
     log: `wake-lead ${obs.lead.shortId}: ${motives.map((motive) => motive.log).join('; ')}`,
   });
+  return false;
 }
 
 // Rule 11: a usage limit hit after the lead's last heartbeat, less than 5 h ago. Logged once per

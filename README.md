@@ -58,6 +58,8 @@ A watcher, without AI, looks after the missions that are not finished: it stops 
 - An empty file `~/.relaylead/STOP` makes the watcher do nothing until you remove it; its loop keeps running.
 - Each action of the watcher is a line of `~/.relaylead/watcher.log`, moved to `watcher.log.1` past 1 MiB.
 
+The lead waits with `relaylead wait` while a task runs, and ends its turn when it only waits for you: your answer (`relaylead answer`), or the end of a crew member's task, wakes it within seconds. A lead that does not respond to its wakes is reported `lead-stuck` in the log, never stopped: run `relaylead show <mission>` and write to it.
+
 The `watcher` settings are read from `~/.relaylead/config.json` only. The loop does not survive a restart of the machine until `relaylead install` (to come) hands it to launchd: after a restart, run `relaylead watcher start`.
 
 ## Develop
@@ -117,6 +119,8 @@ Un veilleur, sans IA, veille sur les missions qui ne sont pas finies : il arrêt
 - `watcher.helpers` (`true` par défaut) : les courts passages que Relaylead lance de lui-même juste après un événement d'une mission ; `false` les coupe.
 - Un fichier vide `~/.relaylead/STOP` fait que le veilleur ne fait rien tant que vous ne l'avez pas retiré ; sa boucle continue de tourner.
 - Chaque action du veilleur est une ligne de `~/.relaylead/watcher.log`, déplacé vers `watcher.log.1` au-delà de 1 Mio.
+
+Le lead attend par `relaylead wait` tant qu'une tâche tourne, et finit son tour quand il n'attend plus que vous : votre réponse (`relaylead answer`), ou la fin de la tâche d'un équipier, le réveille dans les secondes qui suivent. Un lead qui ne répond pas à ses réveils est signalé `lead-stuck` dans le journal, jamais arrêté : lancez `relaylead show <mission>` et écrivez-lui.
 
 Les réglages `watcher` se lisent dans `~/.relaylead/config.json` seulement. La boucle ne survit pas au redémarrage de la machine tant que `relaylead install` (à venir) ne l'a pas confiée à launchd : après un redémarrage, lancez `relaylead watcher start`.
 

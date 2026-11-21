@@ -233,3 +233,52 @@ test('a lead without its session name is told so', async (t) => {
   assert.strictEqual(await run(['state', 'set', 'working'], io), 1);
   assert.match(io.err.text, /this session \(-\) is no longer the lead/);
 });
+
+// RELAYLEAD_WATCHER set to `value` (lifted when undefined) for the test; spawnDetached replaced, its
+// calls kept in the list returned.
+function watcherHelpers(t, value) {
+  const detached = require('../core/detached');
+  const { spawnDetached } = detached;
+  const saved = process.env.RELAYLEAD_WATCHER;
+  const calls = [];
+  detached.spawnDetached = async (args) => {
+    calls.push(args);
+    return 0;
+  };
+  if (value === undefined) delete process.env.RELAYLEAD_WATCHER;
+  else process.env.RELAYLEAD_WATCHER = value;
+  t.after(() => {
+    detached.spawnDetached = spawnDetached;
+    if (saved === undefined) delete process.env.RELAYLEAD_WATCHER;
+    else process.env.RELAYLEAD_WATCHER = saved;
+  });
+  return calls;
+}
+
+test('task done and answer start a targeted pass only when helpers are on', async (t) => {
+  const { startTask } = require('../core/tasks');
+  const { askQuestion } = require('../core/questions');
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  // The crew member waits behind a gate that never opens: the test finishes its task.
+  const gate = process.env.RELAYLEAD_FAKE_CREW_GATE;
+  process.env.RELAYLEAD_FAKE_CREW_GATE = tmpDir('relaylead-gate-');
+  t.after(() => {
+    if (gate === undefined) delete process.env.RELAYLEAD_FAKE_CREW_GATE;
+    else process.env.RELAYLEAD_FAKE_CREW_GATE = gate;
+  });
+  await startTask('demo', { id: 'a' });
+  askQuestion('demo', { key: 'k', text: 'Which one?', options: ['one', 'two'] });
+  askQuestion('demo', { key: 'l', text: 'Which one?', options: ['one', 'two'] });
+
+  const calls = watcherHelpers(t, 'off');
+  assert.strictEqual(await run(['answer', 'demo', 'q-k', '1'], makeIo()), 0);
+  assert.deepStrictEqual(calls, []);
+
+  delete process.env.RELAYLEAD_WATCHER; // put back after the test
+  const pass = ['watcher', 'run', '--mission', 'demo'];
+  assert.strictEqual(await run(['task', 'done', 'a', '--mission', 'demo'], makeIo()), 0);
+  assert.deepStrictEqual(calls, [pass]);
+  assert.strictEqual(await run(['answer', 'demo', 'q-l', '2'], makeIo()), 0);
+  assert.deepStrictEqual(calls, [pass, pass]);
+});

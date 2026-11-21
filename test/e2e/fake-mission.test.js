@@ -5,8 +5,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { listSessions } = require('../../core/sessions');
-const { readJson } = require('../../core/store');
-const { missionDir } = require('../../core/paths');
+const { readJson, writeJson } = require('../../core/store');
+const { missionDir, home } = require('../../core/paths');
 const fake = require('../../adapters/fake');
 const { tmpDir, waitFor, sessionEnded, userEnv } = require('../../fixtures/helpers');
 const { git, gitRepo } = require('../../fixtures/git');
@@ -66,12 +66,28 @@ function worktrees(dir) {
     .map((line) => fs.realpathSync.native(line.slice('worktree '.length)));
 }
 
+// Whether the lead of `mission` has ended its turn while the mission waits: state waiting, and listed
+// idle with its process.
+async function leadWaitsIdle(mission) {
+  const lead = readJson(path.join(missionDir(mission), 'lead.json'), null);
+  const record = readJson(path.join(missionDir(mission), 'state.json'), {});
+  if (!lead || record.state !== 'waiting') return false;
+  const row = (await fake.list(mission)).find((one) => one.shortId === lead.shortId);
+  return Boolean(row && row.pid && row.idle === true);
+}
+
 // Launches a mission named `name` (the folder's name when null) in `dir` with the fake agent, answers
-// the question of task b if it comes, and waits for the mission to be done. Its sessions are stopped
-// after the test. Returns the mission name and a report() for failure messages.
+// the question of task b once the lead has ended its turn waiting for it (the answer wakes it, by a
+// targeted pass of the watcher: RELAYLEAD_WATCHER is lifted for the test, and the machine config keeps
+// the loop off), and waits for the mission to be done. Its sessions are stopped after the test.
+// Returns the mission name and a report() for failure messages.
 async function runMission(t, dir, name) {
   let mission = null;
+  const watcherVar = process.env.RELAYLEAD_WATCHER;
+  delete process.env.RELAYLEAD_WATCHER;
+  writeJson(path.join(home(), 'config.json'), { watcher: { autoStart: false } });
   t.after(async () => {
+    if (watcherVar !== undefined) process.env.RELAYLEAD_WATCHER = watcherVar;
     if (mission) for (const session of listSessions(mission)) await fake.stop(session);
   });
   // The last poll's exit code and stderr go into a timeout report: a failing command shows there.
@@ -91,7 +107,7 @@ async function runMission(t, dir, name) {
   await waitFor(
     async () => {
       const [question] = JSON.parse((await poll(['question', 'list', mission])).out || '[]');
-      if (question) {
+      if (question && (await leadWaitsIdle(mission))) {
         assert.strictEqual(question.text, 'Should greet speak English only, or English and French?');
         const answered = await relaylead(['answer', mission, question.id, '1'], dir);
         assert.strictEqual(answered.code, 0, answered.err);

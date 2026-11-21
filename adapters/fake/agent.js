@@ -51,17 +51,19 @@ function commandHeartbeat() {
 }
 
 // The session's mail, as its PostToolUse hook would pass it on: each message goes to the log, then
-// into read/. The agent does not act on it yet. Never fails the agent.
+// into read/. Returns the texts read. Never fails the agent.
 function takeMail() {
   const mission = process.env.RELAYLEAD_MISSION;
   const shortId = process.env.RELAYLEAD_FAKE_SHORT_ID;
-  if (!mission || !shortId) return;
+  if (!mission || !shortId) return [];
   try {
     const mail = readMail(mission, shortId);
     for (const message of mail) log(`mail: ${message.text}`);
     markRead(mission, shortId, mail.map((message) => message.file));
+    return mail.map((message) => message.text);
   } catch (err) {
     log(`mail failed: ${err.message}`);
+    return [];
   }
 }
 
@@ -137,9 +139,32 @@ function listTasks() {
   return JSON.parse(relaylead('task', 'list'));
 }
 
+// Ends the turn when nothing has changed since the last wait, after saying the mission waits: true
+// when the turn is over, false when there are changes to look at.
+function waitOrEndTurn(note) {
+  relaylead('state', 'set', 'waiting', '--note', note);
+  const { changes } = JSON.parse(relaylead('wait', '--timeout', '0'));
+  if (changes.length > 0) return false;
+  endTurn();
+  return true;
+}
+
 // Scripted lead: deliver the done tasks, retry the failed ones and start the ready ones (at most
-// `parallel` running at a time), wait, again, until every task is delivered or failed for good.
+// `parallel` running at a time), wait, again, until every task is delivered or failed for good. While
+// no task runs, it ends its turn (Relaylead wakes it); with RELAYLEAD_FAKE_LEAD_ENDS_TURN=1, also
+// while tasks run. Refused as a replaced lead (not-current-lead), it ends its turn.
 function lead() {
+  try {
+    leadLoop();
+  } catch (err) {
+    // The text of not-current-lead (core/messages.js), in English or in French.
+    if (!/is no longer the lead of mission|n'est plus le lead de la mission/.test(String(err.stderr || ''))) throw err;
+    log('not the current lead: ending the turn');
+    endTurn();
+  }
+}
+
+function leadLoop() {
   relaylead('state', 'set', 'working');
   const mission = readMission();
   const maxAttempts = mission.config.maxAttempts || DEFAULTS.maxAttempts;
@@ -179,6 +204,14 @@ function lead() {
       relaylead('task', 'start', task.id);
       running++;
     }
+    if (!deliveryFailed && running === 0) {
+      if (waitOrEndTurn('fake: waiting for answers')) return;
+      continue;
+    }
+    if (!deliveryFailed && process.env.RELAYLEAD_FAKE_LEAD_ENDS_TURN === '1') {
+      if (waitOrEndTurn('fake: waiting for crew')) return;
+      continue;
+    }
     // A short timeout: if this lead is killed, its orphaned wait ends soon too. Shorter still when
     // a delivery is to be tried again.
     relaylead('wait', '--timeout', deliveryFailed ? '1' : '5');
@@ -190,6 +223,18 @@ function lead() {
 // (ids separated by commas) is reported failed on its first attempt instead.
 function crew() {
   const id = process.env.RELAYLEAD_TASK;
+  const gate = process.env.RELAYLEAD_FAKE_CREW_GATE;
+  if (!gate) return work(id);
+  // Behind the gate (a folder): waits for <gate>/<id>, reading its mail every 50 ms.
+  const timer = setInterval(() => {
+    takeMail();
+    if (!fs.existsSync(path.join(gate, id))) return;
+    clearInterval(timer);
+    work(id);
+  }, 50);
+}
+
+function work(id) {
   const failFirst = (process.env.RELAYLEAD_FAKE_FAIL_FIRST || '').split(',').includes(id);
   setTimeout(() => {
     if (failFirst && process.env.RELAYLEAD_ATTEMPT === '1') {

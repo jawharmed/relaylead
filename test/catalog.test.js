@@ -154,3 +154,16 @@ test('the toy repository pins a dependency without scripts', () => {
   assert.deepStrictEqual(Object.values(lock.packages).filter((entry) => entry.hasInstallScript), []);
   assert.ok(fs.readFileSync(path.join(toy, 'lib', 'duration.js'), 'utf8').includes("require('ms')"));
 });
+
+test('the lead method ends the turn only when no task runs', () => {
+  process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
+  const dir = tmpDir('relaylead-project-');
+  const method = loadMethod('code', { dir }).instructions;
+  assert.ok(method.includes('relaylead wait --timeout 0'));
+  assert.ok(method.includes('end your turn: Relaylead wakes you'));
+  assert.ok(method.includes('While a task is running, run `relaylead wait --timeout 540`'));
+  const lead = loadProfile('lead', { dir }).instructions;
+  assert.ok(lead.includes('## Being woken'));
+  assert.ok(lead.includes('not-current-lead'));
+  assert.ok(lead.includes('`relaylead wait --timeout 0`'));
+});

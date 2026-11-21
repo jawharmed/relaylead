@@ -20,6 +20,7 @@ const { askQuestion, answerQuestion, listQuestions } = require('./questions');
 const { runPass, tendMission, stopPresent, loop, watcherRunning, startWatcher, stopWatcher } = require('./watcher');
 const { watchLogSize, watchLogSince } = require('./watch-log');
 const { home } = require('./paths');
+const detached = require('./detached');
 const pkg = require('../package.json');
 
 // Options that take no value.
@@ -86,6 +87,19 @@ function refuseInSession(command, io) {
 function refuseReplacedLead(mission, io) {
   const refused = currentLeadError(mission, io.env);
   if (refused) throw refused;
+}
+
+// A targeted pass of the watcher over one mission, detached, so the command returns at once: it wakes
+// a lead that has ended its turn. Off when watcher.helpers is false (or RELAYLEAD_WATCHER is off).
+// spawnDetached is read from the module object, so a test can replace it; a failed start is ignored
+// (the loop catches up).
+async function startTargetedPass(mission) {
+  try {
+    if (!watcherSettings().helpers) return;
+    await detached.spawnDetached(['watcher', 'run', '--mission', mission]);
+  } catch {
+    // the loop catches up
+  }
 }
 
 // Each sub-command is (args, io) -> Promise<exit code>.
@@ -233,6 +247,7 @@ commands.task = async (args, io) => {
     // RELAYLEAD_ATTEMPT is set for each crew member: a replaced one cannot finish the new attempt.
     const attempt = io.env.RELAYLEAD_ATTEMPT;
     finishTask(mission, id, { state: action === 'done' ? 'done' : 'failed', summary: options.summary, attempt });
+    await startTargetedPass(mission);
   }
   return 0;
 };
@@ -290,6 +305,7 @@ commands.answer = async (args, io) => {
     throw codedError('usage', { usage: 'relaylead answer <mission> <id> <choice>' });
   }
   const chosen = answerQuestion(mission, id, choice);
+  await startTargetedPass(mission);
   io.out.write(t('questionAnswered', { id, choice: chosen }, language(io)));
   return 0;
 };
@@ -335,7 +351,15 @@ commands.watcher = async (args, io) => {
       io.out.write(t('watcherStopPresent', { home: home() }, lang));
       return 0;
     }
-    await tendMission(options.mission);
+    // A targeted pass also starts a loop that is gone, never one the user stopped.
+    if (watcherSettings().autoStart) {
+      try {
+        await startWatcher({ unlessStopped: true });
+      } catch {
+        // the pass goes on without the loop
+      }
+    }
+    await tendMission(options.mission, { patient: true });
   } else {
     const result = await runPass();
     if (result.outcome === 'stop') {

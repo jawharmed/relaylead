@@ -43,6 +43,9 @@ const TEST_RUN_STALE_MS = 60 * 1000;
 const STOP_WAIT_MS = 10000;
 // The second idle read of a lead that is working (measured fact 2). Read at each call: tests shorten it.
 const idleRecheckMs = () => Number(process.env.RELAYLEAD_IDLE_RECHECK_MS) || 2000;
+// A patient pass looks again this often, for this long at most. Read at each call: tests shorten them.
+const helperRecheckMs = () => Number(process.env.RELAYLEAD_HELPER_RECHECK_MS) || 5000;
+const helperPatienceMs = () => Number(process.env.RELAYLEAD_HELPER_PATIENCE_MS) || 60000;
 
 function missionFile(name, file) {
   return path.join(missionDir(name), file);
@@ -241,29 +244,45 @@ async function stopSession(name, session) {
   if (alive.length > 0) throw codedError('session-still-alive', { mission: name, shortId: session.shortId });
 }
 
-// Tends one mission and returns the actions carried out. Nothing is locked or written when the rules
+// Tends one mission and returns the actions carried out. A patient pass (a targeted one, `watcher run
+// --mission`) looks again every RELAYLEAD_HELPER_RECHECK_MS while the rules ask for it (decide's
+// `again`: a lead still finishing its turn with something to wake it for, a wake held by the quiet
+// time), RELAYLEAD_HELPER_PATIENCE_MS at most, without holding the lock between two looks.
+async function tendMission(name, { patient = false } = {}) {
+  const giveUpAt = Date.now() + helperPatienceMs();
+  const done = [];
+  for (;;) {
+    const { actions, again } = await tendOnce(name);
+    done.push(...actions);
+    if (!patient || !again || Date.now() + helperRecheckMs() > giveUpAt) return done;
+    await sleep(helperRecheckMs());
+  }
+}
+
+// One look at a mission: {actions carried out, again}. Nothing is locked or written when the rules
 // have nothing to do. Otherwise, under the mission lock: nothing for a mission removed, launched
 // again under the same name (another createdAt) or finished meanwhile; then a second observation,
 // the only one the actions come from (it reads watch.json again), the actions, and watch.json.
 // observe is read from module.exports, so a test can replace it.
-async function tendMission(name) {
+async function tendOnce(name) {
+  const nothing = { actions: [], again: false };
   const first = await module.exports.observe(name);
-  if (!first) return [];
+  if (!first) return nothing;
   const planned = decide(first);
-  if (planned.actions.length === 0 && isDeepStrictEqual(planned.watch, first.watch)) return [];
+  if (planned.actions.length === 0 && isDeepStrictEqual(planned.watch, first.watch)) return { actions: [], again: planned.again };
   let decision;
   try {
     decision = await withMissionLock(name, 'watcher', () => tendLocked(name, first.mission.createdAt));
   } catch (err) {
-    if (LOCK_GAVE_UP.includes(err.code)) return [];
+    if (LOCK_GAVE_UP.includes(err.code)) return nothing;
     throw err;
   }
-  if (!decision) return [];
+  if (!decision) return nothing;
   // An action marked afterLock takes the mission lock itself (a stop of the mission). It runs once
   // watch.json is written, so what it changes in `watch` is lost, and without reading createdAt
   // again: no action that writes into the mission folder (mail) may be one.
   for (const action of decision.actions.filter((one) => one.afterLock)) await act(name, action, decision.watch);
-  return decision.actions;
+  return { actions: decision.actions, again: decision.again };
 }
 
 // The decision {actions, watch} under the lock, its actions carried out but those marked afterLock;

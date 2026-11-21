@@ -613,3 +613,76 @@ test('a lead woken while it was not listed is no longer lost', async (t) => {
   assert.strictEqual(woken.length, 1);
   assert.strictEqual(readJson(watchFile('demo')).leadLostSince, null);
 });
+
+// Sets each variable of `env` for the test.
+function withEnv(t, env) {
+  const saved = {};
+  for (const [name, value] of Object.entries(env)) {
+    saved[name] = process.env[name];
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+  t.after(() => {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+}
+
+// Mission demo, waiting, with a question answered that its lead has not seen.
+function answeredMission(t) {
+  const { askQuestion, answerQuestion } = require('../core/questions');
+  freshHome(t);
+  const dir = tmpDir('relaylead-project-');
+  fs.mkdirSync(path.join(dir, 'tasks'));
+  writeMission('demo', dir);
+  askQuestion('demo', { key: 'k', text: 'Which one?', options: ['one', 'two'] });
+  answerQuestion('demo', 'q-k', '1');
+}
+
+test('a targeted pass waits for a lead still finishing its turn', async (t) => {
+  withEnv(t, { RELAYLEAD_HELPER_RECHECK_MS: '200' });
+  answeredMission(t);
+  // Active for 2 s, then done and idle with its process.
+  const idleAt = Date.now() + 2000;
+  const { woken } = waitingMission(t, (lead) => [
+    Date.now() < idleAt ? { ...lead, state: 'working', pid: DEAD_PID, idle: false } : { ...lead, state: 'done', pid: DEAD_PID, idle: true },
+  ]);
+
+  const actions = await watcher.tendMission('demo', { patient: true });
+  assert.deepStrictEqual(actions.map((action) => action.type), ['wake-lead']);
+  assert.ok(Date.now() >= idleAt);
+  assert.deepStrictEqual(woken, ['Relaylead woke you: question q-k is now answered. Carry on with the method: run `relaylead task list` first.']);
+});
+
+test('a targeted pass waits out the quiet time', async (t) => {
+  withEnv(t, { RELAYLEAD_HELPER_RECHECK_MS: '200', RELAYLEAD_LEAD_QUIET_MS: '3000' });
+  answeredMission(t);
+  const { woken } = waitingMission(t, (lead) => [{ ...lead, state: 'done', pid: DEAD_PID, idle: true }]);
+  const actedAt = Date.now() - 1000;
+  writeJson(watchFile('demo'), { lastLeadActionAt: new Date(actedAt).toISOString() });
+
+  assert.deepStrictEqual(await watcher.tendMission('demo'), []);
+  const actions = await watcher.tendMission('demo', { patient: true });
+  assert.deepStrictEqual(actions.map((action) => action.type), ['wake-lead']);
+  assert.ok(Date.now() >= actedAt + 3000);
+  assert.strictEqual(woken.length, 1);
+});
+
+test('a targeted pass does not restart a watcher the user stopped', async (t) => {
+  withEnv(t, { RELAYLEAD_WATCHER: undefined });
+  freshHome(t);
+  const dir = tmpDir('relaylead-project-');
+  fs.mkdirSync(path.join(dir, 'tasks'));
+  writeMission('demo', dir);
+  waitingMission(t, (lead) => [{ ...lead, state: 'done', pid: DEAD_PID, idle: true }]);
+  const stopFile = path.join(home(), 'watcher-loop.stop');
+  fs.writeFileSync(stopFile, '');
+
+  const { code } = await watcherRun('--mission', 'demo');
+  assert.strictEqual(code, 0);
+  assert.strictEqual(fs.existsSync(stopFile), true);
+  assert.strictEqual(watcher.watcherRunning().running, false);
+  assert.strictEqual(fs.existsSync(path.join(home(), 'watcher-loop.json')), false);
+});
