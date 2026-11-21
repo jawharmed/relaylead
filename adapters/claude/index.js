@@ -7,11 +7,11 @@ const { readJson } = require('../../core/store');
 const { t, codedError } = require('../../core/messages');
 const { listSessions, isAlive, settleBoundMs } = require('../../core/sessions');
 const { MIN_VERSION, buildLaunchArgs, compareVersion } = require('./args');
-const { writeSessionSettings } = require('./settings');
+const { writeSessionSettings, apiKeyHelperCommand } = require('./settings');
 const { parseLaunchOutput, mapState } = require('./sessions');
 const { sleep } = require('../../core/timing');
 const { loadConfig } = require('../../core/config');
-const { apiKeyEnv } = require('../../core/auth');
+const { apiKeyFile } = require('../../core/auth');
 
 const PACKAGE_DIR = path.join(__dirname, '..', '..');
 const POLL_MS = 250;
@@ -85,10 +85,14 @@ function runClaude(args, { cwd, env, label = `claude ${args.join(' ')}`, timeout
   });
 }
 
-// The environment of a launch or a wake: ours, plus the API key in `api-key` mode (core/auth.js is
-// the only reader of the key). Not used by the calls that only list or stop sessions.
+// The environment of a launch or a wake: ours. In `api-key` mode the key comes from the session's
+// `apiKeyHelper` (adapters/claude/settings.js), and an ANTHROPIC_API_KEY of the user's shell is left
+// out: Claude Code ranks it above the helper, and ignores it in a background session until the user
+// has approved it. Fails when the key file is missing. Not used by the calls that only list or stop.
 function sessionEnv() {
-  return { ...process.env, ...apiKeyEnv(loadConfig()) };
+  const env = { ...process.env };
+  if (apiKeyFile(loadConfig())) delete env.ANTHROPIC_API_KEY;
+  return env;
 }
 
 function failed(command, { stdout, stderr }) {
@@ -107,6 +111,21 @@ async function checkVersion() {
     throw codedError('claude-too-old', { found: versions[key] || 'unknown', min: MIN_VERSION });
   }
   return versions[key];
+}
+
+// For doctor, in api-key mode: the credential claude picks with the apiKeyHelper of the sessions,
+// read from `claude auth status --json`, which does not run the helper (the key is not read). Gives
+// { apiKeySource, authMethod }: apiKeySource is "apiKeyHelper" when the sessions will use the key.
+async function authWithKeyFile(keyFile) {
+  const settings = JSON.stringify({ apiKeyHelper: apiKeyHelperCommand(PACKAGE_DIR, keyFile) });
+  const result = await runClaude(['--settings', settings, 'auth', 'status', '--json'], { env: sessionEnv(), label: 'claude auth status' });
+  if (result.code !== 0) throw failed('claude auth status', result);
+  try {
+    const status = JSON.parse(result.stdout);
+    return { apiKeySource: status.apiKeySource || null, authMethod: status.authMethod || null };
+  } catch {
+    throw codedError('claude-unexpected-output', { command: 'claude auth status', output: result.stdout.trim() });
+  }
 }
 
 // A prompt starting with "-" would be read by claude as an option.
@@ -187,6 +206,7 @@ async function launch(spec) {
     permissionMode: spec.permissionMode,
     sessionName: spec.name,
     env: spec.env,
+    keyFile: apiKeyFile(loadConfig()),
   });
   const args = buildLaunchArgs({
     profile: spec.profile,
@@ -235,6 +255,15 @@ async function stop(session) {
   const row = await findRow(session.shortId);
   if (!row || !isAlive(row.pid)) return;
   throw failed(`claude stop ${session.shortId}`, result);
+}
+
+// `claude rm`: takes a session out of the `claude agents` list once its mission is removed. Its
+// conversation stays on disk (`claude --resume` lists it). A session claude no longer lists is fine.
+async function forget(session) {
+  const result = await runClaude(['rm', session.shortId]);
+  if (result.code === 0) return;
+  if (!(await findRow(session.shortId))) return;
+  throw failed(`claude rm ${session.shortId}`, result);
 }
 
 // No timeout: the user stays attached as long as they like. A session ended by a signal gives 1.
@@ -313,12 +342,14 @@ module.exports = {
   name: 'claude',
   claudeCommand,
   checkVersion,
-  capabilities: ['launch', 'list', 'stop', 'attach', 'wake'],
+  authWithKeyFile,
+  capabilities: ['launch', 'list', 'stop', 'attach', 'wake', 'forget'],
   // `claude stop <id>` is harmless on a session already stopped: `relaylead stop` may run again.
   stopById: true,
   launch,
   list,
   stop,
+  forget,
   attach,
   wake,
 };

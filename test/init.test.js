@@ -48,6 +48,17 @@ test('init imports the key of an environment variable into a 0600 file, and prin
   assert.ok(!read(path.join(env.RELAYLEAD_HOME, 'config.json')).includes(SENTINEL));
 });
 
+test('init reminds of relaylead install only while it has not been run', async (t) => {
+  const env = installEnv(t);
+  const repo = gitRepo({ 'README.md': 'toy\n' });
+  const before = await runRelaylead(['init', '--yes'], { cwd: repo, env });
+  assert.match(before.out, /next: relaylead install/);
+  assert.strictEqual((await runRelaylead(['install'], { cwd: repo, env })).code, 0);
+  const after = await runRelaylead(['init', '--yes'], { cwd: repo, env });
+  assert.strictEqual(after.code, 0, after.err);
+  assert.doesNotMatch(after.out, /next: relaylead install/);
+});
+
 test('init --api-key-file records the path as given', async (t) => {
   const env = installEnv(t);
   const repo = gitRepo({ 'README.md': 'toy\n' });

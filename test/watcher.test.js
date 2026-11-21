@@ -779,6 +779,40 @@ test('the breaker stops the mission and says why', async (t) => {
   assert.match(logText(), /demo breaker-tripped after 3 failed relaunches/);
 });
 
+test('a billing error stops the mission at once, says why everywhere and notifies once', async (t) => {
+  const lead = absentLeadMission(t);
+  const notifications = path.join(tmpDir(), 'notifications.log');
+  withEnv(t, {
+    RELAYLEAD_NOTIFY: undefined,
+    RELAYLEAD_NOTIFY_BIN: path.join(__dirname, '..', 'fixtures', 'notify-bin.js'),
+    RELAYLEAD_NOTIFY_LOG: notifications,
+  });
+  // What the StopFailure hook writes when the API credit is used up.
+  writeJson(path.join(missionDir('demo'), 'failures', `${lead.shortId}.json`), {
+    at: new Date().toISOString(),
+    error: 'billing_error',
+    message: 'Credit balance is too low',
+  });
+
+  const actions = await watcher.tendMission('demo');
+  assert.ok(!actions.some((action) => ['relaunch-lead', 'wake-lead'].includes(action.type)));
+  const state = readJson(stateFile('demo'));
+  assert.strictEqual(state.state, 'stopped');
+  assert.match(state.note, /^stopped by the watcher: billing error/);
+  assert.match(fs.readFileSync(path.join(missionDir('demo'), 'journal.log'), 'utf8'), /billing error/);
+  assert.match(logText(), new RegExp(`demo breaker-tripped billing_error ${lead.shortId}`));
+  const io = makeIo();
+  await run(['list'], io);
+  assert.match(io.out.text, /^demo {2}stopped by the watcher: billing error/m);
+  await waitFor(() => fs.existsSync(notifications), 5000, 'the notification');
+
+  // The stopped mission is left alone: no relaunch, no second notification.
+  const again = await watcher.tendMission('demo');
+  assert.ok(!(again || []).some((action) => ['relaunch-lead', 'wake-lead', 'trip-breaker'].includes(action.type)));
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.strictEqual(fs.readFileSync(notifications, 'utf8').trim().split('\n').length, 1);
+});
+
 test('a breaker stop that fails is replayed', async (t) => {
   absentLeadMission(t);
   writeJson(watchFile('demo'), { failedRelaunches: 2, lastRelaunchAt: new Date(Date.now() - 10 * 60 * 1000).toISOString() });

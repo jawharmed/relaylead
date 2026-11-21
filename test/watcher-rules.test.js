@@ -1063,3 +1063,14 @@ test('a paused mission still answers and reminds of its questions, and starts no
   const { actions } = decide(observation({ pause, config, questions, rows, unseen: unseen(A_DONE) }));
   assert.deepStrictEqual(actions.map((action) => action.type), ['answer-question', 'remind-question']);
 });
+
+test('an authentication failure of a crew session trips the breaker with its note, then only its stop is replayed', () => {
+  const failures = { [CREW]: { at: iso(T0 - MINUTE), error: 'authentication_failed', message: 'Invalid API key' } };
+  const result = decide(observation({ failures }));
+  const stop = result.actions.find((action) => action.type === 'trip-breaker');
+  assert.match(stop.note, /^stopped by the watcher: authentication failed/);
+  assert.ok(result.actions.every((action) => ['log', 'trip-breaker'].includes(action.type)));
+  assert.strictEqual(result.watch.tripped, true);
+  const replay = decide(observation({ record: { state: 'stopped', stopping: true }, failures, watch: result.watch }));
+  assert.deepStrictEqual(replay.actions, [stop]);
+});

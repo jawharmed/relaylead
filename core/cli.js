@@ -163,7 +163,9 @@ commands.show = async (args, io) => {
   const [name] = parseArgs(args).positional;
   if (!name) throw codedError('usage', { usage: 'relaylead show <mission>' });
   const state = getState(name);
-  const shown = shownState(name, state, io);
+  // The listed state carries the note of a stop by the watcher (billing, authentication, relaunches).
+  const listed = listMissions().find((mission) => mission.name === name);
+  const shown = shownState(name, listed ? listed.state : state, io);
   if (shown !== state) io.out.write(`${name}  ${shown}\n`);
   return attachLead(name);
 };
@@ -409,7 +411,7 @@ commands.install = async (args, io) => {
 commands.uninstall = async (args, io) => {
   refuseInSession('uninstall', io);
   const { options } = parseArgs(args);
-  uninstall((key, vars) => io.out.write(t(key, vars, language(io))), { purge: options.purge === true });
+  await uninstall((key, vars) => io.out.write(t(key, vars, language(io))), { purge: options.purge === true });
   return 0;
 };
 
