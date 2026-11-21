@@ -126,7 +126,13 @@ Relaylead asks you before anything irreversible, and before a command outside th
 
 ### Usage limit and automatic pause
 
-When your Claude usage limit is reached, Relaylead can pause the mission and resume it by itself once the limit resets; this arrives in a coming release (it is not described further here).
+Relaylead reads your Claude usage (5-hour and 7-day windows) from the status line. When a mission reaches the threshold of its priority, or when Claude reports a usage limit, the watcher pauses the mission: its sessions are stopped and nothing is relaunched. It resumes by itself at the reset time (or after 15, 30, then 60 minutes when no time is given). `relaylead list` and `show` display `usage-pause (resume …)`, and `task start` / `task retry` are refused meanwhile. Questions still notify you during a pause.
+
+The thresholds are in percent, per priority, in the `usage` setting:
+
+```json
+{ "usage": { "thresholds": { "low": { "week": 70, "fiveHour": 80 }, "normal": { "week": 90, "fiveHour": 85 }, "high": { "week": 98, "fiveHour": 85 } }, "retryMinutes": [15, 30, 60] } }
+```
 
 ### Context thresholds
 
