@@ -60,14 +60,17 @@ function runClaude(args, { cwd, env, label = `claude ${args.join(' ')}`, timeout
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
-      timeout: timeoutMs,
-      killSignal: 'SIGKILL',
     });
+    // Our own timer, not spawn's `timeout`: when claude does not exist, spawn's timer keeps the process alive.
+    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (chunk) => (stdout += chunk));
     child.stderr.on('data', (chunk) => (stderr += chunk));
-    child.once('error', (err) => reject(err.code === 'ENOENT' ? codedError('claude-not-found', {}) : err));
+    child.once('error', (err) => {
+      clearTimeout(timer);
+      reject(err.code === 'ENOENT' ? codedError('claude-not-found', {}) : err);
+    });
     child.once('exit', () => {
       // `killed` is only set by the timeout. A process it started may still hold the pipes: stop reading them.
       if (!child.killed) return;
@@ -75,7 +78,10 @@ function runClaude(args, { cwd, env, label = `claude ${args.join(' ')}`, timeout
       child.stderr.destroy();
       reject(codedError('claude-timeout', { command: label, seconds: timeoutMs / 1000 }));
     });
-    child.once('close', (code) => resolve({ code, stdout, stderr }));
+    child.once('close', (code) => {
+      clearTimeout(timer);
+      resolve({ code, stdout, stderr });
+    });
   });
 }
 
@@ -100,6 +106,7 @@ async function checkVersion() {
   if (!compareVersion(versions[key], MIN_VERSION)) {
     throw codedError('claude-too-old', { found: versions[key] || 'unknown', min: MIN_VERSION });
   }
+  return versions[key];
 }
 
 // A prompt starting with "-" would be read by claude as an option.

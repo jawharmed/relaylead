@@ -21,10 +21,12 @@ const { runPass, tendMission, stopPresent, loop, watcherRunning, startWatcher, s
 const { watchLogSize, watchLogSince } = require('./watch-log');
 const { home } = require('./paths');
 const detached = require('./detached');
+const { install, uninstall } = require('./install');
+const { doctor } = require('./doctor');
 const pkg = require('../package.json');
 
 // Options that take no value.
-const FLAGS = ['all', 'force', 'no-hooks'];
+const FLAGS = ['all', 'force', 'no-hooks', 'purge', 'yes'];
 
 // Splits arguments into positional values and `--name value` (or `--name=value`) options.
 // A repeated option (--option a --option b) is also kept in full in `lists`.
@@ -377,6 +379,32 @@ commands.watcher = async (args, io) => {
   io.out.write(watchLogSince(logSize));
   return 0;
 };
+
+// Installation (lot 4): the only commands that write outside ~/.relaylead are install and uninstall.
+commands.install = async (args, io) => {
+  refuseInSession('install', io);
+  install((key, vars) => io.out.write(t(key, vars, language(io))));
+  return printDoctor(io);
+};
+
+commands.uninstall = async (args, io) => {
+  refuseInSession('uninstall', io);
+  const { options } = parseArgs(args);
+  uninstall((key, vars) => io.out.write(t(key, vars, language(io))), { purge: options.purge === true });
+  return 0;
+};
+
+commands.doctor = async (args, io) => {
+  refuseInSession('doctor', io);
+  return printDoctor(io);
+};
+
+// One line per check: "ok|warn|fail <name>: <detail>". Exit 1 when a check failed.
+async function printDoctor(io) {
+  const lines = await doctor();
+  for (const line of lines) io.out.write(`${line.level} ${line.name}: ${line.detail}\n`);
+  return lines.some((line) => line.level === 'fail') ? 1 : 0;
+}
 
 // Internal, not in the help: started by `state set done`, it stops the lead once its turn is over.
 // The createdAt of its mission (absent when started by an older relaylead) keeps it off a newer
