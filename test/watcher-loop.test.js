@@ -88,9 +88,10 @@ function missionToWatch(name = 'demo') {
 
 // Mission demo held with an extra lead that does not end: its process is this test's, alive
 // throughout. Each pass tries to stop it, writes stop-extra-lead, waits RELAYLEAD_STOP_WAIT_MS, then
-// writes error stop-session.
+// writes error stop-session. The mission waits: its current lead, run by no agent, is not relaunched.
 function heldMission() {
   missionToWatch();
+  writeJson(path.join(missionDir('demo'), 'state.json'), { state: 'waiting' });
   const record = (name, pid) => {
     const hex = crypto.randomBytes(8).toString('hex');
     const session = { sessionId: `fake-${hex}`, shortId: hex.slice(0, 8), name, role: 'lead', pid, cwd: tmpDir('relaylead-cwd-') };

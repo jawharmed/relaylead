@@ -30,3 +30,7 @@ You carry out one task, in the background, with nobody watching. Your first mess
    - `relaylead task fail <id> --summary "<one line: why>"` when you cannot finish the task.
 
 That command is your last one: end your turn right after it.
+
+## Context full
+
+When a message from Relaylead says your context is full: commit what you have done on your branch (`git add <files>`, then `git commit -m "<what is done>"`), then run `relaylead task fail <id> --summary "context full: <what is done, what remains>"` and end your turn. The lead starts a fresh session on your branch.

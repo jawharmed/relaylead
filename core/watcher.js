@@ -14,10 +14,11 @@ const { watcherSettings } = require('./config');
 const { spawnDetached } = require('./detached');
 const { listSessions, recordSession, isAlive } = require('./sessions');
 const { readReadings } = require('./readings');
-const { stopSessionsAndWait } = require('./missions');
+const missions = require('./missions');
+const { stopSessionsAndWait, launchLead, launchWhileOpen, writeState } = missions;
 const { listTasks, markFailed } = require('./tasks');
 const { unseenChanges } = require('./wait');
-const { unreadCount } = require('./mailbox');
+const { unreadCount, sendMail } = require('./mailbox');
 const { writeJournal } = require('./guard');
 const { withMissionLock, takeOverStaleLock, EMPTY_LOCK_STALE_MS } = require('./mission-lock');
 const { sleep } = require('./timing');
@@ -43,6 +44,9 @@ const TEST_RUN_STALE_MS = 60 * 1000;
 const STOP_WAIT_MS = 10000;
 // The second idle read of a lead that is working (measured fact 2). Read at each call: tests shorten it.
 const idleRecheckMs = () => Number(process.env.RELAYLEAD_IDLE_RECHECK_MS) || 2000;
+// A patient pass looks again this often, for this long at most. Read at each call: tests shorten them.
+const helperRecheckMs = () => Number(process.env.RELAYLEAD_HELPER_RECHECK_MS) || 5000;
+const helperPatienceMs = () => Number(process.env.RELAYLEAD_HELPER_PATIENCE_MS) || 60000;
 
 function missionFile(name, file) {
   return path.join(missionDir(name), file);
@@ -200,6 +204,15 @@ async function act(name, action, watch) {
     } else if (action.type === 'wake-lead') {
       logLine(name, action.log);
       await wakeLead(name, action.reasons, watch);
+    } else if (action.type === 'relaunch-lead') {
+      await relaunchLead(name, action.resume, watch);
+    } else if (action.type === 'trip-breaker') {
+      await tripBreaker(name);
+    } else if (action.type === 'hand-over') {
+      await handOver(name, action, watch);
+    } else if (action.type === 'mail') {
+      logLine(name, action.log);
+      sendMail(name, action.shortId, action.text);
     } else {
       throw new Error(`unknown action ${action.type}`);
     }
@@ -232,6 +245,122 @@ async function wakeLead(name, reasons, watch) {
   }
 }
 
+const BREAKER_NOTE = 'stopped by the watcher: the lead could not be restarted 3 times in a row';
+
+// Rule 8, after the mission lock: stopMission takes it itself. stopMission is read from the module
+// object, so a test can replace it. A stop that throws is replayed at the next pass (rule 1).
+async function tripBreaker(name) {
+  await missions.stopMission(name, { note: BREAKER_NOTE });
+  writeJournal(name, 'watcher', BREAKER_NOTE);
+  watchLog(name, 'breaker-stopped', BREAKER_NOTE);
+}
+
+const RESTART_TEXT = 'Relaylead restarted you after your session ended. Carry on with the method: run `relaylead task list` first.';
+
+// The section a new lead gets before the mission after a relaunch ("## Restart").
+function restartSection(old) {
+  return `## Restart\n\nThe previous lead session ${old} ended unexpectedly. You take its place: you remember nothing, the files hold everything. Start with \`relaylead task list\`.`;
+}
+
+// What the watcher remembers of the wakes of a lead: forgotten when the lead changes.
+const WAKE_MEMORY = { lastWakeAt: null, lastWakeView: null, interruptWakeFor: null, ineffectiveWakes: 0 };
+
+// The breaker's count after a relaunch or a handover that threw ("Décompte du disjoncteur", b).
+function countFailedRelaunch(watch) {
+  watch.failedRelaunches += 1;
+  watch.lastFailedRelaunchAt = new Date().toISOString();
+  watch.lastRelaunchAt = null;
+}
+
+// Rule 10: the absent lead is resumed (`resume`: the same session, woken with RESTART_TEXT), or, when
+// that throws or is not to be tried, replaced by a new lead session with the ## Restart section. All
+// within launchWhileOpen: a stop that comes meanwhile stops the session launched. A mission stopped or
+// done meanwhile: nothing more, and nothing counted. lastLeadActionAt is set at the start: a relaunch
+// that throws then counts as a wake without effect too, at the next judgement of the wakes.
+async function relaunchLead(name, resume, watch) {
+  const startedAt = new Date().toISOString();
+  watch.lastRelaunchAt = startedAt;
+  watch.lastLeadActionAt = startedAt;
+  const mission = readJson(missionFile(name, 'mission.json'));
+  const old = readJson(missionFile(name, 'lead.json'));
+  const adapter = getAdapter(mission.agent);
+  let resumed = false;
+  const launch = async () => {
+    if (resume) {
+      try {
+        const session = listSessions(name).find((candidate) => candidate.shortId === old.shortId);
+        if (!session) throw new Error(`the lead ${old.shortId} is not in the registry`);
+        const woken = await adapter.wake(session, RESTART_TEXT);
+        recordSession(name, woken);
+        resumed = true;
+        return woken;
+      } catch (err) {
+        watchLog(name, 'error', `resume-lead: ${err.message}`);
+      }
+    }
+    return launchLead(mission, { section: restartSection(old.sessionName) });
+  };
+  let session;
+  try {
+    session = await launchWhileOpen(name, launch, (launched) => stopSessionsAndWait(mission, [launched]));
+  } catch (err) {
+    if (['mission-stopped', 'mission-done'].includes(err.code)) return;
+    countFailedRelaunch(watch);
+    throw err;
+  }
+  watch.leadLostSince = null;
+  if (!resumed) Object.assign(watch, WAKE_MEMORY);
+  watchLog(name, 'relaunch-lead', resumed ? `${old.shortId} resumed` : `${old.shortId} as ${session.name}`);
+}
+
+// The section a new lead gets before the mission after a handover ("## Handover").
+function handoverSection(old, reason, note) {
+  const how = {
+    asked: `which handed over with this note: ${note || '-'}`,
+    forced: 'which handed over when its context was full',
+    idle: 'which was idle past its context threshold',
+  }[reason];
+  return `## Handover\n\nYou take over from the lead session ${old}, ${how}. You remember nothing, the files hold everything. Start with \`relaylead task list\`.`;
+}
+
+// Rules 9, 12 and 13: the old lead is stopped if it has a process, `starting` is written (before the
+// launch: the new lead acts before launch returns, and its `working` must not be erased), then the next
+// lead is launched within launchWhileOpen, which stops it if a stop came meanwhile. A mission finished,
+// stopped or being stopped: nothing. A handover that throws otherwise counts for the breaker, and the
+// state it found is written back, so the handover is tried again. lastLeadActionAt is set at the start:
+// a handover that throws then counts as a wake without effect too, at the next judgement of the wakes.
+async function handOver(name, { reason, note, tokens }, watch) {
+  const startedAt = new Date().toISOString();
+  watch.lastRelaunchAt = startedAt;
+  watch.lastLeadActionAt = startedAt;
+  const record = readState(name);
+  if (FINISHED.includes(record.state) || record.stopping) return;
+  const mission = readJson(missionFile(name, 'mission.json'));
+  const old = readJson(missionFile(name, 'lead.json'));
+  const stop = (launched) => stopSessionsAndWait(mission, [launched]);
+  const detail = { asked: note || '-', forced: `forced at ${tokens} tokens`, idle: 'idle past the soft threshold' }[reason];
+  let session;
+  try {
+    const oldSession = listSessions(name).find((candidate) => candidate.shortId === old.shortId);
+    const rows = await getAdapter(mission.agent).list(name);
+    if (oldSession && rows.some((row) => row.shortId === old.shortId && row.pid)) await stopSession(name, oldSession);
+    const now = readState(name);
+    if (FINISHED.includes(now.state) || now.stopping) return;
+    writeState(name, { state: 'starting', note: `taken over from ${old.sessionName}: ${detail}` });
+    session = await launchWhileOpen(name, () => launchLead(mission, { section: handoverSection(old.sessionName, reason, note) }), stop);
+  } catch (err) {
+    if (['mission-stopped', 'mission-done'].includes(err.code)) return;
+    countFailedRelaunch(watch);
+    const now = readState(name);
+    if (now.state === 'starting' && !now.stopping) writeJson(missionFile(name, 'state.json'), record);
+    throw err;
+  }
+  watch.handoverNoticeFor = null;
+  watch.leadLostSince = null;
+  Object.assign(watch, WAKE_MEMORY);
+  watchLog(name, 'hand-over', `${old.sessionName} to ${session.name}: ${detail}`);
+}
+
 // Stops a session and waits for its end, in two steps (stopSessionsAndWait). Throws when the stop
 // failed or the session still runs.
 async function stopSession(name, session) {
@@ -241,29 +370,45 @@ async function stopSession(name, session) {
   if (alive.length > 0) throw codedError('session-still-alive', { mission: name, shortId: session.shortId });
 }
 
-// Tends one mission and returns the actions carried out. Nothing is locked or written when the rules
+// Tends one mission and returns the actions carried out. A patient pass (a targeted one, `watcher run
+// --mission`) looks again every RELAYLEAD_HELPER_RECHECK_MS while the rules ask for it (decide's
+// `again`: a lead still finishing its turn with something to wake it for, a wake held by the quiet
+// time), RELAYLEAD_HELPER_PATIENCE_MS at most, without holding the lock between two looks.
+async function tendMission(name, { patient = false } = {}) {
+  const giveUpAt = Date.now() + helperPatienceMs();
+  const done = [];
+  for (;;) {
+    const { actions, again } = await tendOnce(name);
+    done.push(...actions);
+    if (!patient || !again || Date.now() + helperRecheckMs() > giveUpAt) return done;
+    await sleep(helperRecheckMs());
+  }
+}
+
+// One look at a mission: {actions carried out, again}. Nothing is locked or written when the rules
 // have nothing to do. Otherwise, under the mission lock: nothing for a mission removed, launched
 // again under the same name (another createdAt) or finished meanwhile; then a second observation,
 // the only one the actions come from (it reads watch.json again), the actions, and watch.json.
 // observe is read from module.exports, so a test can replace it.
-async function tendMission(name) {
+async function tendOnce(name) {
+  const nothing = { actions: [], again: false };
   const first = await module.exports.observe(name);
-  if (!first) return [];
+  if (!first) return nothing;
   const planned = decide(first);
-  if (planned.actions.length === 0 && isDeepStrictEqual(planned.watch, first.watch)) return [];
+  if (planned.actions.length === 0 && isDeepStrictEqual(planned.watch, first.watch)) return { actions: [], again: planned.again };
   let decision;
   try {
     decision = await withMissionLock(name, 'watcher', () => tendLocked(name, first.mission.createdAt));
   } catch (err) {
-    if (LOCK_GAVE_UP.includes(err.code)) return [];
+    if (LOCK_GAVE_UP.includes(err.code)) return nothing;
     throw err;
   }
-  if (!decision) return [];
+  if (!decision) return nothing;
   // An action marked afterLock takes the mission lock itself (a stop of the mission). It runs once
   // watch.json is written, so what it changes in `watch` is lost, and without reading createdAt
   // again: no action that writes into the mission folder (mail) may be one.
   for (const action of decision.actions.filter((one) => one.afterLock)) await act(name, action, decision.watch);
-  return decision.actions;
+  return { actions: decision.actions, again: decision.again };
 }
 
 // The decision {actions, watch} under the lock, its actions carried out but those marked afterLock;
@@ -298,12 +443,13 @@ function missionNames() {
   }
 }
 
-// Whether a mission is to be watched: neither finished nor being stopped. Throws when its
-// mission.json cannot be read.
+// Whether a mission is to be watched: neither finished nor being stopped, unless the stop is that of
+// its breaker, to be replayed. Throws when its mission.json cannot be read.
 function needsWatching(name) {
   if (!readJson(missionFile(name, 'mission.json'), null)) return false;
   const record = readState(name);
-  return !FINISHED.includes(record.state) && !record.stopping;
+  if (record.stopping) return readWatch(name).tripped; // the stop of its breaker is to be replayed
+  return !FINISHED.includes(record.state);
 }
 
 // {pid, since} of the pass lock, or null once it is gone; pid 0 while it is being written.

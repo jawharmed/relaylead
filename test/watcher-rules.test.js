@@ -9,6 +9,7 @@ const {
   INEFFECTIVE_AFTER_MS,
   WAKE_BACKOFF_MS,
   INTERRUPT_SILENCE_MS,
+  MAX_FAILED_RELAUNCHES,
   restartGraceMs,
   leadQuietMs,
   rateLimitHoldMs,
@@ -225,6 +226,16 @@ test('the rules table', () => {
       rule: '15: an idle lead is woken for its mail',
       obs: idle({ mail: { [LEAD]: 1 } }),
       actions: [{ type: 'wake-lead', reasons: ['you have mail'], log: `wake-lead ${LEAD}: mail` }],
+    },
+    {
+      rule: '10: an absent lead with a low context is resumed',
+      obs: { rows: [row(leadRecord, { state: 'failed', pid: null })], readings: { [LEAD]: beat(T0 - MINUTE, 'Bash', { contextTokens: 50000, baseTokens: 40000 }) } },
+      actions: [{ type: 'relaunch-lead', resume: true }],
+    },
+    {
+      rule: '8: the breaker trips after 3 failed relaunches',
+      obs: { rows: [row(leadRecord, { state: 'failed', pid: null })], watch: { ...emptyWatch(), failedRelaunches: 2, lastRelaunchAt: iso(T0 - 10 * MINUTE) }, readings: {} },
+      actions: [{ type: 'log', text: 'breaker-tripped after 3 failed relaunches' }, { type: 'trip-breaker', afterLock: true }],
     },
     {
       rule: '16: an idle lead whose turn ended while the mission works is woken',
@@ -716,4 +727,153 @@ test('a woken turn that fails after its first heartbeat is woken again', () => {
   // Judged by the missing heartbeat alone, at 5 min.
   const old = timeline(before, { count: 2, stepMs: 4 * MINUTE });
   assert.deepStrictEqual([old.minutes, old.watch.ineffectiveWakes], [[0], 0]);
+});
+
+// A lead listed failed (killed): absent at once. `readings` of the lead, `watch` to start from.
+function absent(fields = {}) {
+  return { rows: [row(leadRecord, { state: 'failed', pid: null, idle: true })], ...fields };
+}
+
+function relaunches(actions) {
+  return actions.filter((action) => action.type === 'relaunch-lead');
+}
+
+test('an absent lead is resumed when its context is known and low', () => {
+  const readings = { [LEAD]: beat(T0 - 2 * MINUTE, 'Bash', { contextTokens: 60000, baseTokens: 40000 }) };
+  assert.deepStrictEqual(relaunches(decide(observation(absent({ readings }))).actions), [{ type: 'relaunch-lead', resume: true }]);
+  // An old reading of a dead lead is still right.
+  const old = { [LEAD]: beat(T0 - 5 * 60 * MINUTE, 'Bash', { contextTokens: 60000, baseTokens: 40000 }) };
+  assert.deepStrictEqual(relaunches(decide(observation(absent({ readings: old }))).actions), [{ type: 'relaunch-lead', resume: true }]);
+});
+
+test('an absent lead is relaunched as a new session when its context is high or unknown', () => {
+  const high = { [LEAD]: beat(T0 - 2 * MINUTE, 'Bash', { contextTokens: 200000, baseTokens: 40000 }) };
+  assert.deepStrictEqual(relaunches(decide(observation(absent({ readings: high }))).actions), [{ type: 'relaunch-lead', resume: false }]);
+  assert.deepStrictEqual(relaunches(decide(observation(absent({ readings: {} }))).actions), [{ type: 'relaunch-lead', resume: false }]);
+});
+
+test('a relaunch counts as failed when the lead is absent again with no heartbeat since', () => {
+  const relaunchedAt = T0 - 5 * MINUTE;
+  const watch = { ...emptyWatch(), lastRelaunchAt: iso(relaunchedAt) };
+  const readings = { [LEAD]: beat(relaunchedAt - MINUTE) };
+  const result = decide(observation(absent({ watch, readings })));
+  assert.strictEqual(result.watch.failedRelaunches, 1);
+  assert.strictEqual(result.watch.lastFailedRelaunchAt, iso(T0));
+  assert.strictEqual(relaunches(result.actions).length, 1);
+  // Under the lock, the second observation reads watch.json again: the first decision is thrown away.
+  assert.strictEqual(decide(observation(absent({ watch, readings }))).watch.failedRelaunches, 1);
+});
+
+test('a heartbeat after the relaunch resets the count and the relaunch time', () => {
+  const relaunchedAt = T0 - 5 * MINUTE;
+  const watch = { ...emptyWatch(), failedRelaunches: 2, lastRelaunchAt: iso(relaunchedAt), lastFailedRelaunchAt: iso(relaunchedAt - MINUTE) };
+  const result = decide(observation({ watch, readings: { [LEAD]: beat(relaunchedAt + 1000) } }));
+  assert.strictEqual(result.watch.failedRelaunches, 0);
+  assert.strictEqual(result.watch.lastRelaunchAt, null);
+  assert.strictEqual(result.watch.lastFailedRelaunchAt, null);
+});
+
+test('the breaker trips after 3 failed relaunches in a row, then only its stop is replayed', () => {
+  assert.strictEqual(MAX_FAILED_RELAUNCHES, 3);
+  let watch = emptyWatch();
+  const kinds = [];
+  for (let i = 0; i < 4; i++) {
+    const now = T0 + i * 10 * MINUTE;
+    const result = decide(observation(absent({ now, watch, readings: {} })));
+    kinds.push(result.actions.filter((action) => action.type !== 'log').map((action) => action.type).join(','));
+    // act sets lastRelaunchAt at the start of the relaunch; no heartbeat follows.
+    watch = { ...result.watch, lastRelaunchAt: result.actions.some((action) => action.type === 'relaunch-lead') ? iso(now) : result.watch.lastRelaunchAt };
+  }
+  assert.deepStrictEqual(kinds, ['relaunch-lead', 'relaunch-lead', 'relaunch-lead', 'trip-breaker']);
+  assert.strictEqual(watch.tripped, true);
+  const replay = decide(observation({ record: { state: 'stopped', stopping: true }, watch }));
+  assert.deepStrictEqual(replay.actions, [{ type: 'trip-breaker', afterLock: true }]);
+});
+
+test('the breaker never trips while the lead restarts', () => {
+  const watch = { ...emptyWatch(), failedRelaunches: 3, lastRelaunchAt: iso(T0 - 10 * MINUTE), leadLostSince: iso(T0 - 1000) };
+  const result = decide(observation({ watch, rows: [row(leadRecord, { pid: null })], readings: {} }));
+  assert.deepStrictEqual(result.actions, []);
+  assert.strictEqual(result.watch.tripped, false);
+});
+
+// A lead reading of `tokens` on a base of 40000 (soft 190000, hard 228000 with the default budgets).
+function context(tokens, at = T0 - MINUTE, tool = 'Bash') {
+  return { [LEAD]: beat(at, tool, { contextTokens: tokens, baseTokens: 40000 }) };
+}
+
+function handovers(actions) {
+  return actions.filter((action) => action.type === 'hand-over');
+}
+
+test('a handover asked by the current lead or the user hands over', () => {
+  for (const by of [leadRecord.name, 'user']) {
+    const { actions } = decide(observation({ record: { state: 'handover', note: 'a done', by } }));
+    assert.deepStrictEqual(handovers(actions), [{ type: 'hand-over', reason: 'asked', note: 'a done', tokens: null }], by);
+  }
+});
+
+test('a handover asked by a replaced lead is ignored, and its absent lead relaunched', () => {
+  const record = { state: 'handover', note: 'old', by: 'demo/lead/1' };
+  assert.deepStrictEqual(decide(observation({ record })).actions, []);
+  const { actions } = decide(observation(absent({ record, readings: {} })));
+  assert.deepStrictEqual(actions, [{ type: 'relaunch-lead', resume: false }]);
+});
+
+test('an active lead past the hard threshold is handed over without its note', () => {
+  const { actions } = decide(observation({ readings: context(230000) }));
+  assert.deepStrictEqual(actions, [{ type: 'hand-over', reason: 'forced', note: null, tokens: 230000 }]);
+  // A stale reading of an active lead triggers nothing.
+  assert.deepStrictEqual(decide(observation({ readings: context(230000, T0 - 31 * MINUTE) })).actions.filter((a) => a.type !== 'log'), []);
+});
+
+test('an idle lead past the soft threshold is handed over instead of woken, and left alone with nothing to wake for', () => {
+  const readings = context(200000, T0 - 30 * MINUTE, '(stop)');
+  assert.deepStrictEqual(handovers(decide(observation(idle({ readings, unseen: unseen(A_DONE) }))).actions), [
+    { type: 'hand-over', reason: 'idle', note: null, tokens: null },
+  ]);
+  assert.deepStrictEqual(wakes(decide(observation(idle({ readings, unseen: unseen(A_DONE) }))).actions), []);
+  // Even past the hard threshold, nothing to wake for: left in peace.
+  const hard = context(300000, T0 - 30 * MINUTE, '(stop)');
+  assert.deepStrictEqual(decide(observation(idle({ readings: hard }))).actions, []);
+});
+
+test('an active lead past the soft threshold gets one notice', () => {
+  const first = decide(observation({ readings: context(200000) }));
+  assert.deepStrictEqual(first.actions.map((action) => [action.type, action.shortId, action.log]), [
+    ['mail', LEAD, `notify-handover ${LEAD} 200000/190000`],
+  ]);
+  assert.match(first.actions[0].text, /^Your context holds 200000 tokens, past the handover threshold of 190000\. Finish the step/);
+  assert.deepStrictEqual(decide(observation({ readings: context(205000), watch: first.watch })).actions, []);
+});
+
+test('a high base is logged once', () => {
+  const readings = { [LEAD]: beat(T0 - MINUTE, 'Bash', { contextTokens: 170000, baseTokens: 160000 }) };
+  const first = decide(observation({ readings }));
+  assert.deepStrictEqual(logs(first.actions), [`base-high ${LEAD} 160000/310000`]);
+  assert.deepStrictEqual(logs(decide(observation({ readings, watch: first.watch })).actions), []);
+});
+
+test('a crew member past the hard threshold gets one context-full mail, only with a measured window', () => {
+  const crew = session(CREW, 'demo/developer/1', 'crew');
+  const fields = (statusline) => ({
+    registry: [leadRecord, crew],
+    rows: [row(leadRecord), row(crew)],
+    tasks: [{ id: 'a', state: 'running', session: CREW }],
+    readings: { ...observation().readings, [CREW]: { heartbeat: null, statusline, failure: null } },
+  });
+  const measured = { at: iso(T0 - MINUTE), contextTokens: 50000, windowTokens: 100000, baseTokens: 30000 };
+  const first = decide(observation(fields(measured)));
+  assert.deepStrictEqual(first.actions.map((action) => [action.type, action.shortId, action.log]), [
+    ['mail', CREW, `notify-context-full ${CREW} task a`],
+  ]);
+  assert.match(first.actions[0].text, /relaylead task fail a --summary "context full: /);
+  assert.deepStrictEqual(decide(observation({ ...fields(measured), watch: first.watch })).actions, []);
+  const unmeasured = { ...measured, windowTokens: null, contextTokens: 900000 };
+  assert.deepStrictEqual(decide(observation(fields(unmeasured))).actions, []);
+});
+
+test('a hard handover and a wake never come in the same pass', () => {
+  const { actions } = decide(observation({ readings: context(230000), mail: { [LEAD]: 1 } }));
+  assert.deepStrictEqual(actions.map((action) => action.type), ['hand-over']);
 });

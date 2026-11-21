@@ -613,3 +613,253 @@ test('a lead woken while it was not listed is no longer lost', async (t) => {
   assert.strictEqual(woken.length, 1);
   assert.strictEqual(readJson(watchFile('demo')).leadLostSince, null);
 });
+
+// Sets each variable of `env` for the test.
+function withEnv(t, env) {
+  const saved = {};
+  for (const [name, value] of Object.entries(env)) {
+    saved[name] = process.env[name];
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+  t.after(() => {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+}
+
+// Mission demo, waiting, with a question answered that its lead has not seen.
+function answeredMission(t) {
+  const { askQuestion, answerQuestion } = require('../core/questions');
+  freshHome(t);
+  const dir = tmpDir('relaylead-project-');
+  fs.mkdirSync(path.join(dir, 'tasks'));
+  writeMission('demo', dir);
+  askQuestion('demo', { key: 'k', text: 'Which one?', options: ['one', 'two'] });
+  answerQuestion('demo', 'q-k', '1');
+}
+
+test('a targeted pass waits for a lead still finishing its turn', async (t) => {
+  withEnv(t, { RELAYLEAD_HELPER_RECHECK_MS: '200' });
+  answeredMission(t);
+  // Active for 2 s, then done and idle with its process.
+  const idleAt = Date.now() + 2000;
+  const { woken } = waitingMission(t, (lead) => [
+    Date.now() < idleAt ? { ...lead, state: 'working', pid: DEAD_PID, idle: false } : { ...lead, state: 'done', pid: DEAD_PID, idle: true },
+  ]);
+
+  const actions = await watcher.tendMission('demo', { patient: true });
+  assert.deepStrictEqual(actions.map((action) => action.type), ['wake-lead']);
+  assert.ok(Date.now() >= idleAt);
+  assert.deepStrictEqual(woken, ['Relaylead woke you: question q-k is now answered. Carry on with the method: run `relaylead task list` first.']);
+});
+
+test('a targeted pass waits out the quiet time', async (t) => {
+  withEnv(t, { RELAYLEAD_HELPER_RECHECK_MS: '200', RELAYLEAD_LEAD_QUIET_MS: '3000' });
+  answeredMission(t);
+  const { woken } = waitingMission(t, (lead) => [{ ...lead, state: 'done', pid: DEAD_PID, idle: true }]);
+  const actedAt = Date.now() - 1000;
+  writeJson(watchFile('demo'), { lastLeadActionAt: new Date(actedAt).toISOString() });
+
+  assert.deepStrictEqual(await watcher.tendMission('demo'), []);
+  const actions = await watcher.tendMission('demo', { patient: true });
+  assert.deepStrictEqual(actions.map((action) => action.type), ['wake-lead']);
+  assert.ok(Date.now() >= actedAt + 3000);
+  assert.strictEqual(woken.length, 1);
+});
+
+test('a targeted pass does not restart a watcher the user stopped', async (t) => {
+  withEnv(t, { RELAYLEAD_WATCHER: undefined });
+  freshHome(t);
+  const dir = tmpDir('relaylead-project-');
+  fs.mkdirSync(path.join(dir, 'tasks'));
+  writeMission('demo', dir);
+  waitingMission(t, (lead) => [{ ...lead, state: 'done', pid: DEAD_PID, idle: true }]);
+  const stopFile = path.join(home(), 'watcher-loop.stop');
+  fs.writeFileSync(stopFile, '');
+
+  const { code } = await watcherRun('--mission', 'demo');
+  assert.strictEqual(code, 0);
+  assert.strictEqual(fs.existsSync(stopFile), true);
+  assert.strictEqual(watcher.watcherRunning().running, false);
+  assert.strictEqual(fs.existsSync(path.join(home(), 'watcher-loop.json')), false);
+});
+
+// Mission demo, working, whose lead is recorded but run by no agent and listed failed (killed): it is
+// absent. fake.wake and fake.launch are left as they are.
+function absentLeadMission(t) {
+  freshHome(t);
+  const dir = tmpDir('relaylead-project-');
+  fs.mkdirSync(path.join(dir, 'tasks'));
+  writeMission('demo', dir);
+  const lead = record('demo', 'demo/lead/1', 'lead');
+  writeLead('demo', lead);
+  writeJson(stateFile('demo'), { state: 'working' });
+  const { list } = fake;
+  fake.list = async (mission) => listSessions(mission).map((session) =>
+    session.shortId === lead.shortId ? { ...session, state: 'failed', pid: null, idle: true } : { ...session, state: 'done', pid: null, idle: true },
+  );
+  t.after(() => {
+    fake.list = list;
+  });
+  return lead;
+}
+
+function failingAgent(t, names) {
+  const saved = Object.fromEntries(names.map((name) => [name, fake[name]]));
+  for (const name of names) {
+    fake[name] = async () => {
+      throw new Error(`${name} failed`);
+    };
+  }
+  t.after(() => Object.assign(fake, saved));
+}
+
+test('a failed resume falls back to a new lead session in the same pass', async (t) => {
+  withEnv(t, { RELAYLEAD_FAKE_END_FIRST_TURN: '1' });
+  const lead = absentLeadMission(t);
+  t.after(async () => {
+    for (const session of listSessions('demo')) await fake.stop(session);
+  });
+  // A low context: the lead is to be resumed.
+  const { recordHeartbeat } = require('../core/readings');
+  recordHeartbeat('demo', lead.shortId, { tool: 'Bash', contextTokens: 50000 });
+  failingAgent(t, ['wake']);
+  const prompts = [];
+  const { launch } = fake;
+  fake.launch = async (spec) => {
+    prompts.push(spec.prompt);
+    return launch(spec);
+  };
+  t.after(() => {
+    fake.launch = launch;
+  });
+
+  const actions = await watcher.tendMission('demo');
+  assert.deepStrictEqual(actions.map((action) => action.type), ['relaunch-lead']);
+  assert.deepStrictEqual(actions[0], { type: 'relaunch-lead', resume: true });
+  assert.strictEqual(readJson(path.join(missionDir('demo'), 'lead.json')).sessionName, 'demo/lead/2');
+  assert.strictEqual(prompts.length, 1);
+  const restart = prompts[0].indexOf('## Restart');
+  assert.ok(restart !== -1 && restart < prompts[0].indexOf('## This mission'), prompts[0]);
+  assert.match(prompts[0], /The previous lead session demo\/lead\/1 ended unexpectedly/);
+  assert.match(logText(), new RegExp(`relaunch-lead ${lead.shortId} as demo/lead/2`));
+  const watch = readJson(watchFile('demo'));
+  assert.strictEqual(watch.failedRelaunches, 0);
+  assert.ok(watch.lastRelaunchAt);
+});
+
+test('a relaunch that throws counts once', async (t) => {
+  absentLeadMission(t);
+  failingAgent(t, ['wake', 'launch']);
+
+  await watcher.tendMission('demo');
+  let watch = readJson(watchFile('demo'));
+  assert.strictEqual(watch.failedRelaunches, 1);
+  assert.strictEqual(watch.lastRelaunchAt, null);
+  assert.match(logText(), /demo error relaunch-lead: launch failed/);
+  await watcher.tendMission('demo');
+  watch = readJson(watchFile('demo'));
+  assert.strictEqual(watch.failedRelaunches, 2);
+});
+
+test('the breaker stops the mission and says why', async (t) => {
+  absentLeadMission(t);
+  writeJson(watchFile('demo'), { failedRelaunches: 2, lastRelaunchAt: new Date(Date.now() - 10 * 60 * 1000).toISOString() });
+
+  const actions = await watcher.tendMission('demo');
+  assert.ok(actions.some((action) => action.type === 'trip-breaker'));
+  const state = readJson(stateFile('demo'));
+  const note = 'stopped by the watcher: the lead could not be restarted 3 times in a row';
+  assert.deepStrictEqual([state.state, state.note, state.stopping], ['stopped', note, undefined]);
+  assert.match(fs.readFileSync(path.join(missionDir('demo'), 'journal.log'), 'utf8'), new RegExp(note));
+  assert.match(logText(), /demo breaker-tripped after 3 failed relaunches/);
+});
+
+test('a breaker stop that fails is replayed', async (t) => {
+  absentLeadMission(t);
+  writeJson(watchFile('demo'), { failedRelaunches: 2, lastRelaunchAt: new Date(Date.now() - 10 * 60 * 1000).toISOString() });
+  const missions = require('../core/missions');
+  const { stopMission } = missions;
+  missions.stopMission = async () => {
+    missions.stopMission = stopMission;
+    const err = new Error('stop pending');
+    err.code = 'stop-pending';
+    throw err;
+  };
+  t.after(() => {
+    missions.stopMission = stopMission;
+  });
+
+  await watcher.tendMission('demo');
+  assert.strictEqual(readJson(stateFile('demo')).state, 'working');
+  assert.strictEqual(readJson(watchFile('demo')).tripped, true);
+  await watcher.tendMission('demo');
+  const state = readJson(stateFile('demo'));
+  assert.deepStrictEqual([state.state, state.stopping], ['stopped', undefined]);
+});
+
+test('a handover stops the old lead, starts the next one and writes starting', async (t) => {
+  withEnv(t, { RELAYLEAD_FAKE_END_FIRST_TURN: '1' });
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  const old = await launchIdleLead(dir, 'demo/lead/1');
+  writeLead('demo', old);
+  writeJson(stateFile('demo'), { state: 'handover', note: 'a delivered, b next', by: 'demo/lead/1' });
+  const seen = [];
+  const { launch } = fake;
+  fake.launch = async (spec) => {
+    seen.push({ state: readJson(stateFile('demo')), prompt: spec.prompt });
+    return launch(spec);
+  };
+  t.after(() => {
+    fake.launch = launch;
+  });
+
+  const actions = await watcher.tendMission('demo');
+  assert.deepStrictEqual(actions.map((action) => action.type), ['hand-over']);
+  assert.strictEqual(readJson(path.join(missionDir('demo'), 'lead.json')).sessionName, 'demo/lead/2');
+  assert.strictEqual(sessionEnded(old), true);
+  assert.strictEqual(seen.length, 1);
+  assert.deepStrictEqual([seen[0].state.state, seen[0].state.note], ['starting', 'taken over from demo/lead/1: a delivered, b next']);
+  const { prompt } = seen[0];
+  const handover = prompt.indexOf('## Handover');
+  assert.ok(handover !== -1 && handover < prompt.indexOf('## This mission'), prompt);
+  assert.match(prompt, /You take over from the lead session demo\/lead\/1, which handed over with this note: a delivered, b next\./);
+  assert.match(logText(), /demo hand-over demo\/lead\/1 to demo\/lead\/2: a delivered, b next/);
+});
+
+test('a failed handover counts towards the breaker', async (t) => {
+  absentLeadMission(t);
+  writeJson(stateFile('demo'), { state: 'handover', note: 'n', by: 'demo/lead/1' });
+  failingAgent(t, ['launch']);
+
+  await watcher.tendMission('demo');
+  assert.strictEqual(readJson(watchFile('demo')).failedRelaunches, 1);
+  assert.strictEqual(readJson(stateFile('demo')).state, 'handover');
+  assert.match(logText(), /demo error hand-over: launch failed/);
+});
+
+test('a crew told its context is full fails its task and the lead retries it', async (t) => {
+  const { recordStatusline } = require('../core/readings');
+  withEnv(t, { RELAYLEAD_FAKE_CREW_GATE: tmpDir('relaylead-gate-') });
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  writeJson(stateFile('demo'), { state: 'working' });
+  const lead = await launchIdleLead(dir, 'demo/lead/1');
+  writeLead('demo', lead);
+  const task = await startTask('demo', { id: 'a' });
+  const usage = (tokens) => ({ context_window: { context_window_size: 100000, current_usage: { input_tokens: tokens } } });
+  recordStatusline('demo', task.session, usage(30000)); // the base
+  recordStatusline('demo', task.session, usage(50000)); // past the hard threshold of 48000
+
+  const actions = await watcher.tendMission('demo');
+  assert.ok(actions.some((action) => action.type === 'mail' && action.log === `notify-context-full ${task.session} task a`), JSON.stringify(actions));
+  await waitFor(() => listTasks('demo')[0].state === 'failed', 30000, 'a to fail', () => missionReport('demo'));
+  assert.strictEqual(listTasks('demo')[0].summary, 'context full: fake');
+  const io = makeIo();
+  assert.strictEqual(await run(['task', 'retry', 'a', '--mission', 'demo'], io), 0, io.err.text);
+  assert.strictEqual(listTasks('demo')[0].attempt, 2);
+});

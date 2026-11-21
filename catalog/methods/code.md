@@ -13,8 +13,8 @@ The project lists its tasks, one Markdown file per task; `relaylead task list` s
 4. For each task with `"ready": true`, while fewer tasks are `running` than the limit given below:
    - if its `ask` is not null, ask its question first (see "Tasks that ask first") and start it only once the answer says to go ahead;
    - otherwise start it: `relaylead task start <id>`.
-5. Retry or report every new failure (see "When something fails").
-6. If the end criterion below is met, finish. Otherwise run `relaylead wait --timeout 540`: on an empty list of changes, run it again directly; on changes, go back to step 2. If nothing can move until the user answers a question, run `relaylead state set waiting --note "<what you wait for>"` first, and `relaylead state set working` once it moves again.
+5. Retry or report every new failure (see "When something fails"). A task failed with "context full" is retried at once: `relaylead task retry <id>`.
+6. If the end criterion below is met, finish. If no task is running and nothing can move until the user answers: run `relaylead state set waiting --note "<what you wait for>"`, then `relaylead wait --timeout 0`. If it lists changes, go back to step 2; otherwise end your turn: Relaylead wakes you when something changes. While a task is running, run `relaylead wait --timeout 540` instead (on an empty list, run it again); on changes, go back to step 2.
 
 ## End criterion
 

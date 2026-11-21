@@ -58,6 +58,12 @@ A watcher, without AI, looks after the missions that are not finished: it stops 
 - An empty file `~/.relaylead/STOP` makes the watcher do nothing until you remove it; its loop keeps running.
 - Each action of the watcher is a line of `~/.relaylead/watcher.log`, moved to `watcher.log.1` past 1 MiB.
 
+The lead waits with `relaylead wait` while a task runs, and ends its turn when it only waits for you: your answer (`relaylead answer`), or the end of a crew member's task, wakes it within seconds. A lead that does not respond to its wakes is reported `lead-stuck` in the log, never stopped: run `relaylead show <mission>` and write to it.
+
+A lead whose session ends while the mission works (killed, or after a restart of the machine) is restarted by the watcher: the same session when its context is still low, otherwise a new lead session that starts again from the files. After 3 restarts in a row that fail, the watcher stops the mission and says why in its state and in `journal.log`.
+
+When the lead's context grows past its threshold, it hands over: it finishes its step, writes where the mission stands (`relaylead state set handover --note "…"`), and the watcher starts a fresh lead that carries on from the files. A lead past a higher margin is handed over without its note; an idle one is handed over at its next wake instead of being woken. A crew member whose context is full commits, fails its task with "context full", and the lead retries it on the same branch. The thresholds are the `context` setting, at any of the three levels: `budgets` (tokens a session may add to its first measured context, per role: `lead` 150000, `crew` 250000), `capPercent` (a ceiling, as a share of the measured window: 40) and `hardPercent` (the margin past which the handover is forced: 20). For example, in `.relaylead.json`: `{"context": {"budgets": {"lead": 60000}}}`.
+
 The `watcher` settings are read from `~/.relaylead/config.json` only. The loop does not survive a restart of the machine until `relaylead install` (to come) hands it to launchd: after a restart, run `relaylead watcher start`.
 
 ## Develop
@@ -117,6 +123,12 @@ Un veilleur, sans IA, veille sur les missions qui ne sont pas finies : il arrêt
 - `watcher.helpers` (`true` par défaut) : les courts passages que Relaylead lance de lui-même juste après un événement d'une mission ; `false` les coupe.
 - Un fichier vide `~/.relaylead/STOP` fait que le veilleur ne fait rien tant que vous ne l'avez pas retiré ; sa boucle continue de tourner.
 - Chaque action du veilleur est une ligne de `~/.relaylead/watcher.log`, déplacé vers `watcher.log.1` au-delà de 1 Mio.
+
+Le lead attend par `relaylead wait` tant qu'une tâche tourne, et finit son tour quand il n'attend plus que vous : votre réponse (`relaylead answer`), ou la fin de la tâche d'un équipier, le réveille dans les secondes qui suivent. Un lead qui ne répond pas à ses réveils est signalé `lead-stuck` dans le journal, jamais arrêté : lancez `relaylead show <mission>` et écrivez-lui.
+
+Un lead dont la session s'arrête pendant que la mission travaille (tuée, ou après un redémarrage de la machine) est relancé par le veilleur : la même session si son contexte est encore bas, sinon une nouvelle session de lead qui repart des fichiers. Après 3 relances ratées d'affilée, le veilleur arrête la mission et dit pourquoi dans son état et dans `journal.log`.
+
+Quand le contexte du lead dépasse son seuil, il passe la main : il finit son étape, écrit où en est la mission (`relaylead state set handover --note "…"`), et le veilleur lance un nouveau lead qui reprend à partir des fichiers. Un lead au-delà d'une marge plus haute est relevé sans sa note ; un lead inactif est relevé à son prochain réveil au lieu d'être réveillé. Un équipier dont le contexte est plein commite, échoue sa tâche avec « context full », et le lead la relance sur la même branche. Les seuils sont le réglage `context`, à l'un des trois niveaux : `budgets` (jetons qu'une session peut ajouter à son premier contexte mesuré, par rôle : `lead` 150000, `crew` 250000), `capPercent` (un plafond, en part de la fenêtre mesurée : 40) et `hardPercent` (la marge au-delà de laquelle la relève est forcée : 20). Par exemple, dans `.relaylead.json` : `{"context": {"budgets": {"lead": 60000}}}`.
 
 Les réglages `watcher` se lisent dans `~/.relaylead/config.json` seulement. La boucle ne survit pas au redémarrage de la machine tant que `relaylead install` (à venir) ne l'a pas confiée à launchd : après un redémarrage, lancez `relaylead watcher start`.
 

@@ -10,7 +10,10 @@
 // by short id), config, watch (watch.json)}.
 //
 // Actions: {type: 'stop-session', session, log}, {type: 'log', text, journal}, {type: 'mark-failed',
-// id, summary, log} and {type: 'wake-lead', reasons, log}.
+// id, summary, log}, {type: 'wake-lead', reasons, log}, {type: 'relaunch-lead', resume} and
+// {type: 'trip-breaker', afterLock: true}, {type: 'hand-over', reason: 'asked'|'forced'|'idle', note,
+// tokens} and {type: 'mail', shortId, text, log}.
+const { contextOf } = require('./readings');
 
 // An active lead whose last heartbeat is older than this is reported, never stopped.
 const SILENT_MS = 30 * 60 * 1000;
@@ -27,6 +30,8 @@ const leadQuietMs = () => Number(process.env.RELAYLEAD_LEAD_QUIET_MS) || 10000;
 const INEFFECTIVE_AFTER_MS = 5 * 60 * 1000;
 // After 1, 2, then 3 wakes without effect, the next one waits this long; past 3, the lead is stuck.
 const WAKE_BACKOFF_MS = [15, 30, 60].map((minutes) => minutes * 60 * 1000);
+// After this many relaunches in a row that failed, the watcher stops the mission (the breaker).
+const MAX_FAILED_RELAUNCHES = 3;
 // A lead held by a usage limit is not woken for this long after its failure; read at each call.
 const rateLimitHoldMs = () => Number(process.env.RELAYLEAD_RATE_LIMIT_HOLD_MS) || 5 * 60 * 60 * 1000;
 // A lead idle while the mission works, silent this long, has ended its turn (a command lasts 10 min
@@ -113,19 +118,27 @@ function lostFor(obs) {
   return Number.isFinite(since) ? obs.now - since : 0;
 }
 
-// Rules 2 to 7, 11 and 14 to 16. Returns {actions, watch}: watch is a new object, obs is left as it is.
+// The rules of the plan ("Table des règles"). Returns {actions, watch, again}: watch is a new object, obs is left as
+// it is. `again` asks a patient pass (a targeted one) to look again soon: the lead is active with
+// something to wake it for once its turn ends, or a wake is held back by the quiet time, or by a crew
+// failed in this pass.
 function decide(obs) {
   const watch = { ...emptyWatch(), ...JSON.parse(JSON.stringify(obs.watch || {})) };
   const actions = [];
+  const result = { actions, watch, again: false };
   const log = (text, journal = false) => actions.push({ type: 'log', text, journal });
-  // A tripped mission still stopping: its stop is all there is to do.
-  if (obs.record.stopping) return { actions, watch };
+  // Rule 1: a tripped mission, its stop not done yet: its stop is replayed, and nothing else is done.
+  if (watch.tripped) {
+    actions.push({ type: 'trip-breaker', afterLock: true });
+    return result;
+  }
+  if (obs.record.stopping) return result;
 
   logFailures(obs, watch, log);
   // Without the list, nothing is known of the sessions.
   if (obs.listError) {
     log(`list-failed ${obs.listError}`);
-    return { actions, watch };
+    return result;
   }
   if (obs.tasksError) log(`tasks-failed ${obs.tasksError}`);
   stopExtraLeads(obs, actions);
@@ -140,8 +153,74 @@ function decide(obs) {
   }
   watchLead(obs, watch, log);
   judgeWakes(obs, watch);
-  if (status === 'idle') tendIdleLead(obs, watch, unseen, actions, log);
-  return { actions, watch };
+  judgeRelaunches(obs, watch);
+  if (obs.tasks) notifyFullCrew(obs, watch, actions); // rule 19
+  // Rules 8 to 16: one action on the lead at most; 17 and 18 only when none of them acted.
+  const before = actions.length;
+  if (status === 'absent') tendAbsentLead(obs, watch, actions, log);
+  else if (status !== 'restarting' && handoverAsked(obs)) handOver(actions, 'asked', obs.record.note);
+  else if (status === 'idle') result.again = tendIdleLead(obs, watch, unseen, actions, log);
+  else if (status === 'active') {
+    const context = leadContext(obs, true);
+    if (context && context.tokens >= context.hard) handOver(actions, 'forced', null, context.tokens); // rule 12
+    else result.again = Boolean(unseen && unseen.changes.length > 0) || (obs.mail || {})[obs.lead.shortId] > 0;
+  }
+  if (actions.slice(before).every((action) => action.type === 'log')) adviseLead(obs, watch, status, actions, log);
+  return result;
+}
+
+// The lead's context and its thresholds (readings.js), or null; `active`: a stale reading says nothing.
+function leadContext(obs, active) {
+  return contextOf(obs.readings[obs.lead.shortId] || {}, { role: 'lead', config: obs.config, now: obs.now, active });
+}
+
+// Rule 9: a handover asked by the current lead, or by the user. One asked by a replaced lead is not.
+function handoverAsked(obs) {
+  return obs.record.state === 'handover' && [obs.lead.sessionName, 'user'].includes(obs.record.by);
+}
+
+function handOver(actions, reason, note = null, tokens = null) {
+  actions.push({ type: 'hand-over', reason, note, tokens });
+}
+
+// Rules 17 and 18: an active lead past its soft threshold, on a fresh reading, is told once to hand
+// over; a base past half the soft threshold is logged once.
+function adviseLead(obs, watch, status, actions, log) {
+  const shortId = obs.lead.shortId;
+  const context = leadContext(obs, status === 'active');
+  if (!context) return;
+  if (status === 'active' && context.tokens >= context.soft && watch.handoverNoticeFor !== shortId) {
+    watch.handoverNoticeFor = shortId;
+    actions.push({
+      type: 'mail',
+      shortId,
+      text: `Your context holds ${context.tokens} tokens, past the handover threshold of ${context.soft}. Finish the step you are on, then run \`relaylead state set handover --note "<where the mission stands, in one line>"\` and end your turn: a fresh lead takes over from the files.`,
+      log: `notify-handover ${shortId} ${context.tokens}/${context.soft}`,
+    });
+  }
+  if (context.baseTokens > context.soft / 2 && !watch.baseAlerts.includes(shortId)) {
+    watch.baseAlerts.push(shortId);
+    log(`base-high ${shortId} ${context.baseTokens}/${context.soft}`);
+  }
+}
+
+// Rule 19: a crew member listed with a process, its task running, its window measured, past its hard
+// threshold: told once to commit and fail its task.
+function notifyFullCrew(obs, watch, actions) {
+  for (const session of obs.registry) {
+    if (session.role !== 'crew' || !hasProcess(obs, session) || watch.contextFullNotices.includes(session.shortId)) continue;
+    const task = obs.tasks.find((candidate) => candidate.session === session.shortId && candidate.state === 'running');
+    if (!task) continue;
+    const context = contextOf(obs.readings[session.shortId] || {}, { role: 'crew', config: obs.config, now: obs.now, active: false });
+    if (!context || !context.windowTokens || context.tokens < context.hard) continue;
+    watch.contextFullNotices.push(session.shortId);
+    actions.push({
+      type: 'mail',
+      shortId: session.shortId,
+      text: `Your context holds ${context.tokens} tokens and is full. Commit what you have done on your branch, then run \`relaylead task fail ${task.id} --summary "context full: <what is done, what remains>"\` and end your turn: the lead starts a fresh session on your branch.`,
+      log: `notify-context-full ${session.shortId} task ${task.id}`,
+    });
+  }
 }
 
 // Rule 5: a crew lost past the grace of wait, while the lead is not active (an active lead's own wait
@@ -257,14 +336,55 @@ function judgeWakes(obs, watch) {
   if (failedAfterWake || unanswered) Object.assign(watch, wakeWithoutEffect(watch, obs.now));
 }
 
-// Rules 11 and 14 to 16, for an idle lead: one wake at most, for every motive there is.
+// The count of the breaker ("Décompte du disjoncteur"): any heartbeat of the current lead after the
+// last relaunch, or after the last failed one, sets it back to 0.
+function judgeRelaunches(obs, watch) {
+  const beat = heartbeatMs(obs);
+  if (beat > Date.parse(watch.lastRelaunchAt) || beat > Date.parse(watch.lastFailedRelaunchAt)) {
+    watch.failedRelaunches = 0;
+    watch.lastRelaunchAt = null;
+    watch.lastFailedRelaunchAt = null;
+  }
+}
+
+// Rules 8 and 10, for an absent lead. A relaunch that no heartbeat has followed failed: it counts.
+// Past 3 in a row, the breaker trips (the mission is stopped after the lock); otherwise the lead is
+// relaunched, resumed when its context is known and under the soft threshold.
+function tendAbsentLead(obs, watch, actions, log) {
+  const asked = handoverAsked(obs);
+  if (!asked && Number.isFinite(Date.parse(watch.lastRelaunchAt))) {
+    watch.failedRelaunches += 1;
+    watch.lastFailedRelaunchAt = iso(obs.now);
+    watch.lastRelaunchAt = null;
+  }
+  if (watch.failedRelaunches >= MAX_FAILED_RELAUNCHES) {
+    watch.tripped = true;
+    log(`breaker-tripped after ${MAX_FAILED_RELAUNCHES} failed relaunches`, true);
+    actions.push({ type: 'trip-breaker', afterLock: true });
+    return;
+  }
+  if (asked) return handOver(actions, 'asked', obs.record.note); // rule 9
+  const context = leadContext(obs, false);
+  actions.push({ type: 'relaunch-lead', resume: Boolean(context) && context.tokens < context.soft });
+}
+
+// Rules 11 and 14 to 16, for an idle lead: one wake at most, for every motive there is. True when a
+// wake is held back only for a moment (quiet time, a crew failed by this pass): a patient pass looks
+// again.
 function tendIdleLead(obs, watch, unseen, actions, log) {
-  if (rateLimited(obs, watch, log)) return; // rule 11
+  if (rateLimited(obs, watch, log)) return false; // rule 11
   const motives = wakeMotives(obs, watch, unseen);
-  if (motives.length === 0) return;
+  if (motives.length === 0) return false;
   // A crew being failed by this pass: the lead is woken once its task is failed, at the next pass.
-  if (unseen && unseen.toFail.length > 0) return;
-  if (!wakeAllowed(obs, watch, log)) return;
+  if (unseen && unseen.toFail.length > 0) return true;
+  if (obs.now - Date.parse(watch.lastLeadActionAt) < leadQuietMs()) return true;
+  if (!wakeAllowed(obs, watch, log)) return false;
+  // Rule 13: past its soft threshold, it is handed over instead of woken.
+  const context = leadContext(obs, false);
+  if (context && context.tokens >= context.soft) {
+    handOver(actions, 'idle');
+    return false;
+  }
   watch.lastWakeAt = iso(obs.now);
   watch.lastLeadActionAt = iso(obs.now);
   for (const motive of motives) Object.assign(watch, motive.remember);
@@ -273,6 +393,7 @@ function tendIdleLead(obs, watch, unseen, actions, log) {
     reasons: motives.flatMap((motive) => motive.reasons),
     log: `wake-lead ${obs.lead.shortId}: ${motives.map((motive) => motive.log).join('; ')}`,
   });
+  return false;
 }
 
 // Rule 11: a usage limit hit after the lead's last heartbeat, less than 5 h ago. Logged once per
@@ -342,6 +463,7 @@ module.exports = {
   INEFFECTIVE_AFTER_MS,
   WAKE_BACKOFF_MS,
   INTERRUPT_SILENCE_MS,
+  MAX_FAILED_RELAUNCHES,
   restartGraceMs,
   leadQuietMs,
   rateLimitHoldMs,
