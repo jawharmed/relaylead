@@ -10,6 +10,7 @@ const { t: msg } = require('../core/messages');
 const { home, missionDir } = require('../core/paths');
 const { writeJson, readJson } = require('../core/store');
 const { recordSession } = require('../core/sessions');
+const { uninstall } = require('../core/install');
 const { tmpDir, makeIo, waitFor, userEnv } = require('../fixtures/helpers');
 const { writeMission } = require('../fixtures/missions');
 
@@ -348,4 +349,28 @@ test('a loop started by the tests ends once their run no longer refreshes its fi
   fs.utimesSync(runFile, old, old);
   await waitFor(() => loop.ended, 10000, 'the loop to end', explain);
   assert.strictEqual(fs.existsSync(loopFile()), false);
+});
+
+test('uninstall --purge stops the loop and waits for its end before deleting the home', async (t) => {
+  const loops = loopHome(t);
+  missionToWatch();
+  // What uninstall touches outside the home: a fake launchctl and a fake claude.
+  setEnv(t, 'RELAYLEAD_PLATFORM', 'darwin');
+  setEnv(t, 'RELAYLEAD_LAUNCHD_DIR', tmpDir('relaylead-agents-'));
+  setEnv(t, 'RELAYLEAD_LAUNCHCTL', path.join(__dirname, '..', 'fixtures', 'launchctl', 'fake-launchctl.js'));
+  setEnv(t, 'FAKE_LAUNCHCTL_STATE', tmpDir('relaylead-fake-launchctl-'));
+  setEnv(t, 'RELAYLEAD_CLAUDE', path.join(__dirname, '..', 'fixtures', 'claude', 'fake-claude.js'));
+  setEnv(t, 'FAKE_CLAUDE_STATE', tmpDir('relaylead-fake-claude-'));
+  fs.writeFileSync(path.join(home(), '.relaylead-home'), '');
+  const loop = spawnLoop(loops);
+  await waitFor(() => watcher.watcherRunning().running, 10000, 'the loop to run', explain);
+
+  const said = [];
+  await uninstall((key) => said.push(key), { purge: true });
+
+  assert.ok(said.includes('watcherStopped'), said.join(' '));
+  assert.strictEqual(fs.existsSync(home()), false);
+  // Its file was removed on its way out: the process itself ends at once, and writes nothing more.
+  await waitFor(() => loop.ended, 5000, 'the loop process to exit', explain);
+  assert.strictEqual(fs.existsSync(home()), false);
 });

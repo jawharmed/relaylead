@@ -222,7 +222,7 @@ async function act(name, action, watch) {
     } else if (action.type === 'relaunch-lead') {
       await relaunchLead(name, action.resume, watch);
     } else if (action.type === 'trip-breaker') {
-      await tripBreaker(name);
+      await tripBreaker(name, action.note);
     } else if (action.type === 'hand-over') {
       await handOver(name, action, watch);
     } else if (action.type === 'mail') {
@@ -279,12 +279,14 @@ async function wakeLead(name, reasons, watch, text = wakeText(reasons)) {
 
 const BREAKER_NOTE = 'stopped by the watcher: the lead could not be restarted 3 times in a row';
 
-// Rule 8, after the mission lock: stopMission takes it itself. stopMission is read from the module
-// object, so a test can replace it. A stop that throws is replayed at the next pass (rule 1).
-async function tripBreaker(name) {
-  await missions.stopMission(name, { note: BREAKER_NOTE });
-  writeJournal(name, 'watcher', BREAKER_NOTE);
-  watchLog(name, 'breaker-stopped', BREAKER_NOTE);
+// Rules 4b and 8, after the mission lock: stopMission takes it itself. stopMission is read from the
+// module object, so a test can replace it. A stop that throws is replayed at the next pass (rule 1).
+// Once stopped, the user is told, once: the mission waits for them.
+async function tripBreaker(name, note = BREAKER_NOTE) {
+  await missions.stopMission(name, { note });
+  writeJournal(name, 'watcher', note);
+  watchLog(name, 'breaker-stopped', note);
+  notify({ title: `Relaylead: ${name}`, text: note });
 }
 
 const RESTART_TEXT = 'Relaylead restarted you after your session ended. Carry on with the method: run `relaylead task list` first.';
@@ -670,6 +672,8 @@ function removeOwnLoopFile(token) {
 // goes on. A stop holds until the next start, even during the loop's last pass.
 function loopMustEnd(token, info, write) {
   if (testRunOver()) return true;
+  // The home has been deleted (uninstall --purge): writing its file again would bring it back.
+  if (!fs.existsSync(home())) return true;
   const loop = readLoopFile();
   if (loop && !isOurs(loop, token)) return true;
   if ((loop || info).version !== packageVersion()) return true;
@@ -697,7 +701,7 @@ async function loop() {
   const beat = setInterval(() => {
     try {
       const current = readLoopFile();
-      if (!current || isOurs(current, token)) write();
+      if (fs.existsSync(home()) && (!current || isOurs(current, token))) write();
     } catch {
       // the next beat writes it
     }
@@ -761,12 +765,12 @@ async function startWatcher({ unlessStopped = false } = {}) {
 }
 
 // Asks the loop to stop with watcher-loop.stop, which stays until the next start: 'stopped' once the
-// loop has removed its file (10 s at most), 'requested' when it is still in a long pass (it ends at the
-// end of that pass), 'not-running' when no loop runs.
-async function stopWatcher() {
+// loop has removed its file (within waitMs, 10 s by default), 'requested' when it is still in a long
+// pass (it ends at the end of that pass), 'not-running' when no loop runs.
+async function stopWatcher({ waitMs = STOP_WAIT_MS } = {}) {
   writeText(loopStopFile(), `${new Date().toISOString()}\n`);
   if (!watcherRunning().running) return 'not-running';
-  const giveUpAt = Date.now() + STOP_WAIT_MS;
+  const giveUpAt = Date.now() + waitMs;
   while (fs.existsSync(loopFile())) {
     if (Date.now() >= giveUpAt) return 'requested';
     await sleep(100);

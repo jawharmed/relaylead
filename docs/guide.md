@@ -47,7 +47,7 @@ The command prints the mission's name and returns at once. Follow it with `relay
 - **Lead.** One Claude Code session that drives the mission. It never edits code: it reads the task list, starts crew members, delivers their work, asks you questions, and says when the mission is done. It only uses `relaylead` commands.
 - **Crew (equipiers).** One short-lived developer session per task, in its own git worktree under `.relaylead/worktrees/` and on its own branch `relaylead/<mission>/<task>`. A crew member finishes with `relaylead task done` or `relaylead task fail`. At most `parallel` tasks run at a time (4 by default).
 - **Task.** A unit of work with an id, a title, a body, a state (`todo`, `running`, `done`, `failed`, `delivered`) and optionally dependencies (`depends`) and a question to settle first (`ask`). Delivering a task merges it (or opens a pull request); that makes the tasks that depend on it ready.
-- **Watcher.** A small loop with no AI. Every few minutes it looks at the unfinished missions: it restarts a lead that has stopped (the same session when its context is low, otherwise a fresh one that restarts from the files), wakes a lead that ended its turn when an answer or a finished task is waiting, stops a second lead or a crew session whose task no longer runs, and hands over to a fresh lead when the lead's context fills up. After 3 failed restarts in a row it stops the mission and says why. It writes what it does to `~/.relaylead/watcher.log`. `relaylead launch` starts it, and `relaylead install` hands it to launchd so it survives a restart of the machine.
+- **Watcher.** A small loop with no AI. Every few minutes it looks at the unfinished missions: it restarts a lead that has stopped (the same session when its context is low, otherwise a fresh one that restarts from the files), wakes a lead that ended its turn when an answer or a finished task is waiting, stops a second lead or a crew session whose task no longer runs, and hands over to a fresh lead when the lead's context fills up. After 3 failed restarts in a row, or at once when a session reports a billing or authentication error, it stops the mission, says why and notifies you. It writes what it does to `~/.relaylead/watcher.log`. `relaylead launch` starts it, and `relaylead install` hands it to launchd so it survives a restart of the machine.
 - **Questions.** The lead asks you through `relaylead question`; you answer with `relaylead answer`. A question has a text, options and optionally a recommended option. The lead waits only for answers that change what happens next.
 - **Delivery.** How finished tasks reach your repository: `local-merge` (default), `files`, or `github-pr`.
 
@@ -100,7 +100,7 @@ When a task is delivered, its `state:` line becomes `done` in the integration br
 ### Deliveries
 
 - **`local-merge`** (default): each finished task is merged into the integration branch (`relaylead/integration` by default, set with `delivery.branch`). Nothing leaves your machine.
-- **`github-pr`**: meant for the `github-issues` source. A finished task's branch is pushed to the remote (`origin`, or `delivery.remote`), a pull request to the integration branch is opened and merged on GitHub, the local integration branch follows the remote one, and the issue is closed. The lead reviews the pull request first; a review that requests changes refuses the delivery. The integration branch must be pushable to the remote.
+- **`github-pr`**: meant for the `github-issues` source. A finished task's branch is pushed to the remote (`origin`, or `delivery.remote`), a pull request to the integration branch is opened and merged on GitHub in the same step, the task's branch is deleted on the remote, the local integration branch follows the remote one, and the issue is closed. No review is waited for: the lead delivers a task it has found finished, so its pull request is opened, then merged at once. If you want to review the work, do it on the integration branch before you merge it into your own. The integration branch must be pushable to the remote.
 - **`files`**: no git needed; each task writes its output into `out/<task id>/` in the project folder.
 
 Relaylead's own commits run your git hooks (with `LC_ALL=C`). These run in the integration worktree, where no dependencies are installed: a hook that needs `node_modules` (husky, commitlint, lint-staged) fails there. Such projects set `"delivery": {"runHooks": false}`, or deliver with `relaylead task deliver <id> --no-hooks --mission <mission>`.
@@ -147,7 +147,7 @@ Sessions have a limited context. The `context` setting says when to hand over: `
 
 ### API key
 
-By default Claude signs in with your connected account (`auth.mode` `login`). To use an API key, run `relaylead init --api-key-env NAME` (copies the variable `NAME` to `~/.relaylead/api-key`, readable by you alone) or `relaylead init --api-key-file PATH`. The key is never printed, and never written to the configuration, a log or a launchd file. If Claude Code asks you to approve the key, run `claude` once in a terminal and accept.
+By default Claude signs in with your connected account (`auth.mode` `login`). To use an API key, run `relaylead init --api-key-env NAME` (copies the variable `NAME` to `~/.relaylead/api-key`, readable by you alone) or `relaylead init --api-key-file PATH`. The key is never printed, and never written to the configuration, a log or a launchd file. Each session gets it through Claude Code's `apiKeyHelper` setting, in the settings Relaylead passes to the session: a small command reads the key file when Claude Code asks for it, and nothing needs approving. Claude Code prefers this key to the account you are signed in with, and an `ANTHROPIC_API_KEY` of your shell is not passed to the sessions. `relaylead doctor` asks Claude Code which credential it would use (`ok api-key-use`). To check a running session, open it with `relaylead show <mission>` and run `/status`: it must name `apiKeyHelper`, not your Claude account.
 
 ## Commands
 
@@ -179,7 +179,7 @@ Stops the mission and all its sessions. The clean task worktrees are removed, ig
 
 ### `relaylead remove <mission> [--force]`
 
-Removes a finished (done or stopped) mission: its task worktrees (ignored files included), its task branches `relaylead/<mission>/...` and its state under `~/.relaylead/missions/`. The integration branch and its worktree stay, with the delivered work. It refuses, before deleting anything, a task branch with commits not merged into the integration branch and a task worktree with uncommitted changes or locked, and names them. `--force` deletes them anyway and prints each deleted branch with its last commit, so it can be recreated with `git branch <name> <commit>`.
+Removes a finished (done or stopped) mission: its task worktrees (ignored files included), its task branches `relaylead/<mission>/...` and its state under `~/.relaylead/missions/`. The mission's sessions are also taken out of the `claude agents` list (`claude rm`; their conversations stay in `claude --resume`). The integration branch and its worktree stay, with the delivered work. It refuses, before deleting anything, a task branch with commits not merged into the integration branch and a task worktree with uncommitted changes or locked, and names them. `--force` deletes them anyway and prints each deleted branch with its last commit, so it can be recreated with `git branch <name> <commit>`.
 
 ### `relaylead task`
 
@@ -227,7 +227,7 @@ Registers the launchd agent that runs the watcher (`dev.relaylead.watcher`) and 
 
 ### `relaylead uninstall [--purge]`
 
-Removes what `install` added, and nothing else. `--purge` also deletes `~/.relaylead` (missions' state, logs, key file), after checking that the folder is Relaylead's.
+Stops the watcher's loop first and waits for its end, then removes what `install` added, and nothing else. `--purge` also deletes `~/.relaylead` (missions' state, logs, key file), after checking that the folder is Relaylead's.
 
 ### `relaylead doctor`
 
@@ -241,6 +241,7 @@ Checks Node, Claude Code, git, the scheduler, the plugin, the watcher, the authe
 - **The watcher does nothing.** Check `relaylead watcher status`, and whether `~/.relaylead/STOP` exists. After a restart of the machine, `relaylead install` lets launchd keep it alive; without it run `relaylead watcher start`.
 - **A lead does not answer.** It is reported `lead-stuck` and never stopped: `relaylead show <mission>` and write to it.
 - **A mission stopped after 3 failed restarts.** Its state and `journal.log` say why. Fix the cause, then launch again.
+- **A mission stopped for billing or authentication.** When a session reports `billing_error` (API credit used up) or `authentication_failed`, waking it again would fail the same way: the watcher stops the mission at once, notifies you, and `relaylead list` and `show` display `stopped by the watcher: billing error …` or `authentication failed …`. Add credit or fix the key (`relaylead doctor`), then launch again: the work already delivered is on the integration branch (`relaylead remove <mission>` first to reuse the name).
 - **"a mission named ... already exists".** Pass another `--name`, or remove the finished one with `relaylead remove <mission>`.
 - **A delivery fails.** The lead asks you what to do. Fix the cause on the task's branch and answer "I fixed it: deliver again", or deliver it yourself.
 - **Claude Code says the folder is not trusted.** Run `claude` once in the project folder and accept.

@@ -291,10 +291,20 @@ function leadPrompt(method, mission, section) {
   ].join('\n');
 }
 
+// Whether the reservation of lead-launch.json is that of a lead after the one of lead.json. Told by
+// their numbers, which only grow (nextLeadNumber): two dates written within the same millisecond
+// would not tell them apart. A lead.json without a number (a name not made by launchLead) falls
+// back on the dates.
+function reservedAfter(launch, lead) {
+  const number = Number((/\/lead\/(\d+)$/.exec(lead.sessionName || '') || [])[1]);
+  if (Number.isFinite(number) && Number.isFinite(Number(launch.n))) return Number(launch.n) > number;
+  return Date.parse(launch.at) > Date.parse(lead.startedAt);
+}
+
 // Null when the session running a command may drive the mission; otherwise the not-current-lead
 // error. Only a lead is checked (RELAYLEAD_ROLE, set at launch; a lead launched before it was set is
 // not checked). There is one current lead. While a launch runs (reserved in lead-launch.json, not
-// failed, after the lead of lead.json started, or before any), it is the lead being launched, and the
+// failed, for a lead after that of lead.json, or before any), it is the lead being launched, and the
 // lead of lead.json no longer is: claude's launch returns only once the first turn of the new lead has
 // started, and that turn already runs commands, while an old lead restarted by its agent replays its
 // last command (measured fact 4). A launch that failed gives the mission back to the lead of lead.json.
@@ -303,7 +313,7 @@ function currentLeadError(name, env) {
   if (!fs.existsSync(missionFile(name, 'mission.json'))) return null; // the command says mission-unknown
   const lead = readJson(missionFile(name, 'lead.json'), null);
   const launch = readJson(missionFile(name, 'lead-launch.json'), null);
-  const launching = launch && !launch.failed && (!lead || Date.parse(launch.at) > Date.parse(lead.startedAt));
+  const launching = launch && !launch.failed && (!lead || reservedAfter(launch, lead));
   const current = launching ? launch.name : lead && lead.sessionName;
   const session = env.RELAYLEAD_SESSION;
   if (session && session === current) return null;
@@ -343,8 +353,11 @@ function readState(name) {
 }
 
 // The state as the user sees it: "stopped, stopping" while its sessions are still being stopped.
+// A stop decided by the watcher (its breaker) shows its note, which says why and what to do.
 function shownState(record) {
-  return record.stopping ? `${record.state}, stopping` : record.state;
+  if (record.stopping) return `${record.state}, stopping`;
+  if (record.state === 'stopped' && /^stopped by the watcher/.test(record.note || '')) return record.note;
+  return record.state;
 }
 
 // `stopping: true` keeps the folder locked while the sessions of a stopped or done mission are being
@@ -731,7 +744,7 @@ function launchRunning(name) {
 }
 
 // `relaylead remove`: frees the name and the folder of a finished mission. Its sessions are stopped
-// again by an adapter that stops by id, its task worktrees and branches are removed by the delivery,
+// again by an adapter that stops by id, then forgotten by the agent, its task worktrees and branches are removed by the delivery,
 // then its folder under missions/ is deleted. Returns the deleted branches ("<name> <sha>"), each
 // also passed to onBranchDeleted as soon as it is deleted.
 async function removeMission(name, { force = false, onBranchDeleted } = {}) {
@@ -758,6 +771,11 @@ async function removeMission(name, { force = false, onBranchDeleted } = {}) {
     const adapter = getAdapter(mission.agent);
     if (adapter.stopById) {
       for (const session of listSessions(name)) await adapter.stop(session);
+    }
+    // Then out of the agent's own list of sessions, when it keeps one (claude agents). Best effort: a
+    // session left listed is harmless, and must not keep the mission from being removed.
+    if (adapter.forget) {
+      for (const session of listSessions(name)) await adapter.forget(session).catch(() => {});
     }
     // A project folder deleted since has no worktree or branch left to remove.
     const branches = fs.existsSync(mission.dir)

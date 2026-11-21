@@ -212,6 +212,23 @@ test('a stop that fails on a done session with a live process is an error', asyn
   await assert.rejects(claude.stop(session), { code: 'claude-failed' });
 });
 
+test('forget takes a stopped session out of the agents list; an unknown one is fine', async (t) => {
+  const { dir, state } = setup(t);
+  const session = await claude.launch(spec(dir));
+  await claude.stop(session);
+  await claude.forget(session);
+  assert.deepStrictEqual(fakeSessions(state), []);
+  await claude.forget(session);
+  assert.deepStrictEqual(calls(state).filter((args) => args[0] === 'rm'), [['rm', session.shortId], ['rm', session.shortId]]);
+});
+
+test('a forget that fails on a listed session is an error', async (t) => {
+  const { dir } = setup(t, 'rm-fail');
+  const session = await claude.launch(spec(dir));
+  await claude.stop(session);
+  await assert.rejects(claude.forget(session), { code: 'claude-failed' });
+});
+
 test('refuses a .cmd or .bat claude', async (t) => {
   const { dir } = setup(t);
   process.env.RELAYLEAD_CLAUDE = path.join(dir, 'claude.cmd');

@@ -1,7 +1,7 @@
 // Delivery "GitHub pull request". Branches and worktrees are those of local-merge: each task works on
 // its own branch, from the integration branch. A finished task's branch is pushed, a pull request
-// to the integration branch is opened and merged on GitHub, the local integration branch follows the
-// remote one, then the task's issue is closed. Meant for the source github-issues.
+// to the integration branch is opened and merged on GitHub, the branch is deleted there, the local
+// integration branch follows the remote one, then the task's issue is closed. Meant for the source github-issues.
 const localMerge = require('./local-merge');
 const { gh, checkGh } = require('../core/github');
 const githubIssues = require('../sources/github-issues');
@@ -46,15 +46,16 @@ function openPr(mission, task, branch) {
   return { number: Number(url.split('/').pop()), state: 'OPEN', url };
 }
 
-// The lead reviews the pull request and posts its review with `gh pr review` (catalog/methods/code.md).
-// Changes requested refuse the delivery; an approval is not needed: on GitHub, the author of a pull
-// request cannot approve it, and the lead posts with the user's own account.
+// No review is waited for: the pull request is opened and merged in the same delivery. A review
+// that requested changes on an earlier pull request of the branch (a delivery played again) still
+// refuses the delivery; an approval is never needed.
 function checkReview(mission, task, pr) {
   const { reviewDecision } = JSON.parse(ghIn(mission, ['pr', 'view', String(pr.number), '--json', 'reviewDecision,state']));
   if (reviewDecision === 'CHANGES_REQUESTED') throw codedError('pr-changes-requested', { id: task.id, url: pr.url });
 }
 
-// No --delete-branch: finish() removes the task's branch, here and on its worktree.
+// No --delete-branch: gh would also delete the local branch, which finish() removes itself, after
+// its worktree. The branch on GitHub is deleted by deleteRemoteBranch.
 function mergePr(mission, task, pr) {
   try {
     ghIn(mission, ['pr', 'merge', String(pr.number), '--merge']);
@@ -63,6 +64,16 @@ function mergePr(mission, task, pr) {
       throw codedError('pr-merge-conflict', { id: task.id, url: pr.url });
     }
     throw err;
+  }
+}
+
+// Once merged, the task's branch is of no use on GitHub. A branch already gone (GitHub set to delete
+// merged branches) or that cannot be deleted leaves the delivery as it is: it is only tidying.
+function deleteRemoteBranch(mission, branch) {
+  try {
+    localMerge.git(mission.dir, ['push', remoteName(mission), '--delete', branch]);
+  } catch {
+    // left on GitHub
   }
 }
 
@@ -87,6 +98,7 @@ function deliver(mission, task, { runHooks } = {}) {
     if (!pr) pr = openPr(mission, task, branch);
     checkReview(mission, task, pr);
     mergePr(mission, task, pr);
+    deleteRemoteBranch(mission, branch);
   }
   followRemote(mission);
   githubIssues.markDone(mission.config.source, task.id, { cwd: mission.dir });
