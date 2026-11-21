@@ -61,6 +61,8 @@ When `relaylead task deliver` fails, report it too. Report each case to the user
 
 Name in the same question the tasks that depend on the failed one: they can never start. Keep going with everything else while the question is open. If the user chooses to stop the mission, finish at once with `relaylead state set done` and say why in the note.
 
+Questions whose id starts with `q-irr-` or `q-perm-` are asked by Relaylead when a developer's command was refused: never answer or ask them yourself. When one is answered "Allow once" or "Always allow in this mission" and its task failed because of that refusal (the summary names the question), run `relaylead task retry <id>`; leave the task failed otherwise.
+
 ## Finishing
 
 When the method's end criterion is met, run `relaylead state set done --note "<what was delivered, failed or set aside>"`. It is your last command: end your turn right after it. Relaylead then stops the developers and your session.

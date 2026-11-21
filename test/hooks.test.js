@@ -113,6 +113,64 @@ test('pretool hook refuses the mission state folder', () => {
   assert.match(JSON.parse(out).hookSpecificOutput.permissionDecisionReason, /access to the mission state folder/);
 });
 
+function questionFiles(home) {
+  const dir = path.join(home, 'missions', 'demo', 'questions');
+  return fs.existsSync(dir) ? fs.readdirSync(dir).sort() : [];
+}
+
+function readQuestion(home, file) {
+  return JSON.parse(fs.readFileSync(path.join(home, 'missions', 'demo', 'questions', file), 'utf8'));
+}
+
+function answer(home, id, choice) {
+  writeJson(path.join(home, 'missions', 'demo', 'questions', `${id}.answer.json`), { choice, answeredAt: new Date().toISOString() });
+}
+
+test('pretool hook asks the user before an irreversible action, and lets it through once', () => {
+  const home = missionHome({});
+  const env = { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'demo' };
+  const cwd = tmpDir();
+  const reason = (command) => {
+    const out = runHook(PRETOOL, { session_id: 'fake-session', tool_name: 'Bash', tool_input: { command }, cwd }, env);
+    return out ? JSON.parse(out).hookSpecificOutput.permissionDecisionReason : null;
+  };
+
+  const first = reason('git reset --hard');
+  const [file] = questionFiles(home);
+  const id = file.replace(/\.json$/, '');
+  assert.match(id, /^q-irr-[0-9a-f]{12}$/);
+  assert.strictEqual(first, `Blocked by Relaylead: irreversible: git reset --hard. Asked the user (question ${id}), continue with the rest of the task, one command per call.`);
+  const question = readQuestion(home, file);
+  assert.deepStrictEqual([question.kind, question.text, question.options, question.recommended], ['irreversible', 'git reset --hard', ['Refuse', 'Allow once'], 1]);
+  // The same command again: the same question, never a second one.
+  assert.strictEqual(reason('git  reset --hard'), first);
+  assert.strictEqual(questionFiles(home).length, 1);
+
+  answer(home, id, 'Allow once');
+  assert.strictEqual(reason('git reset --hard'), null);
+  assert.strictEqual(reason('git reset --hard'), first);
+  assert.deepStrictEqual(questionFiles(home), [`${id}.answer.json`, `${id}.json`, `${id}.used.json`]);
+  assert.match(journal(home), new RegExp(`Bash allowed once by the user \\(question ${id}\\)`));
+});
+
+test('pretool hook keeps refusing an irreversible action the user refused, and asks nothing for an absolute refusal', () => {
+  const home = missionHome({});
+  const env = { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'demo' };
+  const cwd = gitRepo({ 'README.md': 'demo\n' });
+  const decide = (command) => JSON.parse(runHook(PRETOOL, { tool_name: 'Bash', tool_input: { command }, cwd }, env)).hookSpecificOutput;
+
+  decide('git clean -fd');
+  const id = questionFiles(home)[0].replace(/\.json$/, '');
+  answer(home, id, 'Refuse');
+  assert.strictEqual(decide('git clean -fd').permissionDecision, 'deny');
+  assert.strictEqual(decide('git clean -fd').permissionDecision, 'deny');
+  assert.strictEqual(questionFiles(home).length, 2);
+
+  const forced = decide('git push --force origin relaylead/x');
+  assert.match(forced.permissionDecisionReason, /^Blocked by Relaylead: force push\. Continue/);
+  assert.strictEqual(questionFiles(home).length, 2);
+});
+
 test('permission hook allows a listed command and denies the rest', () => {
   const home = missionHome({ allow: ['Bash(git status*)'] });
   const env = { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'demo', RELAYLEAD_ALLOW: JSON.stringify(['Read', 'Bash(npm test*)']) };

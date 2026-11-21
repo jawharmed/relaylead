@@ -1,6 +1,9 @@
 // The guard: crew sessions run with broad permissions and nobody watching, so some actions are
 // refused whatever the permission mode: protected or forced pushes, commits on a protected branch,
-// secret files, and the mission's own state folder. Used by the hooks in core/hooks/.
+// secret files, and the mission's own state folder. Others cannot be undone (a recursive delete out of
+// the working folder, `git reset --hard`…): they are refused too, but marked `irreversible`, so the
+// PreToolUse hook can ask the user and let them through once. Used by the hooks in core/hooks/.
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -427,6 +430,52 @@ function checkPiece({ words, redirects }, dir, guard, stateDir) {
   return null;
 }
 
+// True when `target`, seen from `dir`, is strictly inside the working folder `workDir`. A target
+// only the shell knows (a variable, a folder after `cd $X`) is not.
+function insideFolder(target, dir, workDir) {
+  const resolved = moveTo(dir, target);
+  if (resolved === null || !workDir) return false;
+  const normalize = (p) => (CASE_INSENSITIVE ? p.toLowerCase() : p);
+  return normalize(resolved).startsWith(normalize(path.resolve(workDir)) + path.sep);
+}
+
+// Short options grouped in one word (`-rf`) hold `letter`.
+function hasShortOption(args, letter) {
+  return args.some((arg) => /^-[^-]/.test(arg) && arg.slice(1).includes(letter));
+}
+
+// Reason to ask before one piece of a Bash command run in `dir`, or null: an action that cannot be
+// undone. `workDir` is the session's working folder: a recursive delete inside it is ordinary work.
+function irreversibleReason({ words }, dir, workDir) {
+  const command = words[commandStart(words)];
+  if (command === 'echo' || command === 'printf') return null;
+  const rm = words.findIndex((word) => path.win32.basename(word) === 'rm');
+  if (rm !== -1) {
+    const args = words.slice(rm + 1);
+    const end = args.indexOf('--');
+    const options = end === -1 ? args : args.slice(0, end);
+    const recursive = hasShortOption(options, 'r') || hasShortOption(options, 'R') || options.some((arg) => isLongOption(arg, '--recursive'));
+    const targets = args.filter((arg, i) => (end !== -1 && i > end) || !arg.startsWith('-'));
+    if (recursive && targets.some((target) => !insideFolder(target, dir, workDir))) {
+      return 'irreversible: recursive delete outside the working folder';
+    }
+  }
+  const git = parseGit(words, dir);
+  if (!git) return null;
+  const args = words.slice(git.start);
+  const force = hasShortOption(args, 'f') || args.some((arg) => isLongOption(arg, '--force'));
+  const deletion = hasShortOption(args, 'd') || args.some((arg) => isLongOption(arg, '--delete'));
+  if (git.subcommand === 'reset' && args.includes('--hard')) return 'irreversible: git reset --hard';
+  if (git.subcommand === 'clean' && force) return 'irreversible: git clean -f';
+  if (git.subcommand === 'branch' && (hasShortOption(args, 'D') || (deletion && force))) return 'irreversible: git branch -D';
+  if (git.subcommand === 'push' && (deletion || args.some((arg) => /^:./.test(arg)))) return 'irreversible: git push --delete';
+  if (git.subcommand === 'checkout' && args.includes('.')) return 'irreversible: git checkout -- .';
+  if (git.subcommand === 'restore' && args.includes('.')) return 'irreversible: git restore .';
+  const stashAction = args.find((arg) => !arg.startsWith('-'));
+  if (git.subcommand === 'stash' && ['drop', 'clear'].includes(stashAction)) return `irreversible: git stash ${stashAction}`;
+  return null;
+}
+
 // Folders the next pieces may run in after a `cd` or `pushd` piece run in `dirs`; null when the
 // piece does not change folder.
 function cdTargets(words, dirs) {
@@ -440,8 +489,9 @@ function cdTargets(words, dirs) {
 // Each piece is judged in every folder it may run in. `cd x && …` moves the rest of the &&
 // chain to x; once the chain ends, the cd may have failed, so the former folders are possible
 // again. After `cd x;` or `cd x ||` both folders are possible. A cd in a pipe, in the background
-// or inside `( … )` does not move the pieces after it.
-function checkCommand(command, cwd, guard, stateDir) {
+// or inside `( … )` does not move the pieces after it. Returns the first reason to refuse; the
+// reasons to ask first (irreversibleReason) go to `irreversible`, so a refusal is never hidden by them.
+function checkCommand(command, cwd, guard, stateDir, irreversible) {
   for (const pieces of bashCommands(command)) {
     let dirs = [cwd];
     let beforeChain = null; // the folders before a `cd … &&` chain
@@ -451,6 +501,8 @@ function checkCommand(command, cwd, guard, stateDir) {
       for (const dir of dirs) {
         const reason = checkPiece(piece, dir, guard, stateDir);
         if (reason) return reason;
+        const ask = irreversibleReason(piece, dir, cwd);
+        if (ask) irreversible.push(ask);
       }
       const moved = cdTargets(piece.words, dirs);
       // Before `||`, a failed cd runs the next piece in the former folder, a successful one may
@@ -477,14 +529,17 @@ function checkCommand(command, cwd, guard, stateDir) {
 // The whole command is judged, then each of its lines on its own. The line pass has no secret
 // list: commit messages and heredoc bodies may mention a secret, but every line is judged for
 // pushes, commits and the state folder, so a quote the reader gets wrong never hides one.
+// Returns {reason, irreversible} or null: an action that cannot be undone only when nothing else
+// refuses the command.
 function checkBash(command, cwd, guard, stateDir) {
   const lines = command.includes('\n') ? command.split('\n') : [];
   const noSecrets = { ...guard, secrets: [] };
+  const irreversible = [];
   for (const [text, rules] of [[command, guard], ...lines.map((line) => [line, noSecrets])]) {
-    const reason = checkCommand(text, cwd, rules, stateDir);
-    if (reason) return reason;
+    const reason = checkCommand(text, cwd, rules, stateDir, irreversible);
+    if (reason) return { reason, irreversible: false };
   }
-  return null;
+  return irreversible.length > 0 ? { reason: irreversible[0], irreversible: true } : null;
 }
 
 function checkFile(file, dir, guard, stateDir) {
@@ -539,7 +594,8 @@ function checkToolUse({ tool_name, tool_input, cwd }, guard, stateDir = null) {
   const input = tool_input || {};
   const dir = cwd || process.cwd();
   let reason = null;
-  if (tool_name === 'Bash') reason = checkBash(String(input.command || ''), dir, guard, stateDir);
+  let irreversible = false;
+  if (tool_name === 'Bash') ({ reason, irreversible } = checkBash(String(input.command || ''), dir, guard, stateDir) || {});
   const field = FILE_TOOLS.get(tool_name);
   if (field && input[field]) reason = checkFile(String(input[field]), dir, guard, stateDir);
   const searched = input.path ? path.resolve(dir, expandHome(String(input.path))) : dir;
@@ -554,7 +610,22 @@ function checkToolUse({ tool_name, tool_input, cwd }, guard, stateDir = null) {
   if (!reason && tool_name === 'Grep' && !input.glob && input.path && holdsStateFolder(searched, stateDir)) {
     reason = 'access to the mission state folder';
   }
+  if (reason && irreversible) return { decision: 'deny', reason, irreversible: true };
   return reason ? { decision: 'deny', reason } : { decision: 'allow' };
+}
+
+// The text an answer of the user is about: a Bash command with its words joined by one space, the
+// file of a file tool, the whole input of any other tool.
+function actionText({ tool_name, tool_input }) {
+  const input = tool_input || {};
+  if (tool_name === 'Bash') return String(input.command || '').trim().split(/\s+/).join(' ');
+  const field = FILE_TOOLS.get(tool_name);
+  return field && input[field] ? String(input[field]) : JSON.stringify(input);
+}
+
+// The id of an action in the keys of its questions (irr-<hash>, perm-<hash>): 12 hex characters.
+function actionHash(toolName, text) {
+  return crypto.createHash('sha256').update(`${toolName}\0${text}`).digest('hex').slice(0, 12);
 }
 
 // `cat <<EOF` alone only prints its heredoc, as in `git commit -m "$(cat <<'EOF' … )"`: it reads nothing.
@@ -577,8 +648,10 @@ function isAllowed({ tool_name, tool_input }, patterns) {
   return texts.length > 0 && texts.every((text) => globs.some((glob) => globMatch(glob, text)));
 }
 
-function denyMessage(reason) {
-  return `Blocked by Relaylead: ${reason}. Continue with the rest of the task, one command per call.`;
+// With `questionId`, the user was asked about the action.
+function denyMessage(reason, questionId = null) {
+  const asked = questionId ? `Asked the user (question ${questionId}), continue` : 'Continue';
+  return `Blocked by Relaylead: ${reason}. ${asked} with the rest of the task, one command per call.`;
 }
 
 // --- Hook helpers -----------------------------------------------------------------------------
@@ -633,4 +706,13 @@ function writeJournal(mission, tool, reason) {
   }
 }
 
-module.exports = { checkToolUse, isAllowed, denyMessage, loadMissionGuard, readHookInput, writeJournal };
+module.exports = {
+  checkToolUse,
+  isAllowed,
+  actionText,
+  actionHash,
+  denyMessage,
+  loadMissionGuard,
+  readHookInput,
+  writeJournal,
+};
