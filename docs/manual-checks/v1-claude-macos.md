@@ -90,3 +90,42 @@ Dans `<home>/config.json` : `auth: {mode: "api-key", keyFile: "~/.config/anthrop
 - Dépôt GitHub `jawharmed/rl-essai-gh-20261121` non supprimé : `gh repo delete` répond HTTP 403, car il faut le droit `delete_repo` (`gh auth refresh -h github.com -s delete_repo`, interactif). À supprimer à la main.
 - Restent dans `~/.claude.json` les deux entrées de confiance des dossiers d'essai (chemins scratch), laissées pour ne pas toucher à la configuration de l'utilisateur.
 - Sessions de l'utilisateur : 22 avant, 22 après, mêmes identifiants et mêmes états. `~/.relaylead/missions/toy-1` est intact.
+
+## Revérification après corrections (branche `fix/essai-final`, 5575d17)
+
+- Date : 2026-11-21, 22:20 à 22:33. Paquet `relaylead-0.1.0.tgz` (72 fichiers) produit par `npm pack` depuis la branche. Même méthode qu'avant : installation isolée sous `<scratch>/prefix`, `RELAYLEAD_HOME=<scratch>/home`, variables `CLAUDE*` / `ANTHROPIC*` retirées de l'environnement.
+- `relaylead install` : OK (scheduler et plugin installés, doctor tout ok). `relaylead init --yes` n'affiche plus « next: relaylead install » quand l'installation est déjà faite.
+
+### Mode clé API : OK
+
+- Config machine : `auth: {mode: "api-key", keyFile: "~/.config/anthropic/relaylead-key"}`.
+- `relaylead doctor` :
+  ```
+  ok api-key: file found
+  ok api-key-use: claude picks the key through apiKeyHelper
+  ok api-key-check: in a running session (relaylead show <mission>), /status must name apiKeyHelper, not your Claude account
+  ```
+- Le fichier de réglages de session contient `apiKeyHelper: "<node>" "<prefix>/…/core/api-key-helper.js" "~/.config/anthropic/relaylead-key"`, donc un chemin et jamais la clé. Ses variables d'environnement sont `BASH_DEFAULT_TIMEOUT_MS, PATH, RELAYLEAD_ALLOW, RELAYLEAD_HOME, RELAYLEAD_MISSION, RELAYLEAD_ROLE, RELAYLEAD_SESSION`, sans `ANTHROPIC_API_KEY`.
+- Mission `rl-api` (une tâche avec `ask`, une tâche qui en dépend), lancée à 22:23:24. L'organisation de la clé n'a **plus de crédit**, donc aucune session n'a pu travailler, mais chaque appel l'a prouvé : il passe par la clé.
+  - **Lead** : `failures/ff16cad0.json` contient `billing_error: Credit balance is too low` (21:23:27Z). Dans `/status` du lead (`claude attach`) : `Auth token: apiKeyHelper`, `API key: apiKeyHelper`, `Setting sources: Command line arguments`, et dans la conversation : « Credit balance too low · Add funds: https://platform.claude.com/settings/billing ». Avec l'abonnement, cette erreur n'existe pas.
+  - **Réveil (`--resume`)** : passe du veilleur à 21:27:53Z, `wake-lead ff16cad0: task name is now todo; task version is now todo`. Le pid change (53558 → 53567), nouvelle `billing_error` à 21:27:57Z, et `/status` du lead repris affiche encore `Auth token: apiKeyHelper` / `API key: apiKeyHelper`. Le réveil garde donc la clé ; c'était le point incertain.
+  - **Équipier** : le lead ne pouvait rien lancer, faute de crédit. J'ai posé la question de la tâche moi-même (`question ask --key version`), répondu, puis lancé `relaylead task start version --mission rl-api`. Dans `failures/468d3879.json` : `billing_error` à 21:29:34Z. Dans `/status` de `rl-api/developer/1` : `Auth token: apiKeyHelper` / `API key: apiKeyHelper`.
+  - Aucun `usage.json` n'a été écrit pendant toute la mission, alors que la statusline tournait (lecture de contexte du lead à 21:23:27Z) : aucune fenêtre d'abonnement n'a été reçue.
+  - `customApiKeyResponses` de `~/.claude.json` est inchangé (empreinte identique avant et après) : aucune approbation n'a été enregistrée.
+  - Aucune fuite : 0 occurrence des 8 derniers caractères de la clé dans `RELAYLEAD_HOME`, dans les captures d'écran de `/status`, dans les transcriptions et dans `ps -axww`.
+- Nouveau constat (voir le rapport, défaut 8) : quand la clé n'a plus de crédit, la mission reste `starting` et les sessions `blocked`. Le veilleur journalise `session-failure … billing_error`, réveille le lead (nouvel échec), mais ne prévient pas l'utilisateur : ni question ni notification, et rien dans `list`.
+
+### `relaylead remove` : OK
+
+- Mission `rl-api` arrêtée par `relaylead stop`, puis `relaylead remove rl-api`. Avant, `claude agents --all` listait `rl-api/lead/1` et `rl-api/developer/1` (`stopped`) ; après, plus aucune entrée.
+- Mission `rl-done` en mode login (une tâche, `done` en 31 s), puis `relaylead remove rl-done` : `rl-done/lead/1` (`done`) et `rl-done/developer/1` (`stopped`) disparaissent de `claude agents`. 0 entrée du dossier d'essai à la fin.
+
+### `relaylead uninstall --purge` : OK
+
+- La boucle du veilleur tournait (lancée par `launch`). `uninstall --purge` (4 s) affiche `watcher stopped`, `scheduler removed`, `plugin removed`, puis `deleted <home>`.
+- Juste après, et encore 35 s plus tard : 0 processus `watcher loop`, `<home>` absent, `launchctl print` répond `Could not find service "dev.relaylead.watcher"`, plus de plist, et ni `claude plugin list` ni `claude plugin marketplace list` ne mentionnent relaylead.
+
+### Ménage
+
+- Supprimés : le préfixe, le tarball, le projet `rl-api` et les transcriptions de l'essai. Sessions de l'utilisateur : 22 avant, 22 après, mêmes identifiants et mêmes états. `~/.relaylead/missions/toy-1` est intact.
+- Il reste une entrée de confiance pour le dossier `rl-api` (chemin scratch) dans `~/.claude.json`.
