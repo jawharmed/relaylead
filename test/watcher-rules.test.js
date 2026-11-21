@@ -930,3 +930,9 @@ test('an unknown onTimeout value is wait', () => {
   assert.deepStrictEqual(actions.map((action) => action.type), ['remind-question']);
   assert.deepStrictEqual(questionSettings({ questions: { onTimeout: 'always', timeoutMinutes: 'x' } }), { onTimeout: 'wait', timeoutMs: 60 * MINUTE });
 });
+
+test('a question q-irr-… or q-perm-… without kind is never answered for the user', () => {
+  const questions = [openQuestion('q-perm-0123456789ab', 61 * MINUTE, { options: ['Always allow in this mission', 'Refuse'] })];
+  const { actions } = questionActions('recommended', questions);
+  assert.deepStrictEqual(actions.map((action) => action.type), ['remind-question']);
+});

@@ -37,8 +37,9 @@ function askUser(mission, input, reason) {
   const text = actionText(input);
   const key = `perm-${actionHash(input.tool_name, text)}`;
   const id = `q-${key}`;
-  const grant = consumeGrant(mission, id, { once: ['Allow once'], always: ['Always allow in this mission'] });
+  const grant = consumeGrant(mission, id, { kind: 'permission', once: ['Allow once'], always: ['Always allow in this mission'] });
   if (grant.allowed) return { allowed: true, note: `allowed ${grant.reason === 'always' ? 'always' : 'once'} by the user (question ${id})` };
+  if (grant.reason === 'used' || grant.reason === 'refused') return { allowed: false, question: id, answered: true };
   const questions = listQuestions(mission);
   const exists = questions.some((question) => question.id === id);
   const open = questions.filter((question) => question.kind === 'permission' && question.state === 'open').length;
@@ -63,7 +64,7 @@ if (reason && input && input.tool_name && reason !== 'guard error') {
   }
 }
 const allowed = !reason || answer.allowed;
-const decision = allowed ? { behavior: 'allow' } : { behavior: 'deny', message: denyMessage(reason, answer.question) };
+const decision = allowed ? { behavior: 'allow' } : { behavior: 'deny', message: denyMessage(reason, answer.question, answer.answered) };
 process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision } }) + '\n');
 if (answer.note) writeJournal(mission, input.tool_name, answer.note);
 else if (reason) writeJournal(mission, input && input.tool_name, reason);

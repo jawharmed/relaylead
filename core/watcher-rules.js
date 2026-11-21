@@ -479,7 +479,8 @@ function tendQuestions(obs, watch, actions) {
   const { onTimeout, timeoutMs } = questionSettings(obs.config);
   for (const question of obs.questions || []) {
     if (!(obs.now - Date.parse(question.askedAt) >= timeoutMs)) continue;
-    const forTheUser = question.kind === 'permission' || question.kind === 'irreversible';
+    // Judged by the id too: a question q-irr-… or q-perm-… is never answered for the user, whatever its kind.
+    const forTheUser = question.kind === 'permission' || question.kind === 'irreversible' || /^q-(irr|perm)-/.test(question.id);
     if (!forTheUser && onTimeout !== 'wait') {
       const skip = question.options.find((option) => option === 'Skip this task');
       const choice = onTimeout === 'skip' && skip ? skip : question.options[0];

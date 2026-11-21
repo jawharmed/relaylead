@@ -106,4 +106,4 @@ function answerQuestion(mission, id, choice) {
   return chosen;
 }
 
-module.exports = { askQuestion, answerQuestion, listQuestions, answerFile, usedFile };
+module.exports = { askQuestion, answerQuestion, listQuestions, questionFile, answerFile, usedFile };

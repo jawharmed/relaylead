@@ -204,3 +204,17 @@ test('writeJsonExclusive writes once and leaves no temporary file', (t) => {
   assert.deepStrictEqual(readJson(file), { n: 1 });
   assert.deepStrictEqual(fs.readdirSync(dir), ['x.json']);
 });
+
+test('question ask refuses the keys irr-… and perm-… of the hooks', async (t) => {
+  demoMission(t);
+  for (const key of ['perm-0123456789ab', 'IRR-0123456789ab', 'irr_x']) {
+    const io = makeIo({ env: { RELAYLEAD_MISSION: 'demo' } });
+    const args = ['question', 'ask', '--key', key, '--text', 'T', '--option', 'Always allow in this mission', '--option', 'Refuse'];
+    assert.strictEqual(await run(args, io), 1, key);
+    assert.match(io.err.text, /kept for Relaylead/);
+  }
+  assert.strictEqual(listQuestions('demo').length, 0);
+  // A key that only starts with the same letters is a key like any other.
+  const io = makeIo({ env: { RELAYLEAD_MISSION: 'demo' } });
+  assert.strictEqual(await run(['question', 'ask', '--key', 'permissions', '--text', 'T', '--option', 'a', '--option', 'b'], io), 0, io.err.text);
+});

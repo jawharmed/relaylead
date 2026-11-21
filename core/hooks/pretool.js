@@ -1,7 +1,8 @@
 // PreToolUse hook: refuses dangerous actions whatever the permission mode. Prints nothing to let
 // the action go on. Run by Claude Code as `node pretool.js` with the tool call as JSON on stdin.
 // An action that cannot be undone is refused too, and the user is asked about it (question
-// q-irr-<hash>): once answered "Allow once", that exact action goes through a single time.
+// q-irr-<hash>): once answered "Allow once", that exact action goes through a single time, with an
+// explicit allow, so no permission prompt follows to refuse it after the permission is used.
 const { checkToolUse, actionText, actionHash, denyMessage, loadMissionGuard, readHookInput, writeJournal } = require('../guard');
 const { askQuestion } = require('../questions');
 const { consumeGrant } = require('../grants');
@@ -15,7 +16,9 @@ function irreversibleDecision(mission, input, result) {
     const text = actionText(input);
     const key = `irr-${actionHash(input.tool_name, text)}`;
     const id = `q-${key}`;
-    if (consumeGrant(mission, id, { once: ['Allow once'] }).allowed) return { decision: 'allow', grantedBy: id };
+    const grant = consumeGrant(mission, id, { kind: 'irreversible', once: ['Allow once'] });
+    if (grant.allowed) return { decision: 'allow', grantedBy: id };
+    if (grant.reason === 'used' || grant.reason === 'refused') return { ...result, question: id, answered: true };
     const context = `Tool ${input.tool_name}, session ${input.session_id || 'unknown'}, in ${input.cwd || 'unknown'}: ${result.reason}`;
     askQuestion(mission, { key, kind: 'irreversible', text, context, options: ['Allow once', 'Refuse'], recommended: 2 });
     return { ...result, question: id };
@@ -42,12 +45,15 @@ if (!input) {
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
         permissionDecision: 'deny',
-        permissionDecisionReason: denyMessage(result.reason, result.question),
+        permissionDecisionReason: denyMessage(result.reason, result.question, result.answered),
       },
     };
     process.stdout.write(JSON.stringify(output) + '\n');
     writeJournal(mission, input.tool_name, result.reason);
   } else if (result.grantedBy) {
-    writeJournal(mission, input.tool_name, `allowed once by the user (question ${result.grantedBy})`);
+    const note = `allowed once by the user (question ${result.grantedBy})`;
+    const output = { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', permissionDecisionReason: note } };
+    process.stdout.write(JSON.stringify(output) + '\n');
+    writeJournal(mission, input.tool_name, note);
   }
 }

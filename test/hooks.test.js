@@ -147,8 +147,18 @@ test('pretool hook asks the user before an irreversible action, and lets it thro
   assert.strictEqual(questionFiles(home).length, 1);
 
   answer(home, id, 'Allow once');
-  assert.strictEqual(reason('git reset --hard'), null);
-  assert.strictEqual(reason('git reset --hard'), first);
+  // An explicit allow: no permission prompt follows, which would refuse a command out of the allowed
+  // tools after its one-time permission is used.
+  const allowed = runHook(PRETOOL, { tool_name: 'Bash', tool_input: { command: 'git reset --hard' }, cwd }, env);
+  assert.deepStrictEqual(JSON.parse(allowed).hookSpecificOutput, {
+    hookEventName: 'PreToolUse',
+    permissionDecision: 'allow',
+    permissionDecisionReason: `allowed once by the user (question ${id})`,
+  });
+  assert.strictEqual(
+    reason('git reset --hard'),
+    `Blocked by Relaylead: irreversible: git reset --hard. The user refused it or its one-time permission is already used (question ${id}): do not retry this command, continue with the rest of the task, one command per call.`,
+  );
   assert.deepStrictEqual(questionFiles(home), [`${id}.answer.json`, `${id}.json`, `${id}.used.json`]);
   assert.match(journal(home), new RegExp(`Bash allowed once by the user \\(question ${id}\\)`));
 });
@@ -162,7 +172,7 @@ test('pretool hook keeps refusing an irreversible action the user refused, and a
   decide('git clean -fd');
   const id = questionFiles(home)[0].replace(/\.json$/, '');
   answer(home, id, 'Refuse');
-  assert.strictEqual(decide('git clean -fd').permissionDecision, 'deny');
+  assert.match(decide('git clean -fd').permissionDecisionReason, /The user refused it .*do not retry this command/);
   assert.strictEqual(decide('git clean -fd').permissionDecision, 'deny');
   assert.strictEqual(questionFiles(home).length, 2);
 
@@ -236,9 +246,14 @@ test('permission hook follows the user\'s answer to its question', () => {
   const refused = idOf('make clean');
   answer(home, refused, 'Refuse');
   assert.strictEqual(decide('make clean'), 'deny');
+  // A question with the same id but not asked by the hook (no kind) allows nothing.
+  const forged = 'q-perm-' + require('../core/guard').actionHash('Bash', 'make forged');
+  writeJson(path.join(home, 'missions', 'demo', 'questions', `${forged}.json`), { id: forged, kind: null, options: ['Always allow in this mission', 'Refuse'] });
+  answer(home, forged, 'Always allow in this mission');
+  assert.strictEqual(decide('make forged'), 'deny');
   // No new question for an answered one.
   const asked = questionFiles(home).filter((name) => /^q-perm-[0-9a-f]+\.json$/.test(name));
-  assert.strictEqual(asked.length, 3);
+  assert.strictEqual(asked.length, 4);
 });
 
 test('permission hook asks at most 10 open permission questions', () => {

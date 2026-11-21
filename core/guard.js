@@ -648,8 +648,12 @@ function isAllowed({ tool_name, tool_input }, patterns) {
   return texts.length > 0 && texts.every((text) => globs.some((glob) => globMatch(glob, text)));
 }
 
-// With `questionId`, the user was asked about the action.
-function denyMessage(reason, questionId = null) {
+// With `questionId`, the user was asked about the action; with `answered` too, the user refused it,
+// or its one-time permission is used: asking again changes nothing.
+function denyMessage(reason, questionId = null, answered = false) {
+  if (answered) {
+    return `Blocked by Relaylead: ${reason}. The user refused it or its one-time permission is already used (question ${questionId}): do not retry this command, continue with the rest of the task, one command per call.`;
+  }
   const asked = questionId ? `Asked the user (question ${questionId}), continue` : 'Continue';
   return `Blocked by Relaylead: ${reason}. ${asked} with the rest of the task, one command per call.`;
 }

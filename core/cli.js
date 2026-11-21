@@ -282,6 +282,10 @@ commands.question = async (args, io) => {
   if (action === 'ask') {
     const name = missionName(options, io);
     refuseReplacedLead(name, io);
+    // The keys irr-… and perm-… belong to the hooks: only the user answers those questions.
+    if (/^(irr|perm)[^a-z0-9]/i.test(String(options.key || ''))) {
+      throw codedError('bad-question', { detail: 'the keys irr-… and perm-… are kept for Relaylead' });
+    }
     const { id } = askQuestion(name, {
       key: options.key,
       text: options.text,
