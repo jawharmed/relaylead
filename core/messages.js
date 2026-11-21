@@ -177,6 +177,11 @@ const messages = {
       'the pull request {url} of task "{id}" cannot be merged: it conflicts with the integration branch; have the conflict fixed on its branch, then deliver again',
     // Not an error: the address of a delivered task's pull request, shown with the delivery's warnings.
     'pr-merged': 'task "{id}": pull request {url} merged',
+    // Lot 4: installation.
+    'platform-unsupported': 'relaylead install works on macOS only for now (this system: {platform})',
+    'scheduler-installed': 'scheduler installed: the watcher runs every {seconds} s ({file})\n',
+    'scheduler-removed': 'scheduler removed\n',
+    'scheduler-failed': 'scheduler step "{step}" failed: {detail}',
   },
   fr: {
     help: [
