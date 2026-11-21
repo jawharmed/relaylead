@@ -64,8 +64,12 @@ function runFileSync(file, args, options = {}) {
 // The output through pipes, read only for the 'pipe' entries of `stdio`; the caller's timeout or
 // gitTimeoutMs(). No size limit, like the files of the other way.
 function runWithPipes(file, args, options, stdio) {
+  // The output is read as bytes (encoding 'buffer'), and spawnSync would decode a text `input` with
+  // that same encoding, which is no text encoding: the input goes as bytes too.
+  const input = typeof options.input === 'string' ? Buffer.from(options.input) : options.input;
   const result = spawnSync(file, args, {
     ...options,
+    input,
     stdio: [stdio[0], 'pipe', 'pipe'],
     encoding: 'buffer',
     timeout: options.timeout || gitTimeoutMs(),

@@ -57,3 +57,8 @@ test('with pipes, a program that leaves a process behind is stopped at the timeo
   assert.throws(() => runFileSync(program, [], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 1000 }), (err) => err.code === 'ETIMEDOUT');
   assert.ok(Date.now() - startedAt < 5000, `the call took ${Date.now() - startedAt} ms`);
 });
+
+test('a text input reaches the program, whichever way the output is read', () => {
+  const script = 'process.stdin.pipe(process.stdout)';
+  assert.strictEqual(runFileSync(process.execPath, ['-e', script], { input: '{"a":1}', encoding: 'utf8' }), '{"a":1}');
+});
