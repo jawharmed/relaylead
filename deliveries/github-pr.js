@@ -40,8 +40,10 @@ function findPr(mission, branch) {
 
 function openPr(mission, task, branch) {
   const body = `Closes #${githubIssues.issueNumber(task.id)}\n\n${task.summary || ''}`.trim();
-  ghIn(mission, ['pr', 'create', '--base', mission.config.delivery.branch, '--head', branch, '--title', task.title, '--body', body]);
-  return findPr(mission, branch);
+  // gh prints the address of the new pull request, which ends with its number.
+  const output = ghIn(mission, ['pr', 'create', '--base', mission.config.delivery.branch, '--head', branch, '--title', task.title, '--body', body]);
+  const url = output.split('\n').pop().trim();
+  return { number: Number(url.split('/').pop()), state: 'OPEN', url };
 }
 
 // The lead reviews the pull request and posts its review with `gh pr review` (catalog/methods/code.md).
