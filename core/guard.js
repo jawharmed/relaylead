@@ -493,14 +493,48 @@ function checkFile(file, dir, guard, stateDir) {
   return isSecretName(name, guard) ? `access to secret file ${name}` : null;
 }
 
+// The patterns of a Grep glob, split on spaces and on commas outside braces: `*.{js,ts}` stays whole.
+function globPieces(glob) {
+  const pieces = [];
+  let piece = '';
+  let braces = 0;
+  for (const char of glob) {
+    if (char === '{') braces++;
+    if (char === '}' && braces > 0) braces--;
+    if (/\s/.test(char) || (char === ',' && braces === 0)) {
+      if (piece) pieces.push(piece);
+      piece = '';
+    } else {
+      piece += char;
+    }
+  }
+  if (piece) pieces.push(piece);
+  return pieces;
+}
+
+// True when `folder` is the state folder or one of its parents, and not in a worktree of a mission
+// (`<project>/.relaylead/worktrees/<id>`).
+function holdsStateFolder(folder, stateDir) {
+  if (!stateDir) return false;
+  const normalize = (p) => (CASE_INSENSITIVE ? p.toLowerCase() : p);
+  const full = normalize(path.resolve(folder));
+  const state = normalize(path.resolve(stateDir));
+  const parts = full.split(path.sep);
+  const inWorktree = parts.some((part, i) => part === '.relaylead' && parts[i + 1] === 'worktrees' && parts[i + 2]);
+  return !inWorktree && (state === full || state.startsWith(full.endsWith(path.sep) ? full : full + path.sep));
+}
+
 // `stateDir` is the mission's state folder: sessions change it only through the relaylead CLI.
 // Glob and Grep also name files by a glob, seen from their `path` (or `cwd`). Glob's `pattern` is
 // judged for the state folder only: Glob gives names and reads nothing. Grep's `glob` is judged
 // for the state folder and the secrets: Grep reads the files it names, and in ripgrep `*` also
 // matches `.env`.
-// Known gap: a Grep without `glob`, or with a glob that has no folder part (`*.json`), whose `path`
-// is a parent of the state folder (the home folder, say) searches it; refusing it would block every
-// search in the home folder. To be taken up again with the full guards (lot 3).
+// Grep's `glob` may hold several patterns (`*.js .env`, `*.js,.env`): each one is judged, and one
+// that names a secret or the state folder refuses the whole call. A Grep without `glob` whose `path`
+// is the state folder or one of its parents (the home folder, say) would search it: refused, unless
+// that path is in a worktree of the mission. Without `path`, Grep searches its cwd, judged as a path.
+// Known gap: a glob with no folder part (`*.json`) and a `path` that is a parent of the state folder
+// is let through; refusing it would block every search in the home folder.
 function checkToolUse({ tool_name, tool_input, cwd }, guard, stateDir = null) {
   const input = tool_input || {};
   const dir = cwd || process.cwd();
@@ -513,7 +547,12 @@ function checkToolUse({ tool_name, tool_input, cwd }, guard, stateDir = null) {
     reason = checkFileWord(String(input.pattern), searched, { ...guard, secrets: [] }, stateDir);
   }
   if (!reason && tool_name === 'Grep' && input.glob) {
-    reason = checkFileWord(String(input.glob), searched, guard, stateDir, true);
+    for (const piece of globPieces(String(input.glob))) {
+      reason = reason || checkFileWord(piece, searched, guard, stateDir, true);
+    }
+  }
+  if (!reason && tool_name === 'Grep' && !input.glob && input.path && holdsStateFolder(searched, stateDir)) {
+    reason = 'access to the mission state folder';
   }
   return reason ? { decision: 'deny', reason } : { decision: 'allow' };
 }

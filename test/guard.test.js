@@ -420,6 +420,22 @@ test('a Grep glob naming a secret or the state folder is refused', () => {
   assert.deepStrictEqual(grep({ pattern: 'x', glob: '*.{ts,js}' }), ALLOW);
 });
 
+test('a Grep glob of several patterns is refused when one of them is (#60)', () => {
+  const grep = (glob) => checkToolUse({ tool_name: 'Grep', tool_input: { pattern: 'KEY', glob }, cwd: tmpDir() }, GUARD);
+  assertDenied(grep('*.js .env'), 'access to secret file .env');
+  assertDenied(grep('*.js,.env'), 'access to secret file .env');
+  assert.deepStrictEqual(grep('*.js *.ts'), ALLOW);
+});
+
+test('a Grep without glob on a parent of the state folder is refused', () => {
+  const { parent, stateDir } = stateLayout();
+  const project = tmpDir();
+  const grep = (tool_input) => checkToolUse({ tool_name: 'Grep', tool_input, cwd: project }, GUARD, stateDir);
+  assertDenied(grep({ pattern: 'x', path: parent }), 'access to the mission state folder');
+  fs.mkdirSync(path.join(project, 'src'));
+  assert.deepStrictEqual(grep({ pattern: 'x', path: path.join(project, 'src') }), ALLOW);
+});
+
 test('the mission state folder is refused under ~, $HOME or $RELAYLEAD_HOME', (t) => {
   const reason = 'access to the mission state folder';
   // Only paths are compared: nothing is read or written under the real home folder.
