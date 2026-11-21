@@ -6,8 +6,11 @@ const { loadConfig, watcherSettings } = require('./config');
 const { platform } = require('./platform');
 const { schedulerStatus } = require('./scheduler');
 const { pluginInstalled, PLUGIN_ID } = require('./plugin');
-const { checkVersion } = require('../adapters/claude');
+const { checkVersion, authWithKeyFile } = require('../adapters/claude');
 const { authSettings, apiKeyFileFound } = require('./auth');
+
+// How to see that a running session really uses the key, not the connected account.
+const API_KEY_CHECK = 'in a running session (relaylead show <mission>), /status must name apiKeyHelper, not your Claude account';
 const { watcherRunning } = require('./watcher');
 const { runFileSync } = require('./run-file');
 
@@ -66,9 +69,11 @@ async function doctor() {
 
   try {
     const config = loadConfig();
-    if (authSettings(config).mode === 'api-key') {
+    const { mode, keyFile } = authSettings(config);
+    if (mode === 'api-key') {
       const found = apiKeyFileFound(config);
       add(found ? 'ok' : 'fail', 'api-key', found ? 'file found' : 'missing');
+      if (found && claudeFound) await checkApiKeyUse(keyFile, add);
     } else {
       add('ok', 'auth', 'login (the connected Claude account)');
     }
@@ -78,6 +83,19 @@ async function doctor() {
 
   if (fs.existsSync(path.join(home(), 'STOP'))) add('warn', 'STOP', `present in ${home()}: the watcher does nothing until it is removed`);
   return lines;
+}
+
+// Asks claude which credential the sessions' apiKeyHelper gives it (adapters/claude), then says how
+// to check a running session.
+async function checkApiKeyUse(keyFile, add) {
+  try {
+    const { apiKeySource, authMethod } = await authWithKeyFile(keyFile);
+    if (apiKeySource === 'apiKeyHelper') add('ok', 'api-key-use', 'claude picks the key through apiKeyHelper');
+    else add('warn', 'api-key-use', `claude would sign in with ${apiKeySource || authMethod || 'an unknown method'}, not the key`);
+  } catch (err) {
+    add('warn', 'api-key-use', `could not ask claude (${err.message})`);
+  }
+  add('ok', 'api-key-check', API_KEY_CHECK);
 }
 
 module.exports = { doctor };

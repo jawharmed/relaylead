@@ -198,8 +198,8 @@ const messages = {
     'node-too-old': 'Node.js {min} or later is needed, found {found}',
     'agent-missing': 'the agent "{agent}" was not found; install Claude Code, then run relaylead init again',
     'api-key-stored': 'API key stored in {file}, readable by you only\n',
-    'api-key-approval-hint':
-      'if Claude Code asks you to approve the API key, run `claude` once in a terminal and accept\n',
+    'api-key-helper-hint':
+      'the sessions get the key through Claude Code\'s apiKeyHelper setting, without any approval; relaylead doctor checks that claude picks it\n',
     'init-machine-written': 'machine settings written to {file}\n',
     'init-machine-kept': 'machine settings kept as they are ({file})\n',
     'init-project-written': 'project settings written to {file}\n',

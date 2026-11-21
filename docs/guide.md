@@ -147,7 +147,7 @@ Sessions have a limited context. The `context` setting says when to hand over: `
 
 ### API key
 
-By default Claude signs in with your connected account (`auth.mode` `login`). To use an API key, run `relaylead init --api-key-env NAME` (copies the variable `NAME` to `~/.relaylead/api-key`, readable by you alone) or `relaylead init --api-key-file PATH`. The key is never printed, and never written to the configuration, a log or a launchd file. If Claude Code asks you to approve the key, run `claude` once in a terminal and accept.
+By default Claude signs in with your connected account (`auth.mode` `login`). To use an API key, run `relaylead init --api-key-env NAME` (copies the variable `NAME` to `~/.relaylead/api-key`, readable by you alone) or `relaylead init --api-key-file PATH`. The key is never printed, and never written to the configuration, a log or a launchd file. Each session gets it through Claude Code's `apiKeyHelper` setting, in the settings Relaylead passes to the session: a small command reads the key file when Claude Code asks for it, and nothing needs approving. Claude Code prefers this key to the account you are signed in with, and an `ANTHROPIC_API_KEY` of your shell is not passed to the sessions. `relaylead doctor` asks Claude Code which credential it would use (`ok api-key-use`). To check a running session, open it with `relaylead show <mission>` and run `/status`: it must name `apiKeyHelper`, not your Claude account.
 
 ## Commands
 

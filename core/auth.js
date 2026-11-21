@@ -1,7 +1,8 @@
 // How claude signs in. In `api-key` mode the key lives in a file (never in the configuration, a plist
 // or a log), so the watcher, started by launchd without any environment, finds it too.
-// This file is the only reader of the key: nothing here prints it, and nothing outside passes it on
-// but the environment of the claude calls (adapters/claude).
+// This file is the only reader of the key: nothing here prints it. The sessions get it from Claude
+// Code's `apiKeyHelper` setting (adapters/claude/settings.js), which runs core/api-key-helper.js: the
+// key itself is never in an argument, an environment variable or a settings file.
 const fs = require('node:fs');
 const path = require('node:path');
 const { home } = require('./paths');
@@ -21,13 +22,13 @@ function readKey(file) {
   }
 }
 
-// { ANTHROPIC_API_KEY } in `api-key` mode, {} otherwise.
-function apiKeyEnv(config) {
+// The key file the sessions read in `api-key` mode, null in `login` mode. Fails when it is missing
+// or empty, so a launch does not start a session that would have no key.
+function apiKeyFile(config) {
   const { mode, keyFile } = authSettings(config);
-  if (mode !== 'api-key') return {};
-  const key = readKey(keyFile);
-  if (!key) throw codedError('api-key-missing', { file: keyFile });
-  return { ANTHROPIC_API_KEY: key };
+  if (mode !== 'api-key') return null;
+  if (!readKey(keyFile)) throw codedError('api-key-missing', { file: keyFile });
+  return keyFile;
 }
 
 // For doctor: whether the key file is there and not empty. Never its value.
@@ -44,4 +45,4 @@ function importApiKey(name, env, file) {
   return file;
 }
 
-module.exports = { authSettings, apiKeyEnv, apiKeyFileFound, importApiKey };
+module.exports = { authSettings, readKey, apiKeyFile, apiKeyFileFound, importApiKey };

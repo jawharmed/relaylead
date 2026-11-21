@@ -29,6 +29,9 @@
 //   agents-fail-after-one   `agents` answers once, then fails
 //   plugin-fail             `plugin list` fails
 //   plugin-install-fail     `plugin install` fails
+// `[--settings JSON] auth status --json` answers like Claude Code 2.1.330: apiKeySource
+// ANTHROPIC_API_KEY when that variable is set, apiKeyHelper when the settings have one, else the
+// connected account. It never runs the helper.
 // `plugin ...` commands keep the marketplaces and plugins in FAKE_CLAUDE_STATE/plugins.json. Each call
 // writes the ANTHROPIC_API_KEY it got in FAKE_CLAUDE_STATE/env.log ("-" when unset): a test passes it a
 // made-up value, never a real key.
@@ -264,6 +267,16 @@ function plugin(args) {
   return 0;
 }
 
+function authStatus(args) {
+  const at = args.indexOf('--settings');
+  const settings = at === -1 ? {} : JSON.parse(args[at + 1]);
+  let status = { loggedIn: true, authMethod: 'claude.ai' };
+  if (process.env.ANTHROPIC_API_KEY) status = { loggedIn: true, authMethod: 'api_key', apiKeySource: 'ANTHROPIC_API_KEY' };
+  else if (settings.apiKeyHelper) status = { loggedIn: true, authMethod: 'api_key_helper', apiKeySource: 'apiKeyHelper' };
+  process.stdout.write(JSON.stringify(status, null, 2) + '\n');
+  return 0;
+}
+
 function main(args) {
   appendLog('calls.log', JSON.stringify(args) + '\n');
   appendLog('env.log', (process.env.ANTHROPIC_API_KEY || '-') + '\n');
@@ -275,6 +288,7 @@ function main(args) {
   if (args[0] === 'plugin') return plugin(args.slice(1));
   if (args[0] === 'agents') return agents();
   if (args[0] === 'stop') return stop(args[1]);
+  if (args.includes('auth')) return authStatus(args);
   // Silent: attach inherits the terminal, and the calls log is enough for the tests.
   if (args[0] === 'attach') return 0;
   if (args.includes('--resume')) return resume(args);

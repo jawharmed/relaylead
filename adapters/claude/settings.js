@@ -6,8 +6,12 @@ const { writeJson, writeText } = require('../../core/store');
 const { allowedTools } = require('./args');
 
 // Double quotes: the paths may contain spaces (Windows included).
+function nodeCommand(script, ...args) {
+  return [process.execPath, script, ...args].map((part) => `"${part}"`).join(' ');
+}
+
 function hookCommand(packageDir, script) {
-  return `"${process.execPath}" "${path.join(packageDir, 'core', 'hooks', `${script}.js`)}"`;
+  return nodeCommand(path.join(packageDir, 'core', 'hooks', `${script}.js`));
 }
 
 // Same shape as the spike settings (no matcher).
@@ -44,8 +48,11 @@ function writeCliShim(missionName, packageDir) {
 }
 
 // Pure: builds the settings object, writes nothing. `env` is the session's own environment (a
-// background session does not inherit the launcher's); the fixed keys below win over it.
-function sessionSettings({ mission, packageDir, profile, permissionMode, env = {} }) {
+// background session does not inherit the launcher's); the fixed keys below win over it. `keyFile`
+// (api-key mode, core/auth.js) gives the session its API key through `apiKeyHelper`: Claude Code
+// runs the command and sends what it prints, with no approval to give, and prefers it to the
+// connected account. Only the file's path is written here, never the key.
+function sessionSettings({ mission, packageDir, profile, permissionMode, env = {}, keyFile = null }) {
   const settings = {
     env: {
       ...env,
@@ -69,17 +76,23 @@ function sessionSettings({ mission, packageDir, profile, permissionMode, env = {
   if (process.env.RELAYLEAD_WRITE_RETRY_MS !== undefined) {
     settings.env.RELAYLEAD_WRITE_RETRY_MS = process.env.RELAYLEAD_WRITE_RETRY_MS;
   }
+  if (keyFile) settings.apiKeyHelper = apiKeyHelperCommand(packageDir, keyFile);
   if (mission.config.attribution != null) settings.attribution = mission.config.attribution;
   return settings;
 }
 
+// The command that prints the key of `keyFile` (core/api-key-helper.js).
+function apiKeyHelperCommand(packageDir, keyFile) {
+  return nodeCommand(path.join(packageDir, 'core', 'api-key-helper.js'), keyFile);
+}
+
 // Writes missions/<mission>/settings/<session name, "/" as "-">.json, and the shim its PATH names,
 // and returns the settings file's path.
-function writeSessionSettings({ mission, packageDir, profile, permissionMode, sessionName, env }) {
+function writeSessionSettings({ mission, packageDir, profile, permissionMode, sessionName, env, keyFile }) {
   writeCliShim(mission.name, packageDir);
   const file = path.join(missionDir(mission.name), 'settings', `${sessionName.replace(/\//g, '-')}.json`);
-  writeJson(file, sessionSettings({ mission, packageDir, profile, permissionMode, env }));
+  writeJson(file, sessionSettings({ mission, packageDir, profile, permissionMode, env, keyFile }));
   return file;
 }
 
-module.exports = { sessionSettings, writeSessionSettings };
+module.exports = { sessionSettings, writeSessionSettings, apiKeyHelperCommand };

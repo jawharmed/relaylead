@@ -84,7 +84,7 @@ test('doctor warns about STOP, and about a plugin list that fails', async (t) =>
   assert.match(doctor.out, /^warn plugin: /m);
 });
 
-test('doctor says whether the key file is there, never its value', async (t) => {
+test('doctor says whether the key file is there and claude picks it, never its value', async (t) => {
   const env = installEnv(t);
   fs.writeFileSync(path.join(env.RELAYLEAD_HOME, 'config.json'), JSON.stringify({ auth: { mode: 'api-key' } }));
   const missing = await run(env, 'doctor');
@@ -93,7 +93,12 @@ test('doctor says whether the key file is there, never its value', async (t) => 
   fs.writeFileSync(path.join(env.RELAYLEAD_HOME, 'api-key'), 'sk-test-SENTINEL\n');
   const found = await run(env, 'doctor');
   assert.match(found.out, /^ok api-key: file found$/m);
+  assert.match(found.out, /^ok api-key-use: claude picks the key through apiKeyHelper$/m);
+  assert.match(found.out, /^ok api-key-check: .*\/status must name apiKeyHelper/m);
   assert.ok(!(found.out + found.err).includes('SENTINEL'));
+  // The fake claude, like Claude Code, ranks a key of the environment above the helper.
+  const shadowed = await run({ ...env, ANTHROPIC_API_KEY: 'sk-test-SHELL' }, 'doctor');
+  assert.match(shadowed.out, /^ok api-key-use: /m);
 });
 
 // The fake claude's plugins, read in its state folder.

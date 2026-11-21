@@ -71,7 +71,7 @@ async function setUpMachine(options, asker, io, say) {
   const merged = deepMerge(deepMerge(wanted, existing || {}), { auth });
   if (!existing || JSON.stringify(merged) !== JSON.stringify(existing)) writeJson(file, merged);
   say('init-machine-written', { file });
-  if (auth.mode === 'api-key') say('api-key-approval-hint', {});
+  if (auth.mode === 'api-key') say('api-key-helper-hint', {});
   if (!existing && asker.interactive) return (await asker.ask('Run "relaylead install" now (scheduler and plugin)?', 'no')).toLowerCase().startsWith('y');
   return false;
 }
