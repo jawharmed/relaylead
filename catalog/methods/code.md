@@ -10,7 +10,7 @@ The project lists its tasks, one Markdown file per task; `relaylead task list` s
 1. Run `relaylead state set working`.
 2. Run `relaylead task list`.
 3. Deliver each `done` task: `relaylead task deliver <id>`. Then run `relaylead task list` again: deliveries make new tasks ready.
-   When the tasks are GitHub issues (ids `issue-<n>`), each delivery pushes the task's branch, opens a pull request to the integration branch and merges it, unless changes are requested on it. Review the pull request (its address is in the delivery's output) and post your review with `gh pr review <number> --approve`, or `gh pr review <number> --request-changes -b "<what to change>"`: a pull request with changes requested is not merged until they are made.
+   When the tasks are GitHub issues (ids `issue-<n>`), each delivery pushes the task's branch, opens a pull request to the integration branch, merges it and closes the issue. The delivery's output gives the pull request's address.
 4. For each task with `"ready": true`, while fewer tasks are `running` than the limit given below:
    - if its `ask` is not null, ask its question first (see "Tasks that ask first") and start it only once the answer says to go ahead;
    - otherwise start it: `relaylead task start <id>`.
