@@ -14,7 +14,8 @@
 //
 // Actions: {type: 'stop-session', session, log}, {type: 'log', text, journal}, {type: 'mark-failed',
 // id, summary, log}, {type: 'wake-lead', reasons, log}, {type: 'relaunch-lead', resume} and
-// {type: 'trip-breaker', afterLock: true}, {type: 'hand-over', reason: 'asked'|'forced'|'idle', note,
+// {type: 'trip-breaker', afterLock: true, note} (note: why, when it is not the failed relaunches),
+// {type: 'hand-over', reason: 'asked'|'forced'|'idle', note,
 // tokens}, {type: 'mail', shortId, text, log}, {type: 'answer-question', id, choice, log} (answers it
 // as the user would, and writes `log` to both logs), {type: 'remind-question', id, text, log} (a
 // notification to the user), {type: 'pause-mission', resumeAt, reason, wake, log} and
@@ -50,6 +51,12 @@ const usagePauseGraceMs = () => Number(process.env.RELAYLEAD_USAGE_PAUSE_GRACE_M
 const INTERRUPT_SILENCE_MS = 11 * 60 * 1000;
 // Rule 30: a question left open is recalled to the user at most this often.
 const QUESTION_REMIND_MS = 6 * 60 * 60 * 1000;
+// Session failures that no wake or relaunch can fix: the user must act (credit, key, login). The note
+// the mission is stopped with, by the breaker.
+const BLOCKING_FAILURES = {
+  billing_error: 'stopped by the watcher: billing error (the API credit is used up, or billing failed); fix it, then launch again',
+  authentication_failed: 'stopped by the watcher: authentication failed (check the API key or the Claude login); fix it, then launch again',
+};
 
 // watch.json, the watcher's memory of a mission. A missing field has this value.
 function emptyWatch() {
@@ -73,6 +80,7 @@ function emptyWatch() {
     silentNoticeFor: null,
     failuresSeen: {},
     tripped: false,
+    breakerNote: null,
     notifiedQuestions: {},
     usageTries: 0,
     usagePausedFor: null,
@@ -144,12 +152,21 @@ function decide(obs) {
   const log = (text, journal = false) => actions.push({ type: 'log', text, journal });
   // Rule 1: a tripped mission, its stop not done yet: its stop is replayed, and nothing else is done.
   if (watch.tripped) {
-    actions.push({ type: 'trip-breaker', afterLock: true });
+    actions.push(breakerAction(watch));
     return result;
   }
   if (obs.record.stopping) return result;
 
-  logFailures(obs, watch, log);
+  // Rule 4b: a billing or authentication failure of any session stops the mission at once: waking or
+  // relaunching would fail the same way, and the user must act.
+  const blocking = logFailures(obs, watch, log).find((failure) => BLOCKING_FAILURES[failure.error]);
+  if (blocking) {
+    watch.tripped = true;
+    watch.breakerNote = BLOCKING_FAILURES[blocking.error];
+    log(`breaker-tripped ${blocking.error} ${blocking.shortId}`, true);
+    actions.push(breakerAction(watch));
+    return result;
+  }
   // Without the list, nothing is known of the sessions.
   if (obs.listError) {
     log(`list-failed ${obs.listError}`);
@@ -276,8 +293,15 @@ function stopOrphanCrew(obs, actions) {
   }
 }
 
-// Rule 4: each failure newer than the last one seen of that session, registered or not.
+// The stop of the breaker, with its note when it is not that of the failed relaunches.
+function breakerAction(watch) {
+  return watch.breakerNote ? { type: 'trip-breaker', afterLock: true, note: watch.breakerNote } : { type: 'trip-breaker', afterLock: true };
+}
+
+// Rule 4: each failure newer than the last one seen of that session, registered or not. Returns
+// them, each with its shortId.
 function logFailures(obs, watch, log) {
+  const fresh = [];
   for (const [shortId, failure] of Object.entries(obs.failures || {})) {
     const at = Date.parse(failure.at);
     const seen = Date.parse(watch.failuresSeen[shortId]);
@@ -285,7 +309,9 @@ function logFailures(obs, watch, log) {
     watch.failuresSeen[shortId] = failure.at;
     const message = String(failure.message || '-').replace(/\s+/g, ' ').trim();
     log(`session-failure ${shortId} ${failure.error || '-'}: ${message}`);
+    fresh.push({ ...failure, shortId });
   }
+  return fresh;
 }
 
 // Rules 6 and 7, and the time the lead was first seen lost. The time is cleared as soon as the lead

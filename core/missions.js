@@ -343,8 +343,11 @@ function readState(name) {
 }
 
 // The state as the user sees it: "stopped, stopping" while its sessions are still being stopped.
+// A stop decided by the watcher (its breaker) shows its note, which says why and what to do.
 function shownState(record) {
-  return record.stopping ? `${record.state}, stopping` : record.state;
+  if (record.stopping) return `${record.state}, stopping`;
+  if (record.state === 'stopped' && /^stopped by the watcher/.test(record.note || '')) return record.note;
+  return record.state;
 }
 
 // `stopping: true` keeps the folder locked while the sessions of a stopped or done mission are being

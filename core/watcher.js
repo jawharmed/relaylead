@@ -222,7 +222,7 @@ async function act(name, action, watch) {
     } else if (action.type === 'relaunch-lead') {
       await relaunchLead(name, action.resume, watch);
     } else if (action.type === 'trip-breaker') {
-      await tripBreaker(name);
+      await tripBreaker(name, action.note);
     } else if (action.type === 'hand-over') {
       await handOver(name, action, watch);
     } else if (action.type === 'mail') {
@@ -279,12 +279,14 @@ async function wakeLead(name, reasons, watch, text = wakeText(reasons)) {
 
 const BREAKER_NOTE = 'stopped by the watcher: the lead could not be restarted 3 times in a row';
 
-// Rule 8, after the mission lock: stopMission takes it itself. stopMission is read from the module
-// object, so a test can replace it. A stop that throws is replayed at the next pass (rule 1).
-async function tripBreaker(name) {
-  await missions.stopMission(name, { note: BREAKER_NOTE });
-  writeJournal(name, 'watcher', BREAKER_NOTE);
-  watchLog(name, 'breaker-stopped', BREAKER_NOTE);
+// Rules 4b and 8, after the mission lock: stopMission takes it itself. stopMission is read from the
+// module object, so a test can replace it. A stop that throws is replayed at the next pass (rule 1).
+// Once stopped, the user is told, once: the mission waits for them.
+async function tripBreaker(name, note = BREAKER_NOTE) {
+  await missions.stopMission(name, { note });
+  writeJournal(name, 'watcher', note);
+  watchLog(name, 'breaker-stopped', note);
+  notify({ title: `Relaylead: ${name}`, text: note });
 }
 
 const RESTART_TEXT = 'Relaylead restarted you after your session ended. Carry on with the method: run `relaylead task list` first.';

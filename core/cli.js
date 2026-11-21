@@ -163,7 +163,9 @@ commands.show = async (args, io) => {
   const [name] = parseArgs(args).positional;
   if (!name) throw codedError('usage', { usage: 'relaylead show <mission>' });
   const state = getState(name);
-  const shown = shownState(name, state, io);
+  // The listed state carries the note of a stop by the watcher (billing, authentication, relaunches).
+  const listed = listMissions().find((mission) => mission.name === name);
+  const shown = shownState(name, listed ? listed.state : state, io);
   if (shown !== state) io.out.write(`${name}  ${shown}\n`);
   return attachLead(name);
 };
