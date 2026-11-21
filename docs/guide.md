@@ -122,7 +122,7 @@ Relaylead's own commits run your git hooks (with `LC_ALL=C`). These run in the i
 
 ### Questions
 
-The lead asks you before anything irreversible and waits: there is no time limit and no automatic answer, whatever the setting `questions.onTimeout` says (its only value today is `wait`). Answer with a number (the options are numbered from 1; the recommended one is first) or with the text of an option. Questions are answered from outside a mission only: a session cannot answer for you.
+Relaylead asks you before anything irreversible, and before a command outside the allowlist; you get a macOS notification for each new question. Those questions always wait for you: nothing answers them in your place. A question the lead asks itself follows the setting `questions.onTimeout`: `wait` (the default) waits for you, `recommended` picks the recommended option and `skip` picks the option that skips, after `questions.timeoutMinutes` (60 by default). Answer with a number (the options are numbered from 1; the recommended one is first) or with the text of an option. Questions are answered from outside a mission only: a session cannot answer for you.
 
 ### Usage limit and automatic pause
 
