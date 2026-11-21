@@ -6,6 +6,11 @@ La version 1 se construit en lots. Chaque lot livre quelque chose qui marche et 
 
 Décision de l'auteur du 19 novembre 2026 : **la première version publique est macOS seulement**. Les essais avec le vrai Claude se font sous macOS ; la CI garde les trois systèmes avec le faux agent. Le planificateur du système est launchd seul ; ailleurs, ce qui en dépend échoue par une erreur codée « plateforme non prise en charge ». Le lot 6 (usage réel) est supprimé : le lot 7 suit le lot 5.
 
+Décision de l'auteur du 21 novembre 2026 : **périmètre de la v1 resserré** pour livrer plus vite. La CI ne tourne plus que sur macOS. Un seul essai avec le vrai Claude, à la fin, avant la publication. Passent en v1.1 :
+- 2b : arbitrage entre missions par priorité, plafond de charge, jetons de travaux lourds (la v1 garde la pause et la reprise à la limite d'usage) ;
+- 3 : canaux `ntfy` et `command`, `web-reader` en quarantaine, résumé quotidien (la v1 garde les questions, les garde-fous de base et la notification macOS) ;
+- 4 : `new-team`, le français, le grand catalogue (la v1 garde `install`, `uninstall`, `doctor`, launchd, `init` et une équipe type, en anglais).
+
 | Lot | Contenu | Terminé quand | Dépend de |
 |---|---|---|---|
 | **0. Essai jetable** | Vérifier sur Claude Code les hypothèses de la spec, dont le réveil d'une session inactive, les refus par `PreToolUse`, les vraies morts de session et l'isolation par `--settings` | `docs/spike-results.md` répond à chaque point avec preuve et conséquence. **Un point bloquant (1, 3, 4, 8, réveil) est prouvé, ou le périmètre de la v1 est réduit par écrit** ; jamais « reporté » | — |
@@ -17,7 +22,7 @@ Décision de l'auteur du 19 novembre 2026 : **la première version publique est 
 | **4. Installation et grand public** | `install`, `uninstall`, `doctor` ; planificateur launchd (macOS seulement ; ailleurs, erreur codée « plateforme non prise en charge »), qui appelle `relaylead watcher run` ; plugin réduit aux commandes `/relaylead:*` ; assistants `init` et `new-team` ; anglais et français ; catalogue de départ (profils, méthodes, 2 ou 3 équipes types) ; mode clé API | Installation propre et scénarios des lots 1 à 2b rejoués avec Claude sur macOS ; `uninstall` rend la configuration de l'utilisateur à l'identique ; une mission en mode clé API se termine | 3 |
 | **5. GitHub** | Source « issues GitHub », livraison « PR GitHub », branche d'intégration | Une mission prend deux issues d'un dépôt d'essai, ouvre deux PR relues, les fusionne sur la branche d'intégration et ferme les issues | 4 |
 | **7. Publication** | README, documentation, nom définitif, paquet npm, marketplace. Documentation pour l'utilisateur final inspirée de la présentation des plugins et outils les plus réussis : une vitrine qui fait comprendre Relaylead et donne envie de l'essayer (démonstration, avant/après), puis un guide pour le prendre en main et le maîtriser | Un utilisateur neuf installe et lance une mission en suivant le README seul. Actions publiques (publication npm, marketplace) avec l'accord explicite de l'auteur | 5 |
-| **v1.1** | Tableau de suivi et session de pilotage | Plan écrit à partir de l'usage des lots 1 à 7 | 7 |
+| **v1.1** | Tableau de suivi et session de pilotage ; éléments reportés le 21 novembre 2026 (voir plus haut) | Plan écrit à partir de l'usage des lots 1 à 7 | 7 |
 
 Règles communes à tous les lots :
 - Node.js 18 ou plus, sans étape de compilation, dépendances limitées au strict nécessaire ; aucun appel à des outils absents de Windows (`jq`, `uuidgen`, `sleep`…) dans le produit.
