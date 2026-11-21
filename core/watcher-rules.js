@@ -7,7 +7,8 @@
 // read), readings: {[shortId]: {heartbeat, statusline, failure}}, failures (the whole failures/
 // folder, by short id), unseen (what the next `relaylead wait` would report, wait.js unseenChanges:
 // {changes, viewKey, toFail, lostSince}, null without the list or the tasks), mail (unread messages
-// by short id), config, watch (watch.json)}.
+// by short id), usage (the account's usage, usage.js readUsage: null when stale or missing), config,
+// watch (watch.json)}.
 //
 // obs.questions: the open questions (questions.js listQuestions), null when they could not be read.
 //
@@ -18,6 +19,8 @@
 // as the user would, and writes `log` to both logs) and {type: 'remind-question', id, text, log} (a
 // notification to the user).
 const { contextOf } = require('./readings');
+const { DEFAULTS, deepMerge } = require('./config');
+const { isFresh } = require('./usage');
 
 // An active lead whose last heartbeat is older than this is reported, never stopped.
 const SILENT_MS = 30 * 60 * 1000;
@@ -68,6 +71,8 @@ function emptyWatch() {
     failuresSeen: {},
     tripped: false,
     notifiedQuestions: {},
+    usageTries: 0,
+    usagePausedFor: null,
   };
 }
 
@@ -495,8 +500,92 @@ function tendQuestions(obs, watch, actions) {
   }
 }
 
+// The usage settings of a mission: its configuration over the defaults.
+function usageSettings(config) {
+  return deepMerge(DEFAULTS.usage, (config && config.usage) || {});
+}
+
+// The thresholds of the mission's priority ('normal' for an unknown one).
+function thresholdsOf(obs) {
+  const { thresholds } = usageSettings(obs.config);
+  return thresholds[obs.mission.priority] || thresholds.normal;
+}
+
+// The wait before the next try, in ms, after `tries` pauses whose time to resume was not known: 15,
+// 30, then 60 min by default, the last one again past them.
+function retryMs(config, tries) {
+  const minutes = usageSettings(config).retryMinutes;
+  return minutes[Math.min(tries, minutes.length - 1)] * 60 * 1000;
+}
+
+// The time a usage limit resets at, from the message of the failure ("You've hit your 5-hour limit ·
+// resets 2:54am (Europe/Paris)"), in ms; null when the message does not say. The hour is read in the
+// machine's time zone (the zone in brackets is ignored): the next time it comes after `since` (ms),
+// the time of the failure, so the next day when it has passed.
+function parseResetTime(message, since) {
+  const found = /resets\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i.exec(String(message || ''));
+  if (!found || !(found[2] || found[3])) return null;
+  let hour = Number(found[1]);
+  const minute = Number(found[2] || 0);
+  const half = (found[3] || '').toLowerCase();
+  if (half && (hour < 1 || hour > 12)) return null;
+  if (half === 'am' && hour === 12) hour = 0;
+  if (half === 'pm' && hour < 12) hour += 12;
+  if (hour > 23 || minute > 59) return null;
+  const reset = new Date(since);
+  reset.setHours(hour, minute, 0, 0);
+  if (reset.getTime() <= since) reset.setDate(reset.getDate() + 1);
+  return reset.getTime();
+}
+
+// Whether the mission must pause for the usage of the account, and until when: null, or {resumeAt
+// (ms), reason, failureAt (the failure it comes from, null for a measured usage)}. The usage measured
+// by the status line first, then a usage limit hit by a session.
+function usageVerdict(obs) {
+  return measuredVerdict(obs) || failureVerdict(obs);
+}
+
+// A fresh usage past the threshold of the mission's priority, for the 5-hour or the 7-day window: the
+// mission resumes once the window past its threshold resets (the later one when both are).
+function measuredVerdict(obs) {
+  const usage = obs.usage;
+  if (!isFresh(usage, obs.now)) return null;
+  const limits = thresholdsOf(obs);
+  const over = [
+    { window: usage.fiveHour, name: 'five-hour', limit: limits.fiveHour },
+    { window: usage.sevenDay, name: 'week', limit: limits.week },
+  ].filter((one) => one.window && one.window.percent >= one.limit);
+  if (over.length === 0) return null;
+  const resumeAt = Math.max(...over.map((one) => Date.parse(one.window.resetsAt) || obs.now + retryMs(obs.config, 0)));
+  const reason = over.map((one) => `${one.name} ${one.window.percent}% >= ${one.limit}%`).join(', ');
+  return { resumeAt, reason, failureAt: null };
+}
+
+// The last usage limit hit by the lead or a crew member, after its own last heartbeat, less than 5 h
+// ago, and newer than the one the last pause came from. It resumes at the time its message gives,
+// otherwise after the wait of watch.usageTries tries (15, 30, 60 min).
+function failureVerdict(obs) {
+  const watch = obs.watch || {};
+  let last = null;
+  for (const [shortId, readings] of Object.entries(obs.readings || {})) {
+    const failure = readings && readings.failure;
+    if (!failure || failure.error !== 'rate_limit') continue;
+    const at = Date.parse(failure.at);
+    const beat = shortId === obs.lead.shortId ? Date.parse(lastBeat(obs)) : Date.parse(readings.heartbeat && readings.heartbeat.at);
+    if (!(obs.now - at < rateLimitHoldMs()) || beat >= at || Date.parse(watch.usagePausedFor) >= at) continue;
+    if (!last || at > Date.parse(last.failure.at)) last = { shortId, failure };
+  }
+  if (!last) return null;
+  const at = Date.parse(last.failure.at);
+  const resumeAt = parseResetTime(last.failure.message, at) || obs.now + retryMs(obs.config, watch.usageTries || 0);
+  return { resumeAt, reason: `rate_limit ${last.shortId}`, failureAt: last.failure.at };
+}
+
 module.exports = {
   decide,
+  usageVerdict,
+  parseResetTime,
+  retryMs,
   leadStatus,
   emptyWatch,
   wakeWithoutEffect,

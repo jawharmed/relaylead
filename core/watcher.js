@@ -14,6 +14,7 @@ const { watcherSettings } = require('./config');
 const { spawnDetached } = require('./detached');
 const { listSessions, recordSession, isAlive } = require('./sessions');
 const { readReadings } = require('./readings');
+const { readUsage } = require('./usage');
 const missions = require('./missions');
 const { stopSessionsAndWait, launchLead, launchWhileOpen, writeState } = missions;
 const { listTasks, markFailed } = require('./tasks');
@@ -191,6 +192,8 @@ async function observe(name) {
     failures: readFailures(name),
     unseen,
     mail,
+    // The usage limits are those of Claude Code alone in this version, which the fake agent plays too.
+    usage: readUsage('claude', now),
     config: mission.config,
     watch,
     questions,
