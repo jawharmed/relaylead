@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const { missionDir, slug } = require('./paths');
 const { writeJsonExclusive, readJson } = require('./store');
 const { codedError } = require('./messages');
+const { notify } = require('./notify');
 
 function questionsDir(mission) {
   return path.join(missionDir(mission), 'questions');
@@ -58,7 +59,10 @@ function askQuestion(mission, { key, text, context, options, recommended, kind }
     askedAt: new Date().toISOString(),
   };
   const created = writeJsonExclusive(questionFile(mission, id), question);
-  if (created) return { id, existing: false };
+  if (created) {
+    notify({ title: `Relaylead: ${mission}`, text: `Question ${id}: ${text}` });
+    return { id, existing: false };
+  }
   // Different keys can make the same id (A.b and a-b): the existing question is not the one asked.
   const stored = readJson(questionFile(mission, id));
   if (stored.key !== key) throw codedError('question-key-clash', { key, id, storedKey: stored.key });
