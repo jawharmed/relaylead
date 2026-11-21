@@ -214,6 +214,9 @@ const messages = {
     ].join('\n'),
     'uninstall-warning': 'warning: could not remove the {step} ({detail}); do it by hand with: {command}\n',
     'init-next': 'next: relaylead install (scheduler and plugin), then relaylead doctor\n',
+    'mission-usage-paused':
+      'mission "{mission}" is paused by the usage limit until {resumeAt}; it resumes by itself then, and starts no session before',
+    usagePausedState: 'usage-pause (resume {resumeAt})',
   },
   fr: {
     help: [
@@ -390,6 +393,9 @@ const messages = {
     'pr-merge-conflict':
       'la pull request {url} de la tâche « {id} » ne peut pas être fusionnée : elle est en conflit avec la branche d\'intégration ; faites corriger le conflit sur sa branche, puis livrez à nouveau',
     'pr-merged': 'tâche « {id} » : pull request {url} fusionnée',
+    'mission-usage-paused':
+      'la mission « {mission} » est en pause (limite d\'usage) jusqu\'à {resumeAt} ; elle reprendra seule à cette heure, et ne lance aucune session d\'ici là',
+    usagePausedState: 'usage-pause (reprise {resumeAt})',
   },
 };
 

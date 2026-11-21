@@ -7,8 +7,8 @@
 // read), readings: {[shortId]: {heartbeat, statusline, failure}}, failures (the whole failures/
 // folder, by short id), unseen (what the next `relaylead wait` would report, wait.js unseenChanges:
 // {changes, viewKey, toFail, lostSince}, null without the list or the tasks), mail (unread messages
-// by short id), usage (the account's usage, usage.js readUsage: null when stale or missing), config,
-// watch (watch.json)}.
+// by short id), usage (the account's usage, usage.js readUsage: null when stale or missing), pause
+// (usage-pause.json, null when the mission is not paused), config, watch (watch.json)}.
 //
 // obs.questions: the open questions (questions.js listQuestions), null when they could not be read.
 //
@@ -16,8 +16,9 @@
 // id, summary, log}, {type: 'wake-lead', reasons, log}, {type: 'relaunch-lead', resume} and
 // {type: 'trip-breaker', afterLock: true}, {type: 'hand-over', reason: 'asked'|'forced'|'idle', note,
 // tokens}, {type: 'mail', shortId, text, log}, {type: 'answer-question', id, choice, log} (answers it
-// as the user would, and writes `log` to both logs) and {type: 'remind-question', id, text, log} (a
-// notification to the user).
+// as the user would, and writes `log` to both logs), {type: 'remind-question', id, text, log} (a
+// notification to the user), {type: 'pause-mission', resumeAt, reason, wake, log} and
+// {type: 'resume-mission', log}.
 const { contextOf } = require('./readings');
 const { DEFAULTS, deepMerge } = require('./config');
 const { isFresh } = require('./usage');
@@ -39,8 +40,11 @@ const INEFFECTIVE_AFTER_MS = 5 * 60 * 1000;
 const WAKE_BACKOFF_MS = [15, 30, 60].map((minutes) => minutes * 60 * 1000);
 // After this many relaunches in a row that failed, the watcher stops the mission (the breaker).
 const MAX_FAILED_RELAUNCHES = 3;
-// A lead held by a usage limit is not woken for this long after its failure; read at each call.
+// A usage limit hit longer ago than this no longer pauses the mission; read at each call.
 const rateLimitHoldMs = () => Number(process.env.RELAYLEAD_RATE_LIMIT_HOLD_MS) || 5 * 60 * 60 * 1000;
+// How long a lead told to stop for the usage limit may take to push its work and end its turn, before
+// the sessions of its mission are stopped; read at each call: tests shorten it.
+const usagePauseGraceMs = () => Number(process.env.RELAYLEAD_USAGE_PAUSE_GRACE_MS) || 120000;
 // A lead idle while the mission works, silent this long, has ended its turn (a command lasts 10 min
 // at most).
 const INTERRUPT_SILENCE_MS = 11 * 60 * 1000;
@@ -62,7 +66,6 @@ function emptyWatch() {
     lastIneffectiveAt: null,
     stuckNoticeFor: null,
     interruptWakeFor: null,
-    rateLimitNoticeFor: null,
     unlistedNoticeFor: null,
     handoverNoticeFor: null,
     contextFullNotices: [],
@@ -153,6 +156,12 @@ function decide(obs) {
     return result;
   }
   if (obs.tasksError) log(`tasks-failed ${obs.tasksError}`);
+  // Rules 20 and 21: a mission paused for the usage limits is tended by them alone, but for its
+  // questions (rule 30), which start no session.
+  if (tendUsage(obs, watch, actions, log)) {
+    tendQuestions(obs, watch, actions);
+    return result;
+  }
   stopExtraLeads(obs, actions);
   if (obs.tasks) stopOrphanCrew(obs, actions);
   const status = leadStatus(obs);
@@ -331,7 +340,7 @@ function wakeWithoutEffect(watch, now) {
 // wake followed by a heartbeat worked: lastWakeAt is cleared, so it is never judged again. A wake had
 // no effect when no heartbeat has followed it for 5 min, or when the lead failed after it (failures/:
 // a usage limit, an API error), after its last heartbeat and before any wake judged since: the turn
-// it started died before the lead could see what woke it (once the usage limit is over, rule 11, the
+// it started died before the lead could see what woke it (once a pause for the usage limit is over, rules 20 and 21, the
 // motive is due again). The time of that wake is lastLeadActionAt, which lastWakeAt clears not.
 function judgeWakes(obs, watch) {
   const beat = heartbeatMs(obs);
@@ -381,11 +390,10 @@ function tendAbsentLead(obs, watch, actions, log) {
   actions.push({ type: 'relaunch-lead', resume: Boolean(context) && context.tokens < context.soft });
 }
 
-// Rules 11 and 14 to 16, for an idle lead: one wake at most, for every motive there is. True when a
+// Rules 14 to 16, for an idle lead: one wake at most, for every motive there is. True when a
 // wake is held back only for a moment (quiet time, a crew failed by this pass): a patient pass looks
 // again.
 function tendIdleLead(obs, watch, unseen, actions, log) {
-  if (rateLimited(obs, watch, log)) return false; // rule 11
   const motives = wakeMotives(obs, watch, unseen);
   if (motives.length === 0) return false;
   // A crew being failed by this pass: the lead is woken once its task is failed, at the next pass.
@@ -409,18 +417,57 @@ function tendIdleLead(obs, watch, unseen, actions, log) {
   return false;
 }
 
-// Rule 11: a usage limit hit after the lead's last heartbeat, less than 5 h ago. Logged once per
-// failure.
-function rateLimited(obs, watch, log) {
-  const failure = (obs.readings[obs.lead.shortId] || {}).failure;
-  if (!failure || failure.error !== 'rate_limit') return false;
-  const at = Date.parse(failure.at);
-  if (!(at > Date.parse(lastBeat(obs))) || !(obs.now - at < rateLimitHoldMs())) return false;
-  if (watch.rateLimitNoticeFor !== failure.at) {
-    log(`lead-rate-limited ${obs.lead.shortId}`);
-    watch.rateLimitNoticeFor = failure.at;
+// Rules 20 and 21, the usage limits of the account (lot 2b; they replace rule 11, which only held the
+// wakes of a lead after a usage limit). True when they take the pass, while the mission pauses or is
+// paused: no relaunch, no wake, no crew failed as lost, nothing counted for the breaker.
+// Rule 20: past the threshold of its priority, or after a usage limit hit, the mission pauses. A lead
+// that runs is woken once to push its work; otherwise, or after a usage limit hit (no turn can run),
+// the sessions are stopped at once.
+// Rule 21: paused, its sessions are stopped once the lead has ended its turn, or past the grace; once
+// none runs, at the time to resume, and with the measured usage under the threshold (or unknown), the
+// pause is lifted and the absent lead relaunched (rule 10).
+function tendUsage(obs, watch, actions, log) {
+  // The lead has worked since the usage limit of the last pause: the tries start again from 15 min.
+  if (heartbeatMs(obs) > Date.parse(watch.usagePausedFor)) watch.usageTries = 0;
+  if (!obs.pause) {
+    const verdict = usageVerdict({ ...obs, watch });
+    if (!verdict) return false;
+    if (verdict.failureAt) {
+      watch.usagePausedFor = verdict.failureAt;
+      watch.usageTries += 1;
+    }
+    // A relaunch cut short by the usage limit did not fail.
+    watch.lastRelaunchAt = null;
+    const wake = !verdict.failureAt && hasProcess(obs, obs.lead);
+    actions.push({
+      type: 'pause-mission',
+      resumeAt: verdict.resumeAt,
+      reason: verdict.reason,
+      wake,
+      log: `usage-pause until ${iso(verdict.resumeAt)}: ${verdict.reason}`,
+    });
+    if (!wake) stopRunning(obs, actions);
+    return true;
   }
+  const running = obs.registry.filter((session) => hasProcess(obs, session));
+  if (running.length > 0) {
+    const waited = obs.now - Date.parse(obs.pause.at);
+    if (!(leadStatus(obs) === 'active' && waited < usagePauseGraceMs())) stopRunning(obs, actions);
+    return true;
+  }
+  if (!(obs.now >= Date.parse(obs.pause.resumeAt)) || measuredVerdict(obs)) return true;
+  actions.push({ type: 'resume-mission', log: `usage-resumed ${obs.lead.shortId}` });
+  watch.leadLostSince = null;
+  tendAbsentLead(obs, watch, actions, log);
   return true;
+}
+
+// Every session of the mission that runs is stopped: the crew first, then the leads.
+function stopRunning(obs, actions) {
+  const running = obs.registry.filter((session) => hasProcess(obs, session));
+  for (const session of [...running.filter((one) => one.role !== 'lead'), ...running.filter((one) => one.role === 'lead')]) {
+    actions.push({ type: 'stop-session', session, log: `usage-stop ${session.shortId}` });
+  }
 }
 
 // The motives of rules 14 to 16, in order: {reasons (for the wake's text), log, remember (what watch
@@ -599,4 +646,5 @@ module.exports = {
   rateLimitHoldMs,
   questionSettings,
   QUESTION_REMIND_MS,
+  usagePauseGraceMs,
 };

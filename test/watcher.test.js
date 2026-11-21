@@ -909,3 +909,59 @@ test('a pass applies the recommended option of a lead question, and only reminds
   await watcherRun('--mission', 'demo');
   assert.strictEqual(logText().match(/question-reminder/g).length, 1);
 });
+
+// The usage of the account at `percent` % of its 5-hour window, as the status line writes it.
+function writeUsage(percent, resetsAt) {
+  const { usageFile } = require('../core/usage');
+  writeJson(usageFile(), { claude: { at: new Date().toISOString(), fiveHour: { percent, resetsAt }, sevenDay: null } });
+}
+
+function pauseFile() {
+  return path.join(missionDir('demo'), 'usage-pause.json');
+}
+
+test('a pause for the usage stops the sessions, starts nothing, then the lead is relaunched at its time', async (t) => {
+  withEnv(t, { RELAYLEAD_FAKE_CREW_GATE: tmpDir('relaylead-gate-'), RELAYLEAD_FAKE_END_FIRST_TURN: undefined });
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  writeJson(stateFile('demo'), { state: 'working' });
+  const lead = await launchIdleLead(dir, 'demo/lead/1');
+  writeLead('demo', lead);
+  const task = await startTask('demo', { id: 'a' });
+  const crew = listSessions('demo').find((session) => session.shortId === task.session);
+  writeUsage(90, new Date(Date.now() + 60 * 60 * 1000).toISOString());
+
+  // The lead is woken to push its work; nothing is stopped yet.
+  const paused = await watcher.tendMission('demo');
+  assert.deepStrictEqual(paused.map((action) => [action.type, action.wake]), [['pause-mission', true]]);
+  const usageWake = /woken: Usage limit near: commit and push your work, write your state, end your turn\./;
+  await waitFor(() => usageWake.test(leadLog(lead)), 30000, 'the lead to be woken for the usage', () => missionReport('demo'));
+  assert.strictEqual(readJson(pauseFile()).reason, 'five-hour 90% >= 85%');
+  // Once it has ended its turn: the crew, then the lead.
+  await waitFor(async () => (await listed(lead)).idle === true, 30000, 'the woken lead to end its turn', () => missionReport('demo'));
+  const stops = await watcher.tendMission('demo');
+  assert.deepStrictEqual(stops.map((action) => action.log), [`usage-stop ${crew.shortId}`, `usage-stop ${lead.shortId}`]);
+  assert.ok(sessionEnded(crew) && sessionEnded(lead), missionReport('demo'));
+
+  // Paused: nothing is started, by the watcher or by a task command; the state says until when.
+  assert.deepStrictEqual(await watcher.tendMission('demo'), []);
+  const refused = makeIo({ env: userEnv() });
+  assert.strictEqual(await run(['task', 'start', 'b', '--mission', 'demo'], refused), 1);
+  assert.match(refused.err.text, /mission "demo" is paused by the usage limit until \d{4}-\d\d-\d\d \d\d:\d\d/);
+  const list = makeIo();
+  await run(['list'], list);
+  assert.match(list.out.text, /demo {2}usage-pause \(resume \d{4}-\d\d-\d\d \d\d:\d\d\)/);
+
+  // Its time has come, but the usage is still past the threshold: it waits.
+  writeJson(pauseFile(), { ...readJson(pauseFile()), resumeAt: new Date(Date.now() - 1000).toISOString() });
+  assert.deepStrictEqual(await watcher.tendMission('demo'), []);
+  // Under the threshold: the pause is lifted and the absent lead relaunched.
+  writeUsage(10, null);
+  withEnv(t, { RELAYLEAD_FAKE_END_FIRST_TURN: '1' });
+  const resumed = await watcher.tendMission('demo');
+  assert.deepStrictEqual(resumed.map((action) => action.type), ['resume-mission', 'relaunch-lead']);
+  assert.strictEqual(fs.existsSync(pauseFile()), false);
+  assert.strictEqual(readJson(path.join(missionDir('demo'), 'lead.json')).sessionName, 'demo/lead/2');
+  assert.match(logText(), /demo usage-pause until .*: five-hour 90% >= 85%/);
+  assert.match(logText(), new RegExp(`demo usage-resumed ${lead.shortId}`));
+});

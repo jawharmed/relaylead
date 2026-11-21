@@ -20,6 +20,7 @@ const { askQuestion, answerQuestion, listQuestions } = require('./questions');
 const { runPass, tendMission, stopPresent, loop, watcherRunning, startWatcher, stopWatcher } = require('./watcher');
 const { watchLogSize, watchLogSince } = require('./watch-log');
 const { home } = require('./paths');
+const { readPause, localTime, refuseWhilePaused } = require('./usage-pause');
 const detached = require('./detached');
 const { install, uninstall } = require('./install');
 const { doctor } = require('./doctor');
@@ -144,14 +145,26 @@ commands.list = async (args, io) => {
   if (missions.length === 0) io.out.write(t('noMissions', {}, language(io)));
   for (const mission of missions) {
     const lead = mission.lead ? mission.lead.sessionName : '-';
-    io.out.write(`${mission.name}  ${mission.state}  ${lead}  ${mission.dir}\n`);
+    io.out.write(`${mission.name}  ${shownState(mission.name, mission.state, io)}  ${lead}  ${mission.dir}\n`);
   }
   return 0;
 };
 
-commands.show = async (args) => {
+// The state of a mission as the user sees it: that of its lead, or its pause for the usage limit
+// (left alone once the mission is done or stopped).
+function shownState(name, state, io) {
+  const pause = /^(done|stopped)/.test(state) ? null : readPause(name);
+  return pause ? t('usagePausedState', { resumeAt: localTime(pause.resumeAt) }, language(io)) : state;
+}
+
+// A mission paused for the usage limit says so before its lead's session is shown: that session is
+// stopped once the lead has pushed its work.
+commands.show = async (args, io) => {
   const [name] = parseArgs(args).positional;
   if (!name) throw codedError('usage', { usage: 'relaylead show <mission>' });
+  const state = getState(name);
+  const shown = shownState(name, state, io);
+  if (shown !== state) io.out.write(`${name}  ${shown}\n`);
   return attachLead(name);
 };
 
@@ -235,6 +248,7 @@ commands.task = async (args, io) => {
   if (action === 'deliver' && options['no-hooks']) refuseInSession('task deliver --no-hooks', io);
   const mission = missionName(options, io);
   if (['start', 'retry', 'deliver'].includes(action)) refuseReplacedLead(mission, io);
+  if (['start', 'retry'].includes(action)) refuseWhilePaused(mission);
   if (action === 'list') {
     io.out.write(JSON.stringify(listTasks(mission), null, 2) + '\n');
   } else if (action === 'start') {
