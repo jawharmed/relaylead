@@ -170,6 +170,13 @@ const messages = {
     'gh-missing': 'gh, the GitHub CLI, was not found; install it from https://cli.github.com',
     'gh-not-authenticated': 'gh is not logged in to GitHub; log in with: gh auth login',
     'gh-failed': 'gh {args} failed: {detail}',
+    'push-failed': 'git push {remote} {branch} failed: {detail}',
+    'pr-changes-requested':
+      'the pull request {url} of task "{id}" has changes requested; have them made on its branch, then deliver again',
+    'pr-merge-conflict':
+      'the pull request {url} of task "{id}" cannot be merged: it conflicts with the integration branch; have the conflict fixed on its branch, then deliver again',
+    // Not an error: the address of a delivered task's pull request, shown with the delivery's warnings.
+    'pr-merged': 'task "{id}": pull request {url} merged',
   },
   fr: {
     help: [
@@ -340,6 +347,12 @@ const messages = {
     'gh-missing': 'gh, la CLI de GitHub, est introuvable ; installez-la depuis https://cli.github.com',
     'gh-not-authenticated': 'gh n\'est pas connecté à GitHub ; connectez-vous avec : gh auth login',
     'gh-failed': 'échec de gh {args} : {detail}',
+    'push-failed': 'échec de git push {remote} {branch} : {detail}',
+    'pr-changes-requested':
+      'la pull request {url} de la tâche « {id} » a des changements demandés ; faites-les faire sur sa branche, puis livrez à nouveau',
+    'pr-merge-conflict':
+      'la pull request {url} de la tâche « {id} » ne peut pas être fusionnée : elle est en conflit avec la branche d\'intégration ; faites corriger le conflit sur sa branche, puis livrez à nouveau',
+    'pr-merged': 'tâche « {id} » : pull request {url} fusionnée',
   },
 };
 

@@ -153,8 +153,10 @@ function prepareMission(mission) {
   if (!fs.existsSync(path.join(mission.dir, '.git'))) {
     throw codedError('not-a-git-repo', { dir: mission.dir });
   }
-  // The crew members work from commits: uncommitted tasks would not reach them.
-  if (git(mission.dir, ['status', '--porcelain', '--', sourceDir(mission)]) !== '') {
+  // The crew members work from commits: uncommitted tasks would not reach them. Tasks of another
+  // source (GitHub issues) are not files in the repository: there is nothing to check.
+  const tasksInRepo = mission.config.source.type === 'tasks-dir';
+  if (tasksInRepo && git(mission.dir, ['status', '--porcelain', '--', sourceDir(mission)]) !== '') {
     throw codedError('tasks-not-committed', { dir: sourceDir(mission), branch });
   }
   const integration = integrationDir(mission);
@@ -163,7 +165,7 @@ function prepareMission(mission) {
     if (actual !== branch) throw codedError('integration-mismatch', { dir: integration, actual, branch });
   }
   const isNew = !branchExists(mission.dir, branch);
-  if (isNew && !refHas(mission.dir, 'HEAD', sourceDir(mission))) {
+  if (tasksInRepo && isNew && !refHas(mission.dir, 'HEAD', sourceDir(mission))) {
     throw codedError('tasks-not-committed', { dir: sourceDir(mission), branch });
   }
   if (fs.existsSync(integration)) {
@@ -177,7 +179,7 @@ function prepareMission(mission) {
   if (!fs.existsSync(integration)) git(mission.dir, ['worktree', 'add', integration, branch]);
   if (!isNew) {
     updateIntegration(mission);
-    if (!refHas(mission.dir, branch, sourceDir(mission))) {
+    if (tasksInRepo && !refHas(mission.dir, branch, sourceDir(mission))) {
       throw codedError('tasks-not-committed', { dir: sourceDir(mission), branch });
     }
   }
@@ -592,4 +594,10 @@ module.exports = {
   missionBranches,
   removeMission,
   isTransientGitError,
+  // For deliveries/github-pr.js, which works on the same branches and worktrees.
+  integrationDir,
+  taskBranch,
+  git,
+  removeWorktree,
+  branchExists,
 };
