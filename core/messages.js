@@ -167,6 +167,9 @@ const messages = {
     'worktree-of-mission':
       '; it was left by mission "{mission}": remove that mission with: relaylead remove {mission}, or only this folder with: git worktree remove "{dir}"',
     'worktree-not-relaylead': '; remove it with: git worktree remove "{dir}"',
+    'gh-missing': 'gh, the GitHub CLI, was not found; install it from https://cli.github.com',
+    'gh-not-authenticated': 'gh is not logged in to GitHub; log in with: gh auth login',
+    'gh-failed': 'gh {args} failed: {detail}',
   },
   fr: {
     help: [
@@ -334,6 +337,9 @@ const messages = {
     'worktree-of-mission':
       ' ; il vient de la mission « {mission} » : supprimez cette mission avec : relaylead remove {mission}, ou seulement ce dossier avec : git worktree remove "{dir}"',
     'worktree-not-relaylead': ' ; supprimez-le avec : git worktree remove "{dir}"',
+    'gh-missing': 'gh, la CLI de GitHub, est introuvable ; installez-la depuis https://cli.github.com',
+    'gh-not-authenticated': 'gh n\'est pas connecté à GitHub ; connectez-vous avec : gh auth login',
+    'gh-failed': 'échec de gh {args} : {detail}',
   },
 };
 
