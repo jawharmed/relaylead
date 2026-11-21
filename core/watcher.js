@@ -670,6 +670,8 @@ function removeOwnLoopFile(token) {
 // goes on. A stop holds until the next start, even during the loop's last pass.
 function loopMustEnd(token, info, write) {
   if (testRunOver()) return true;
+  // The home has been deleted (uninstall --purge): writing its file again would bring it back.
+  if (!fs.existsSync(home())) return true;
   const loop = readLoopFile();
   if (loop && !isOurs(loop, token)) return true;
   if ((loop || info).version !== packageVersion()) return true;
@@ -697,7 +699,7 @@ async function loop() {
   const beat = setInterval(() => {
     try {
       const current = readLoopFile();
-      if (!current || isOurs(current, token)) write();
+      if (fs.existsSync(home()) && (!current || isOurs(current, token))) write();
     } catch {
       // the next beat writes it
     }
@@ -761,12 +763,12 @@ async function startWatcher({ unlessStopped = false } = {}) {
 }
 
 // Asks the loop to stop with watcher-loop.stop, which stays until the next start: 'stopped' once the
-// loop has removed its file (10 s at most), 'requested' when it is still in a long pass (it ends at the
-// end of that pass), 'not-running' when no loop runs.
-async function stopWatcher() {
+// loop has removed its file (within waitMs, 10 s by default), 'requested' when it is still in a long
+// pass (it ends at the end of that pass), 'not-running' when no loop runs.
+async function stopWatcher({ waitMs = STOP_WAIT_MS } = {}) {
   writeText(loopStopFile(), `${new Date().toISOString()}\n`);
   if (!watcherRunning().running) return 'not-running';
-  const giveUpAt = Date.now() + STOP_WAIT_MS;
+  const giveUpAt = Date.now() + waitMs;
   while (fs.existsSync(loopFile())) {
     if (Date.now() >= giveUpAt) return 'requested';
     await sleep(100);

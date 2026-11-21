@@ -9,6 +9,10 @@ const { assertSupported } = require('./platform');
 const { installScheduler, uninstallScheduler, plistPath, LABEL } = require('./scheduler');
 const { installPlugin, uninstallPlugin, PLUGIN_ID, MARKETPLACE } = require('./plugin');
 const { codedError } = require('./messages');
+const { watcherRunning, stopWatcher } = require('./watcher');
+
+// How long uninstall waits for the watcher's loop to end its pass.
+const LOOP_END_WAIT_MS = 120000;
 
 const installFile = () => path.join(home(), 'install.json');
 
@@ -46,10 +50,17 @@ function install(say) {
 // Undoes what install.json lists; without it, what is found (the plist, the plugin). Every step is
 // independent: a failure is a warning with the command to run by hand, and the next steps go on.
 // With `purge`, also deletes ~/.relaylead, but only if it is a relaylead folder (checked first).
-function uninstall(say, { purge = false } = {}) {
+// First of all, the watcher's loop (started by launch) is stopped and waited for: left running, it
+// would go on from the package being removed, and write its file again in a purged home.
+async function uninstall(say, { purge = false } = {}) {
   assertSupported();
   const record = readJson(installFile(), null);
   if (purge && !isRelayleadHome(record)) throw codedError('purge-refused', { dir: home() });
+  if (watcherRunning().running) {
+    const outcome = await stopWatcher({ waitMs: LOOP_END_WAIT_MS });
+    if (outcome === 'requested') say('uninstall-warning', { step: 'watcher', detail: 'its loop is still in a pass', command: 'relaylead watcher stop' });
+    else say('watcherStopped', {});
+  }
   if (!record) say('nothing-installed', {});
 
   if (!record || record.scheduler) {

@@ -227,7 +227,7 @@ Registers the launchd agent that runs the watcher (`dev.relaylead.watcher`) and 
 
 ### `relaylead uninstall [--purge]`
 
-Removes what `install` added, and nothing else. `--purge` also deletes `~/.relaylead` (missions' state, logs, key file), after checking that the folder is Relaylead's.
+Stops the watcher's loop first and waits for its end, then removes what `install` added, and nothing else. `--purge` also deletes `~/.relaylead` (missions' state, logs, key file), after checking that the folder is Relaylead's.
 
 ### `relaylead doctor`
 

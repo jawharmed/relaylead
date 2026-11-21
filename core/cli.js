@@ -409,7 +409,7 @@ commands.install = async (args, io) => {
 commands.uninstall = async (args, io) => {
   refuseInSession('uninstall', io);
   const { options } = parseArgs(args);
-  uninstall((key, vars) => io.out.write(t(key, vars, language(io))), { purge: options.purge === true });
+  await uninstall((key, vars) => io.out.write(t(key, vars, language(io))), { purge: options.purge === true });
   return 0;
 };
 
