@@ -101,7 +101,7 @@ async function init(options, io, lang) {
     const wantsInstall = await setUpMachine(options, asker, io, say);
     setUpProject(io.cwd, say);
     if (wantsInstall) install(say);
-    else say('init-next', {});
+    else if (!fs.existsSync(path.join(home(), 'install.json'))) say('init-next', {});
   } finally {
     asker.close();
   }
