@@ -10,6 +10,8 @@ const { MIN_VERSION, buildLaunchArgs, compareVersion } = require('./args');
 const { writeSessionSettings } = require('./settings');
 const { parseLaunchOutput, mapState } = require('./sessions');
 const { sleep } = require('../../core/timing');
+const { loadConfig } = require('../../core/config');
+const { apiKeyEnv } = require('../../core/auth');
 
 const PACKAGE_DIR = path.join(__dirname, '..', '..');
 const POLL_MS = 250;
@@ -50,11 +52,12 @@ function claudeCommand() {
 
 // Runs `claude <args>` and resolves with its exit code, stdout and stderr. After `timeoutMs`, Node
 // kills it and the call fails with `claude-timeout` naming `label`.
-function runClaude(args, { cwd, label = `claude ${args.join(' ')}`, timeoutMs = commandTimeoutMs() } = {}) {
+function runClaude(args, { cwd, env, label = `claude ${args.join(' ')}`, timeoutMs = commandTimeoutMs() } = {}) {
   const { file, prefix } = claudeCommand();
   return new Promise((resolve, reject) => {
     const child = spawn(file, [...prefix, ...args], {
       cwd,
+      env,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
       timeout: timeoutMs,
@@ -74,6 +77,12 @@ function runClaude(args, { cwd, label = `claude ${args.join(' ')}`, timeoutMs = 
     });
     child.once('close', (code) => resolve({ code, stdout, stderr }));
   });
+}
+
+// The environment of a launch or a wake: ours, plus the API key in `api-key` mode (core/auth.js is
+// the only reader of the key). Not used by the calls that only list or stop sessions.
+function sessionEnv() {
+  return { ...process.env, ...apiKeyEnv(loadConfig()) };
 }
 
 function failed(command, { stdout, stderr }) {
@@ -179,7 +188,7 @@ async function launch(spec) {
     permissionMode: spec.permissionMode,
     prompt: spec.prompt,
   });
-  const { stdout, stderr } = await runClaude(args, { cwd: spec.cwd, label: 'claude --bg', timeoutMs: launchTimeoutMs() });
+  const { stdout, stderr } = await runClaude(args, { cwd: spec.cwd, env: sessionEnv(), label: 'claude --bg', timeoutMs: launchTimeoutMs() });
   const output = stdout + stderr;
   const result = parseLaunchOutput(output);
   if (result.error === 'untrusted-dir') throw codedError('untrusted-dir', { dir: spec.cwd });
@@ -243,7 +252,7 @@ async function wake(session, message) {
   await stop(session);
   await waitUntilEnded(session, listedPid || session.pid, settleBoundMs(wakeTimeoutMs(), { fallback: !listedPid }));
   const args = ['--bg', '--resume', session.sessionId, message];
-  const { stdout, stderr } = await runClaude(args, { cwd: session.cwd, label: 'claude --bg --resume', timeoutMs: launchTimeoutMs() });
+  const { stdout, stderr } = await runClaude(args, { cwd: session.cwd, env: sessionEnv(), label: 'claude --bg --resume', timeoutMs: launchTimeoutMs() });
   const output = stdout + stderr;
   const result = parseLaunchOutput(output);
   if (result.error === 'untrusted-dir') throw codedError('untrusted-dir', { dir: session.cwd });

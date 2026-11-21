@@ -39,7 +39,8 @@ function writeText(file, text, { mode, retryMs, createDir = true } = {}) {
   const random = Math.random().toString(36).slice(2, 10);
   const tmp = `${file}.${process.pid}.${random}.tmp`;
   try {
-    fs.writeFileSync(tmp, text);
+    // Created with `mode` at once, so a secret is never readable by others, even for a moment.
+    fs.writeFileSync(tmp, text, mode === undefined ? undefined : { mode });
     if (mode !== undefined) fs.chmodSync(tmp, mode);
     withWindowsRetry(() => fs.renameSync(tmp, file), retryMs);
   } catch (err) {

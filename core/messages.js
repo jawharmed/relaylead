@@ -182,6 +182,9 @@ const messages = {
     'scheduler-installed': 'scheduler installed: the watcher runs every {seconds} s ({file})\n',
     'scheduler-removed': 'scheduler removed\n',
     'scheduler-failed': 'scheduler step "{step}" failed: {detail}',
+    'api-key-missing':
+      'API key mode is on but the key file {file} is missing or empty; set it with: relaylead init --api-key-env NAME (or --api-key-file PATH)',
+    'api-key-env-empty': 'the environment variable {name} is not set or empty',
   },
   fr: {
     help: [
