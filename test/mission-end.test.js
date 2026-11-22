@@ -10,6 +10,7 @@ const { askQuestion } = require('../core/questions');
 const { listSessions } = require('../core/sessions');
 const { missionDir } = require('../core/paths');
 const { tmpDir } = require('../fixtures/helpers');
+const { recordHeartbeat } = require('../core/readings');
 const { setupProject, writeMission } = require('../fixtures/missions');
 const { installEnv, runRelaylead } = require('../fixtures/install-env');
 
@@ -77,4 +78,18 @@ test('the helper that stops the lead of a done mission forgets only the sessions
   await reapLead('demo', readJson(path.join(missionDir('demo'), 'mission.json')).createdAt);
 
   assert.ok(!forgotten('demo').includes(crew.shortId), 'a live crew member stays in the agent\'s list');
+});
+
+test('a lead that only waits does not keep its mission from being abandoned: its heartbeats are not progress', async (t) => {
+  const env = installEnv(t);
+  process.env.RELAYLEAD_HOME = env.RELAYLEAD_HOME;
+  writeMission('quiet', fs.realpathSync.native(tmpDir('relaylead-project-')));
+  askQuestion('quiet', { key: 'db', text: 'Which database?', options: ['postgres', 'sqlite'] });
+  age(missionDir('quiet'), 8);
+  // The lead runs `relaylead wait` again and again: its hooks and its wait write as it goes.
+  recordHeartbeat('quiet', '1ead0001', { tool: 'Bash', contextTokens: 50000 });
+  writeJson(path.join(missionDir('quiet'), 'wait-snapshot.json'), { tasks: {}, questions: {}, messages: {}, lostSince: {} });
+
+  const list = await runRelaylead(['list'], { cwd: tmpDir(), env });
+  assert.match(list.out, /^quiet {2}starting \(abandoned\) {2}/m);
 });
