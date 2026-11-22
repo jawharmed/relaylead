@@ -15,7 +15,8 @@ const { missionDir } = require('../core/paths');
 const layout = require('../core/layout');
 const localMerge = require('../deliveries/local-merge');
 const fake = require('../adapters/fake');
-const { tmpDir, makeIo, waitFor } = require('../fixtures/helpers');
+const { tmpDir, makeIo, waitFor, killSession } = require('../fixtures/helpers');
+const { placesTaken } = require('../core/places');
 const { git, gitRepo } = require('../fixtures/git');
 const { writeMission, missionReport } = require('../fixtures/missions');
 
@@ -242,4 +243,27 @@ test('a finished mission stays while its work is not merged, or when it delivere
   git(dir, 'merge', '-q', '--no-edit', 'relaylead/demo/integration');
   await cli(['watcher', 'run']);
   assert.ok(!fs.existsSync(missionDir('demo')));
+});
+
+test('a resolution crew member that dies without a result is failed by the watcher: its place is freed and the user is asked', async (t) => {
+  const { dir, integration } = project(t);
+  conflict(dir, integration);
+  const gate = tmpDir('relaylead-gate-');
+  const before = process.env.RELAYLEAD_FAKE_CREW_GATE;
+  process.env.RELAYLEAD_FAKE_CREW_GATE = gate; // the crew member waits: it never reports
+  t.after(() => {
+    if (before === undefined) delete process.env.RELAYLEAD_FAKE_CREW_GATE;
+    else process.env.RELAYLEAD_FAKE_CREW_GATE = before;
+  });
+  await cli(['merge', 'demo']);
+  const [crew] = listSessions('demo');
+  assert.strictEqual(placesTaken(), 1);
+
+  killSession(crew);
+  await tendMerge('demo');
+
+  assert.strictEqual(taskState('merge-into-main'), 'failed', missionReport('demo'));
+  assert.strictEqual(placesTaken(), 0);
+  assert.strictEqual(mergeRecord().state, 'asked');
+  assert.strictEqual(listQuestions('demo', { state: 'open' }).length, 1);
 });

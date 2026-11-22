@@ -12,7 +12,9 @@ const { missionDir, slug } = require('./paths');
 const { readJson, writeJson } = require('./store');
 const { codedError } = require('./messages');
 const { readMission, stopSessionsAndWait, forgetSessions, removeMission } = require('./missions');
-const { listTasks, startMergeTask, deliverMergeTask } = require('./tasks');
+const { listTasks, startMergeTask, deliverMergeTask, markFailed } = require('./tasks');
+const { unseenChanges } = require('./wait');
+const { getAdapter } = require('../adapters');
 const { listSessions } = require('./sessions');
 const { askQuestion, listQuestions } = require('./questions');
 const { listTold } = require('./told');
@@ -138,6 +140,22 @@ async function stopCrew(mission, shortId) {
   await forgetSessions(mission, [session]);
 }
 
+// Why the crew member of the running resolution task counts as ended without a result, or null while
+// it may still work. The criteria of `relaylead wait` (core/wait.js): ended for the agent, or lost
+// past a grace, whose start is kept in merge.json (crewLostSince). A list that fails says nothing.
+async function lostCrew(mission, merge, task) {
+  let rows;
+  try {
+    rows = await getAdapter(mission.agent).list(mission.name);
+  } catch {
+    return null;
+  }
+  const { toFail, lostSince } = unseenChanges(mission.name, rows, merge.crewLostSince || {}, Date.now());
+  writeMerge(mission.name, { ...merge, crewLostSince: lostSince });
+  const lost = toFail.find((entry) => entry.id === task.id);
+  return lost ? lost.summary : null;
+}
+
 // The question to the user when a resolution fails; its context says how to resolve by hand.
 function askUser(mission, merge, why) {
   const ref = mergedRef(mission, merge.target);
@@ -166,7 +184,15 @@ async function tendMerge(name) {
     if (!merge || !['resolving', 'asked'].includes(merge.state)) return;
     const mission = readMission(name);
     if (merge.state === 'asked') return followAnswer(mission, merge);
-    const task = listTasks(name).find((candidate) => candidate.id === merge.task);
+    let task = listTasks(name).find((candidate) => candidate.id === merge.task);
+    // No lead waits on a done mission: a crew member that ended without a result is failed here.
+    if (task && task.state === 'running') {
+      const summary = await lostCrew(mission, merge, task);
+      if (!summary) return;
+      markFailed(name, task.id, summary);
+      watchLog(name, 'crew-lost', `${task.session || '-'} task ${task.id}`);
+      task = { ...task, state: 'failed', summary };
+    }
     if (!task || !['done', 'failed'].includes(task.state)) return;
     await stopCrew(mission, task.session);
     if (task.state === 'failed') return askUser(mission, merge, task.summary);
