@@ -9,7 +9,6 @@ const { home } = require('./paths');
 const { loadConfig } = require('./config');
 const { codedError } = require('./messages');
 const { writeText } = require('./store');
-const { readMission } = require('./missions');
 const { tryCreateLock, isStaleLock, removeQuietly, takeOverStaleLock } = require('./mission-lock');
 const { runFileSync } = require('./run-file');
 const { sleep } = require('./timing');
@@ -18,17 +17,31 @@ const MEMORY_PATH = '.relaylead/memoire.md';
 const ARCHIVE_PATH = '.relaylead/memoire-archive/';
 const LOCK_WAIT_MS = 10 * 1000;
 
+// The root of the main working tree of the repository `dir` belongs to, whether `dir` is that root, a
+// sub-folder or a linked worktree: the memory lives there and nowhere else. A folder that is not in a
+// git repository is its own root.
+function projectRoot(dir) {
+  const real = fs.realpathSync.native(dir);
+  try {
+    const out = runFileSync('git', ['rev-parse', '--git-common-dir'], { cwd: real, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const common = path.resolve(real, out.trim());
+    return path.basename(common) === '.git' ? fs.realpathSync.native(path.dirname(common)) : real;
+  } catch {
+    return real;
+  }
+}
+
 function memoryFile(dir) {
-  return path.join(dir, '.relaylead', 'memoire.md');
+  return path.join(projectRoot(dir), '.relaylead', 'memoire.md');
 }
 
 function archiveDir(dir) {
-  return path.join(dir, '.relaylead', 'memoire-archive');
+  return path.join(projectRoot(dir), '.relaylead', 'memoire-archive');
 }
 
 // { enabled, maxLines, versioned } of a project, the defaults for what is missing or not valid.
 function memorySettings(dir) {
-  const { memory } = loadConfig({ dir });
+  const { memory } = loadConfig({ dir: projectRoot(dir) });
   const maxLines = Number.isInteger(memory.maxLines) && memory.maxLines >= 1 ? memory.maxLines : 200;
   return { enabled: memory.enabled !== false, maxLines, versioned: memory.versioned === true };
 }
@@ -59,6 +72,7 @@ function readMemory(dir) {
 // Adds the memory and its archive to .git/info/exclude of the repository, unless they are already there.
 // The .gitignore is never touched. Does nothing outside a git repository.
 function excludeFromGit(dir) {
+  dir = projectRoot(dir);
   let file;
   try {
     const out = runFileSync('git', ['rev-parse', '--git-path', 'info/exclude'], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -80,6 +94,7 @@ function excludeFromGit(dir) {
 
 // One writer at a time per repository: a lock file in ~/.relaylead/locks, named after the repository.
 async function withMemoryLock(dir, action) {
+  dir = projectRoot(dir);
   const hash = crypto.createHash('sha1').update(dir).digest('hex').slice(0, 16);
   const file = path.join(home(), 'locks', `memory-${hash}.lock`);
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -99,7 +114,7 @@ async function withMemoryLock(dir, action) {
 // Replaces the memory of the project of `mission` by `text`. Refused when the memory is off, when the text is
 // empty or longer than the ceiling. The previous version goes to the archive. Returns the number of lines.
 async function writeMemory(mission, text) {
-  const dir = readMission(mission).dir;
+  const dir = projectRoot(require('./missions').readMission(mission).dir); // lazy: missions.js needs the delivery, which needs this file
   const { enabled, maxLines, versioned } = memorySettings(dir);
   if (!enabled) throw codedError('memory-disabled', {});
   const body = String(text).replace(/\s+$/, '');
@@ -119,4 +134,4 @@ async function writeMemory(mission, text) {
   return lines;
 }
 
-module.exports = { memoryFile, archiveDir, memorySettings, readMemory, writeMemory, excludeFromGit, countLines };
+module.exports = { projectRoot, memoryFile, archiveDir, memorySettings, readMemory, writeMemory, excludeFromGit, countLines };

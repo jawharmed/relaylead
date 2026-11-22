@@ -6,11 +6,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { run } = require('../core/cli');
 const { home } = require('../core/paths');
-const { writeMemory, memoryFile, archiveDir } = require('../core/memory');
+const { writeMemory, memoryFile, archiveDir, projectRoot } = require('../core/memory');
 const { writeJson } = require('../core/store');
 const { gitRepo } = require('../fixtures/git');
 const { installEnv, runRelaylead } = require('../fixtures/install-env');
-const { makeIo } = require('../fixtures/helpers');
+const { makeIo, tmpDir } = require('../fixtures/helpers');
+const { runFileSync } = require('../core/run-file');
 const { freshHome, writeMission } = require('../fixtures/missions');
 
 async function relaylead(args, env = { RELAYLEAD_MISSION: 'demo' }) {
@@ -143,4 +144,18 @@ test('the lead profile and its first message tell it to read and compact the mem
   assert.match(lead, /Bash\(relaylead memory \*\)/);
   assert.match(lead, /Before you declare the mission done, compact the project memory/);
   assert.match(lead, /then `relaylead memory show`/);
+});
+
+test('the memory of a mission started in a worktree or a sub-folder is the main repository\'s', async (t) => {
+  freshHome(t);
+  const main = gitRepo({ 'README.md': 'toy\n', 'sub/file.txt': 'x\n' });
+  const linked = path.join(fs.realpathSync.native(tmpDir('relaylead-linked-')), 'wt');
+  runFileSync('git', ['worktree', 'add', '-q', '-b', 'side', linked], { cwd: main, stdio: 'ignore' });
+  assert.strictEqual(projectRoot(linked), main);
+  assert.strictEqual(projectRoot(path.join(main, 'sub')), main);
+  writeMission('demo', linked);
+  await writeMemory('demo', 'shared');
+  assert.strictEqual(fs.readFileSync(memoryFile(main), 'utf8'), 'shared\n');
+  assert.ok(!fs.existsSync(path.join(linked, '.relaylead', 'memoire.md')));
+  assert.match(exclude(main), /^\.relaylead\/memoire\.md$/m);
 });
