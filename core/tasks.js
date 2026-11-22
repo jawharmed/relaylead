@@ -398,11 +398,22 @@ function finishTask(name, id, { state, summary, attempt }) {
 
 // Starts the crew member of the task resolving a merge conflict (core/merge.js), as a new attempt when
 // an earlier one exists (failed, or delivered before the merge conflicted again). The caller holds the
-// mission lock. Returns the task's record: running, or queued without a free place.
+// mission lock. Returns the task's record: running, or queued without a free place. A launch that
+// fails marks the task failed, so the watcher asks the user (core/merge.js); one that met a busy lock
+// leaves it todo, and the watcher starts it again at its next pass.
 async function startMergeTask(mission, id) {
   const name = mission.name;
   const record = readJson(taskFile(name, id), null);
-  if (!record) return launchCrew(mission, id, 'developer', { merge: true });
+  if (!record) {
+    try {
+      return await launchCrew(mission, id, 'developer', { merge: true });
+    } catch (err) {
+      if (!STILL_QUEUED.includes(err.code)) {
+        writeJson(taskFile(name, id), { id, profile: 'developer', attempt: 1, state: 'failed', session: null, summary: `launch failed: ${err.message}` });
+      }
+      throw err;
+    }
+  }
   // The state with the crew's result: a crew member that reported its task has left `running`.
   const { state } = findTask(name, id);
   if (state === 'queued' || (state === 'running' && record.session)) return record;

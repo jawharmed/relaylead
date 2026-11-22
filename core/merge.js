@@ -187,6 +187,11 @@ async function tendMerge(name) {
     const mission = readMission(name);
     if (merge.state === 'asked') return followAnswer(mission, merge);
     let task = listTasks(name).find((candidate) => candidate.id === merge.task);
+    // Never launched (its launch met a busy lock): launched now. A failure is seen at the next pass.
+    if (task && task.state === 'todo') {
+      await startMergeTask(mission, task.id).catch((err) => watchLog(name, 'error', `merge task start: ${err.message}`));
+      return;
+    }
     // No lead waits on a done mission: a crew member that ended without a result is failed here.
     if (task && task.state === 'running') {
       const summary = await lostCrew(mission, merge, task);

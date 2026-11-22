@@ -13,6 +13,7 @@ const { listSessions } = require('../core/sessions');
 const { readJson, writeJson } = require('../core/store');
 const { missionDir } = require('../core/paths');
 const layout = require('../core/layout');
+const { codedError } = require('../core/messages');
 const localMerge = require('../deliveries/local-merge');
 const fake = require('../adapters/fake');
 const { tmpDir, makeIo, waitFor, killSession } = require('../fixtures/helpers');
@@ -298,4 +299,44 @@ test('a resolution delivered whose merge did not run (a crash between the two) i
 
   assert.strictEqual(mergeRecord().state, 'merged', missionReport('demo'));
   assert.strictEqual(git(dir, 'show', 'main:greet.txt'), 'hello from the mission');
+});
+
+// fake.launch throws `err` at its next call only.
+function failNextLaunch(t, err) {
+  const original = fake.launch;
+  fake.launch = async () => {
+    fake.launch = original;
+    throw err;
+  };
+  t.after(() => {
+    fake.launch = original;
+  });
+}
+
+test('a resolution whose crew member cannot be launched is failed, so the user is asked', async (t) => {
+  const { dir, integration } = project(t);
+  conflict(dir, integration);
+  failNextLaunch(t, new Error('the agent would not start'));
+
+  const result = await cli(['merge', 'demo']);
+
+  assert.strictEqual(result.code, 1);
+  assert.match(result.err, /the agent would not start/);
+  assert.strictEqual(taskState('merge-into-main'), 'failed');
+  await tendMerge('demo');
+  assert.strictEqual(mergeRecord().state, 'asked');
+});
+
+test('a resolution whose launch met a busy lock is started at the next pass', async (t) => {
+  const { dir, integration } = project(t);
+  conflict(dir, integration);
+  failNextLaunch(t, codedError('places-busy', { command: 'task start x', pid: 1, since: '-' }));
+
+  assert.strictEqual((await cli(['merge', 'demo'])).code, 1);
+  assert.strictEqual(taskState('merge-into-main'), 'todo');
+  await tendMerge('demo');
+  assert.strictEqual(taskState('merge-into-main'), 'running');
+  await waitFor(() => taskState('merge-into-main') === 'done', 30000, 'the resolution to be done', () => missionReport('demo'));
+  await tendMerge('demo');
+  assert.strictEqual(mergeRecord().state, 'merged');
 });
