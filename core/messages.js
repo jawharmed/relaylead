@@ -43,6 +43,7 @@ const messages = {
     branchDeleted: 'deleted branch {branch}\n',
     missionNothingToStop: 'mission {mission} is already {state}; nothing to do\n',
     missionDoneSessionsStopped: 'mission {mission} is done; its remaining sessions were stopped\n',
+    missionStateSet: 'mission {mission}: state set to {state}\n',
     waitOneShot: 'one-shot session: not waiting (use wait --all --timeout 0 for a look, or relaylead brief)\n',
     missionStopSkipped:
       'the sessions of mission {mission} were not stopped again: their process ids are more than an hour old\n',
@@ -335,6 +336,7 @@ const messages = {
     branchDeleted: 'branche supprimée {branch}\n',
     missionNothingToStop: 'la mission {mission} est déjà {state} ; rien à faire\n',
     missionDoneSessionsStopped: 'la mission {mission} est terminée ; ses sessions restantes ont été arrêtées\n',
+    missionStateSet: 'mission {mission} : état changé en {state}\n',
     waitOneShot: 'session ponctuelle : pas d\'attente (wait --all --timeout 0 pour un coup d\'œil, ou relaylead brief)\n',
     missionStopSkipped:
       'les sessions de la mission {mission} n\'ont pas été arrêtées de nouveau : leurs numéros de processus ont plus d\'une heure\n',

@@ -295,6 +295,7 @@ commands.state = async (args, io) => {
     // (--no-memory: a way out when the memory cannot be written); a replayed `done` has been through this already.
     if (state === 'done' && !options['no-memory'] && getState(mission) !== 'done') requireCompaction(mission);
     const outcome = await setState(mission, state, options.note, { by: io.env.RELAYLEAD_SESSION || 'user' });
+    io.out.write(t('missionStateSet', { mission, state }, language(io)));
     if (outcome === 'skipped') io.out.write(t('missionStopSkipped', { mission }, language(io)));
     // The watcher stops the old lead and starts the next one at once.
     if (state === 'handover') await startTargetedPass(mission);
