@@ -184,7 +184,7 @@ test('a lead killed in the middle of a mission is resumed and the mission ends w
 
   assert.strictEqual(leadOf(mission).sessionName, `${mission}/lead/1`);
   assertEachTaskOnce(mission);
-  for (const id of ['a', 'b']) assert.strictEqual(git(dir, 'show', `relaylead/integration:${id}.txt`), `fake work on ${id}`);
+  for (const id of ['a', 'b']) assert.strictEqual(git(dir, 'show', `relaylead/${mission}/integration:${id}.txt`), `fake work on ${id}`);
 });
 
 test('a lead past a low threshold hands over and the mission ends without loss', { timeout: 3 * MISSION_MS }, async (t) => {
@@ -222,5 +222,5 @@ test('a lead past a low threshold hands over and the mission ends without loss',
     assert.ok(!rows.find((row) => row.shortId === old.shortId).pid, `${old.name} still runs\n${report()}`);
   }
   assertEachTaskOnce(mission);
-  for (const id of ['a', 'b']) assert.strictEqual(git(dir, 'show', `relaylead/integration:${id}.txt`), `fake work on ${id}`);
+  for (const id of ['a', 'b']) assert.strictEqual(git(dir, 'show', `relaylead/${mission}/integration:${id}.txt`), `fake work on ${id}`);
 });

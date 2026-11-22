@@ -1,4 +1,6 @@
-// Launch, list and stop missions; one lock per folder so two missions never share a folder.
+// Launch, list and stop missions. Several missions may run in one folder: each one has its own lock
+// (missions/<name>/start.lock, core/mission-lock.js), its own integration branch and its own worktrees
+// (core/layout.js). Only a mission of relaylead 0.1 still running keeps a folder to itself.
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -13,8 +15,9 @@ const { getAdapter } = require('../adapters');
 const { getDelivery } = require('../deliveries');
 const { sleep } = require('./timing');
 const { spawnDetached } = require('./detached');
-const { withMissionLock, takeOverStaleLock, EMPTY_LOCK_STALE_MS } = require('./mission-lock');
+const { withMissionLock, withRepoLock, takeOverStaleLock } = require('./mission-lock');
 const { watchLog } = require('./watch-log');
+const layout = require('./layout');
 
 // States the lead may declare. 'stopped' is written by the core only.
 const STATES = ['starting', 'working', 'waiting', 'handover', 'done'];
@@ -30,8 +33,6 @@ const reapMaxMs = () => Number(process.env.RELAYLEAD_REAP_MAX_MS) || 10 * 60 * 1
 // How long a stop waits for the processes of the stopped sessions to end; tests shorten it.
 const stopWaitMs = () => Number(process.env.RELAYLEAD_STOP_WAIT_MS) || 30 * 1000;
 const STOP_POLL_MS = 250;
-// Past this age, the folder lock of a launch that has not written its mission.json holds nothing.
-const LAUNCH_LOCK_MAX_MS = 15 * 60 * 1000;
 
 function now() {
   return new Date().toISOString();
@@ -41,100 +42,12 @@ function missionFile(name, file) {
   return path.join(missionDir(name), file);
 }
 
-// `realDir` must come from fs.realpathSync.native, so every spelling of a folder shares one lock.
+// The folder lock of relaylead 0.1: ~/.relaylead/locks/<hash of the folder>.lock, taken by each 0.1
+// mission for its whole life. Missions launched since take none; a 0.1 mission still running
+// releases its own at its end (releaseLock). `realDir` comes from fs.realpathSync.native.
 function lockFile(realDir) {
   const hash = crypto.createHash('sha1').update(realDir).digest('hex').slice(0, 16);
   return path.join(home(), 'locks', `${hash}.lock`);
-}
-
-// The lock follows its mission, not the lead's pid: an agent may restart a lead under another pid.
-// A lead gone for good is dealt with by `relaylead stop`.
-function isStale(lock, file, realDir) {
-  const mission = readJson(missionFile(lock.mission, 'mission.json'), null);
-  // No mission yet: its launch is running, or crashed before writing it.
-  if (!mission) return !launchHolds(lock, file);
-  // The name now belongs to a mission of another folder, or to a newer mission. A lock without
-  // createdAt was written by an older relaylead: it belongs to the mission it names.
-  if (mission.dir !== realDir) return true;
-  if (lock.createdAt && lock.createdAt !== mission.createdAt) return true;
-  // Over, and every session stopped.
-  const record = readStateRecord(lock.mission);
-  return FINISHED.includes(record.state) && !record.stopping;
-}
-
-function busyError(realDir, name) {
-  const record = name === '?' ? { state: 'starting' } : readStateRecord(name);
-  return codedError('dir-busy', { dir: realDir, mission: name, state: shownState(record) });
-}
-
-// Milliseconds since the file was last written; Infinity once it is gone.
-function ageOf(file) {
-  try {
-    return Date.now() - fs.statSync(file).mtimeMs;
-  } catch {
-    return Infinity;
-  }
-}
-
-// The folder lock: {state: 'gone'}, {state: 'stale'}, or {state: 'held', mission} where mission is
-// '?' while another launch is writing it.
-function readFolderLock(file, realDir) {
-  let lock;
-  try {
-    lock = readJson(file, null);
-  } catch {
-    lock = undefined;
-  }
-  if (lock === null) return { state: 'gone' };
-  if (!lock || typeof lock.mission !== 'string' || !/^[a-z0-9-]+$/.test(lock.mission)) {
-    // Empty or partial file: another launch has just created it and is writing it, unless it is old.
-    return ageOf(file) <= EMPTY_LOCK_STALE_MS ? { state: 'held', mission: '?' } : { state: 'stale' };
-  }
-  return isStale(lock, file, realDir) ? { state: 'stale' } : { state: 'held', mission: lock.mission };
-}
-
-// Whether the launch that wrote this folder lock may still be running, before its mission.json: its
-// process lives and the lock is less than 15 min old. A launch takes a few minutes at most; past
-// that, its pid may belong to an unrelated process (Windows soon gives it to another one, #71).
-function launchHolds(lock, file) {
-  return isAlive(lock.pid) && ageOf(file) < LAUNCH_LOCK_MAX_MS;
-}
-
-// The check that takeOverStaleLock runs under its guard: a lock that is gone is not stale, so a
-// lock created right after the check is never deleted.
-function isStaleFolderLock(realDir) {
-  return readFolderLock(lockFile(realDir), realDir).state === 'stale';
-}
-
-// Creating the file with 'wx' fails if it exists: of two launches at the same time, only one wins.
-// On Windows, a lock file being deleted cannot be created again for a moment (EPERM): it counts as
-// still there, and is reported as is if it lasts. A stale lock is deleted under the takeover guard
-// of mission-lock.js, so two launches that see the same stale lock never both delete it: the second
-// one would delete the new lock of the first one. A takeover that does not delete the lock (guard
-// held by another launch, stale guard removed, lock still being deleted) waits a little before the
-// next attempt. The last attempt only tries 'wx': a takeover there would leave the folder free but
-// report it busy.
-async function takeLock(realDir, mission) {
-  const file = lockFile(realDir);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  let refused = null;
-  for (let attempt = 1; attempt <= 5; attempt++) {
-    try {
-      const fd = fs.openSync(file, 'wx');
-      fs.writeSync(fd, JSON.stringify({ pid: process.pid, mission: mission.name, createdAt: mission.createdAt }));
-      fs.closeSync(fd);
-      return;
-    } catch (err) {
-      if (err.code !== 'EEXIST' && !(process.platform === 'win32' && err.code === 'EPERM')) throw err;
-      refused = err.code === 'EPERM' ? err : null;
-    }
-    const lock = readFolderLock(file, realDir);
-    if (lock.state === 'held') throw busyError(realDir, lock.mission);
-    if (attempt === 5) break; // the last attempt only tries 'wx'
-    if (lock.state === 'stale' && (await takeOverStaleLock(file, () => isStaleFolderLock(realDir)))) continue;
-    await sleep(20 * attempt);
-  }
-  throw refused || busyError(realDir, '?');
 }
 
 // Only the mission that holds the lock removes it: a newer mission, even of the same name, may have
@@ -172,11 +85,53 @@ function reserveName(name) {
   }
 }
 
-async function createMission({ name, dir, request, team, priority, agent, params }) {
+// Whether a mission is not over yet: neither finished nor still stopping its sessions.
+function isActive(mission) {
+  const record = readStateRecord(mission.name);
+  return !FINISHED.includes(record.state) || record.stopping;
+}
+
+// A mission launched by relaylead 0.1 that still runs in the folder `realDir`, or null. It keeps the
+// shared names of then (relaylead/integration, .relaylead/worktrees/_integration), so no new mission
+// starts beside it.
+function oldMissionIn(realDir) {
+  return allMissions().find((mission) => !layout.isPerMission(mission) && mission.dir === realDir && isActive(mission)) || null;
+}
+
+// What a task source is, as a text: two missions with the same text would do the same tasks.
+function sourceText(source) {
+  if (source.type === 'tasks-dir') return `tasks-dir "${path.posix.normalize(String(source.dir).replace(/\\/g, '/')).replace(/\/+$/, '')}"`;
+  if (source.type === 'github-issues') return `github-issues "${source.repo || '.'}" label "${source.label || 'relaylead'}"`;
+  return JSON.stringify(source);
+}
+
+// The mission of the project `realDir`, not over yet, that takes its tasks from the same source, or
+// null. Each mission has its own tasks: two missions on one source would both do every task.
+function sourceTakenBy(realDir, source) {
+  const text = sourceText(source);
+  return allMissions().find((mission) => mission.dir === realDir && sourceText(mission.config.source) === text && isActive(mission)) || null;
+}
+
+// The task folder given with `relaylead launch --tasks`, relative to the project, with / separators.
+// A folder outside the project is refused: the tasks must be committed in the repository.
+function tasksFolder(realDir, folder) {
+  const relative = path.relative(realDir, path.resolve(realDir, folder)).split(path.sep).join('/');
+  if (relative === '' || relative.startsWith('../') || relative === '..' || path.isAbsolute(relative)) {
+    throw codedError('bad-tasks-folder', { folder, dir: realDir });
+  }
+  return relative;
+}
+
+// `tasks`: the task folder of this mission (`--tasks`), in place of source.dir. `onWarning(err)` gets
+// each warning of the delivery's preparation (a coded error that does not stop the launch).
+async function createMission({ name, dir, request, team, priority, agent, tasks, params, onWarning = () => {} }) {
   // The native version also gives the real letter case (macOS, Windows): CaseProj and caseproj are one folder.
   const realDir = fs.realpathSync.native(dir);
   const missionName = slug(name || path.basename(realDir));
   const config = loadConfig({ dir: realDir, params });
+  if (tasks !== undefined) config.source.dir = tasksFolder(realDir, tasks);
+  // Its own integration branch: several missions may share the repository (core/layout.js).
+  config.delivery.branch = layout.integrationBranch(missionName);
   const adapter = getAdapter(agent || config.agent);
   const delivery = getDelivery(config.delivery.type);
   // Read before anything is created: an unknown profile or method leaves nothing behind.
@@ -184,31 +139,37 @@ async function createMission({ name, dir, request, team, priority, agent, params
   loadMethod(config.method, { dir: realDir });
   const mission = {
     name: missionName,
+    format: layout.FORMAT,
     dir: realDir,
     request: request || null,
     team: team || null,
     priority: priority || config.priority,
     agent: adapter.name,
-    createdAt: now(), // also in the folder lock: it tells this mission from a later one of the same name
+    createdAt: now(), // tells this mission from a later one of the same name
     config,
   };
 
-  await takeLock(realDir, mission);
-  let reserved = false;
+  const old = oldMissionIn(realDir);
+  if (old) {
+    throw codedError('old-mission-running', { dir: realDir, mission: old.name, state: shownState(readStateRecord(old.name)) });
+  }
+  const sharing = sourceTakenBy(realDir, config.source);
+  if (sharing) throw codedError('source-taken', { mission: sharing.name, source: sourceText(config.source) });
+  reserveName(missionName);
   try {
-    reserveName(missionName);
-    reserved = true;
-    // Before the lead starts: the integration worktree is where the lead reads the tasks.
-    delivery.prepareMission(mission);
-    writeJson(missionFile(missionName, 'mission.json'), mission);
-
+    // Under the mission lock until mission.json is written: a removal of the folder waits for it.
+    await withMissionLock(missionName, 'launch', async () => {
+      // Before the lead starts: the integration worktree is where the lead reads the tasks.
+      const warnings = await withRepoLock(realDir, 'launch', () => delivery.prepareMission(mission));
+      (warnings || []).forEach(onWarning);
+      writeJson(missionFile(missionName, 'mission.json'), mission);
+    });
     await launchLead(mission);
     return mission;
   } catch (err) {
     // A lead launched, then failed, was stopped by launchLead. Retries: it may still be finishing a
     // write in the folder.
-    if (reserved) fs.rmSync(missionDir(missionName), { recursive: true, force: true, maxRetries: 5 });
-    await releaseLock(realDir, mission);
+    fs.rmSync(missionDir(missionName), { recursive: true, force: true, maxRetries: 5 });
     throw err;
   }
 }
@@ -222,8 +183,8 @@ function nextLeadNumber(name) {
   return Math.max(0, ...numbers, Number(reserved.n) || 0) + 1;
 }
 
-// Launches a lead and makes it the current one (lead.json). The caller holds the mission lock (the
-// folder lock at the first launch). Its name is reserved in lead-launch.json before the launch, so
+// Launches a lead and makes it the current one (lead.json). The caller holds the mission lock, except
+// at the first launch, when nothing else knows the mission yet. Its name is reserved in lead-launch.json before the launch, so
 // the new lead is the current one from its first command on: claude's launch returns only once its
 // first turn has started. A launch that throws is marked failed there, and a session it could not
 // stop (err.orphan) goes to the watcher's log. A failure once launched stops the session it started.
@@ -361,8 +322,8 @@ function shownState(record) {
   return record.state;
 }
 
-// `stopping: true` keeps the folder locked while the sessions of a stopped or done mission are being
-// stopped. Only the core writes it. `by` says who asked for a handover.
+// `stopping: true` marks a stopped or done mission whose sessions are still being stopped (a 0.1
+// mission keeps its folder locked meanwhile). Only the core writes it. `by` says who asked for a handover.
 function writeState(name, { state, note, stopping, by }) {
   const record = { state, note, updatedAt: now() };
   if (by) record.by = by;
@@ -520,10 +481,17 @@ function sessionDirs(mission, sessions) {
     .filter(Boolean);
 }
 
-// Removes the task worktrees the delivery can remove, except those where a session may still run.
-// Never throws: each warning is also written to the mission's journal, which outlives the command.
-function cleanMission(mission, keepDirs) {
-  const warnings = getDelivery(mission.config.delivery.type).cleanMission(mission, { keepDirs });
+// Removes the task worktrees the delivery can remove, except those where a session may still run,
+// under the git lock. Never throws: each warning is also written to the mission's journal, which
+// outlives the command. The caller holds the mission lock.
+async function cleanMission(mission, keepDirs) {
+  let warnings;
+  try {
+    const delivery = getDelivery(mission.config.delivery.type);
+    warnings = await withRepoLock(mission.dir, 'clean', () => delivery.cleanMission(mission, { keepDirs }));
+  } catch (err) {
+    warnings = [codedError('mission-cleanup-failed', { mission: mission.name, detail: err.message })];
+  }
   for (const warning of warnings) writeJournal(mission.name, 'relaylead', warning.message);
   return warnings;
 }
@@ -610,7 +578,8 @@ async function attachLead(name) {
   return getAdapter(mission.agent).attach(session);
 }
 
-function listMissions() {
+// The mission.json of every mission, those still being created or unreadable left out.
+function allMissions() {
   let entries;
   try {
     entries = fs.readdirSync(path.join(home(), 'missions'), { withFileTypes: true });
@@ -627,14 +596,18 @@ function listMissions() {
     } catch {
       continue; // unreadable: it does not hide the other missions
     }
-    if (!mission) continue; // still being created
-    missions.push({
-      name: mission.name,
-      dir: mission.dir,
-      state: shownState(readStateRecord(mission.name)),
-      lead: readJson(missionFile(mission.name, 'lead.json'), null),
-    });
+    if (mission) missions.push(mission); // none: still being created
   }
+  return missions;
+}
+
+function listMissions() {
+  const missions = allMissions().map((mission) => ({
+    name: mission.name,
+    dir: mission.dir,
+    state: shownState(readStateRecord(mission.name)),
+    lead: readJson(missionFile(mission.name, 'lead.json'), null),
+  }));
   return missions.sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -649,11 +622,11 @@ function needsStop(mission, record) {
 
 // Stops the sessions with `stopAll`, which returns {failed, alive, error} (stopSessionsAndWait), then
 // cleans the task worktrees, except those of the sessions that may still run. Once every session is
-// stopped and its process gone, the state is written again without the stopping marker, then the
-// folder is freed. Otherwise both stay: the folder may still be in use, and the stop can be run
-// again; the first error is thrown, with the cleanup warnings in err.warnings.
+// stopped and its process gone, the state is written again without the stopping marker, then a 0.1
+// mission frees its folder. Otherwise both stay: the folder may still be in use, and the stop can be
+// run again; the first error is thrown, with the cleanup warnings in err.warnings.
 // With a marker more than an hour old, an adapter that stops by pid is not called: those pids are no
-// longer safe to stop. The marker is cleared and the folder freed all the same.
+// longer safe to stop. The marker is cleared (and a 0.1 folder freed) all the same.
 // Returns {outcome: 'stopped' or 'skipped', warnings}.
 async function stopAndFree(mission, record, stopAll) {
   const pidsTooOld = record.stopping && Date.now() - Date.parse(record.updatedAt) > PIDS_TRUSTED_MS;
@@ -669,7 +642,7 @@ async function stopAndFree(mission, record, stopAll) {
     ({ failed, alive, error } = await stopAll());
     mayRun = [...failed, ...alive];
   }
-  const warnings = cleanMission(mission, sessionDirs(mission, mayRun));
+  const warnings = await cleanMission(mission, sessionDirs(mission, mayRun));
   let firstError = error;
   if (!firstError && alive.length > 0) {
     firstError = codedError('session-still-alive', { mission: mission.name, shortId: alive[0].shortId });
@@ -694,7 +667,7 @@ async function stopMission(name, { note } = {}) {
   const mission = readMission(name);
   const current = readStateRecord(name);
   if (!needsStop(mission, current)) {
-    return withMissionLock(name, 'stop', () => ({ outcome: 'nothing', warnings: cleanMission(mission, []) }));
+    return withMissionLock(name, 'stop', async () => ({ outcome: 'nothing', warnings: await cleanMission(mission, []) }));
   }
   // A replay keeps the state as it is, with its date: that date tells how old the pids are.
   const replay = FINISHED.includes(current.state);
@@ -702,7 +675,7 @@ async function stopMission(name, { note } = {}) {
   // Written first, so a `state set` from a session being stopped is refused instead of erasing the stop.
   if (!replay) writeState(name, { state: 'stopped', note, stopping: true });
   // The sessions are stopped under the mission lock, behind a start or a delivery that is running.
-  // When that wait gives up, the state stays stopped and the folder stays locked: stop can be run again.
+  // When that wait gives up, the state stays stopped and stopping: stop can be run again.
   // A stuck holder (start-stuck) is not turned into stop-pending: running stop again would fail until
   // that process is ended, and its error says so.
   try {
@@ -726,29 +699,6 @@ async function stopSessions(mission, justStopped, note) {
   return result;
 }
 
-// Whether a launch of this mission is running: a folder lock names it and still holds (launchHolds).
-// The launch has reserved the mission folder but not written mission.json yet.
-function launchRunning(name) {
-  const locks = path.join(home(), 'locks');
-  let files;
-  try {
-    files = fs.readdirSync(locks);
-  } catch (err) {
-    if (err.code === 'ENOENT') return false;
-    throw err;
-  }
-  return files.some((file) => {
-    const lockPath = path.join(locks, file);
-    let lock;
-    try {
-      lock = readJson(lockPath, null);
-    } catch {
-      return false; // being written: not readable yet
-    }
-    return Boolean(lock && lock.mission === name && launchHolds(lock, lockPath));
-  });
-}
-
 // `relaylead remove`: frees the name and the folder of a finished mission. Its sessions are stopped
 // again by an adapter that stops by id, then forgotten by the agent, its task worktrees and branches are removed by the delivery,
 // then its folder under missions/ is deleted. Returns the deleted branches ("<name> <sha>"), each
@@ -758,15 +708,11 @@ async function removeMission(name, { force = false, onBranchDeleted } = {}) {
   if (!/^[a-z0-9-]+$/.test(name)) throw codedError('usage', { usage: 'relaylead remove <mission> [--force]' });
   const folder = missionDir(name);
   if (!fs.existsSync(folder)) throw codedError('mission-unknown', { mission: name });
-  // No mission.json: a removal that was interrupted, or a folder written again by a late helper. Unless
-  // a launch is creating it right now.
-  if (!fs.existsSync(path.join(folder, 'mission.json'))) {
-    if (launchRunning(name)) throw codedError('dir-busy', { dir: folder, mission: name, state: 'starting' });
-    fs.rmSync(folder, { recursive: true, force: true, maxRetries: 5 });
-    return [];
-  }
-  // Under the mission lock: an end of mission (`state set done`) still running is waited for.
+  // Under the mission lock: a launch that has not written mission.json yet, or an end of mission
+  // (`state set done`) still running, is waited for.
   const deleted = await withMissionLock(name, 'remove', async () => {
+    // No mission.json once the launch is over: a removal that was interrupted, or a launch that crashed.
+    if (!fs.existsSync(path.join(folder, 'mission.json'))) return [];
     const mission = readMission(name);
     const record = readStateRecord(name);
     if (!FINISHED.includes(record.state) || record.stopping) {
@@ -784,8 +730,9 @@ async function removeMission(name, { force = false, onBranchDeleted } = {}) {
       for (const session of listSessions(name)) await adapter.forget(session).catch(() => {});
     }
     // A project folder deleted since has no worktree or branch left to remove.
+    const delivery = getDelivery(mission.config.delivery.type);
     const branches = fs.existsSync(mission.dir)
-      ? getDelivery(mission.config.delivery.type).removeMission(mission, { force, onBranchDeleted })
+      ? await withRepoLock(mission.dir, 'remove', () => delivery.removeMission(mission, { force, onBranchDeleted }))
       : [];
     await releaseLock(mission.dir, mission);
     return branches;
@@ -814,5 +761,4 @@ module.exports = {
   attachLead,
   lockFile,
   releaseLock,
-  isStaleFolderLock,
 };

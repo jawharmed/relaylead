@@ -81,7 +81,7 @@ async function leadWaitsIdle(mission) {
 // targeted pass of the watcher: RELAYLEAD_WATCHER is lifted for the test, and the machine config keeps
 // the loop off), and waits for the mission to be done. Its sessions are stopped after the test.
 // Returns the mission name and a report() for failure messages.
-async function runMission(t, dir, name) {
+async function runMission(t, dir, name, launchArgs = []) {
   let mission = null;
   const watcherVar = process.env.RELAYLEAD_WATCHER;
   delete process.env.RELAYLEAD_WATCHER;
@@ -100,7 +100,7 @@ async function runMission(t, dir, name) {
   const report = () => `--- last poll\n${JSON.stringify(lastPoll)}\n` + missionReport(mission);
 
   const nameArgs = name ? ['--name', name] : [];
-  const launched = await relaylead(['launch', '--agent', 'fake', ...nameArgs, '--request', 'Do the tasks'], dir);
+  const launched = await relaylead(['launch', '--agent', 'fake', ...nameArgs, ...launchArgs, '--request', 'Do the tasks'], dir);
   assert.strictEqual(launched.code, 0, launched.err);
   mission = launched.out.trim();
 
@@ -135,7 +135,7 @@ test('fake mission delivers two tasks with one answered question', { timeout: 3 
   assert.deepStrictEqual([settled.state, settled.answer.choice], ['answered', 'yes']);
 
   // Both task branches are merged into the integration branch, and the source says done there.
-  const integration = 'relaylead/integration';
+  const integration = `relaylead/${mission}/integration`;
   const merges = git(dir, 'log', '--merges', '--format=%s', integration);
   for (const id of ['a', 'b']) {
     assert.match(merges, new RegExp(`Merge branch 'relaylead/${mission}/${id}'`), report());
@@ -164,7 +164,7 @@ test('fake mission delivers two tasks with one answered question', { timeout: 3 
   await waitFor(() => readJson(endedFile, {}).pid === reaper.pid, 15000, 'the helper to end', report);
 
   // Only the user's checkout and the integration worktree are left.
-  const integrationDir = path.join(dir, '.relaylead', 'worktrees', '_integration');
+  const integrationDir = path.join(dir, '.relaylead', 'worktrees', mission, '_integration');
   assert.deepStrictEqual(worktrees(dir).sort(), [dir, integrationDir].sort());
 
   assert.deepStrictEqual(checkoutState(dir), before);
@@ -195,7 +195,61 @@ test('a second mission runs in the same folder after remove', { timeout: 3 * MIS
   // The same name again: the folder's.
   const second = await runMission(t, dir, null);
   assert.strictEqual(second.mission, mission);
-  assert.strictEqual(git(dir, 'show', 'relaylead/integration:c.txt'), 'fake work on c', second.report());
+  assert.strictEqual(git(dir, 'show', `relaylead/${mission}/integration:c.txt`), 'fake work on c', second.report());
   const listed = (await relaylead(['list'], dir)).out.trim().split('\n');
   assert.strictEqual(listed.length, 1, listed.join('\n'));
+});
+
+// Since 0.2, each mission has its own lock, integration branch and worktrees: two of them run side by
+// side in one repository, each on tasks of its own, and their merges take turns under the git lock.
+test('two missions of one repository, each on its own task folder, deliver only their tasks', { timeout: 3 * MISSION_MS }, async (t) => {
+  process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
+  const task = (title) => `---\ntitle: ${title}\n---\n\nDo it.\n`;
+  const dir = gitRepo({
+    'README.md': 'A test project.\n',
+    'tasks/backend/api.md': task('Write the API'),
+    'tasks/backend/db.md': task('Write the database layer'),
+    'tasks/frontend/page.md': task('Write the page'),
+  });
+  const before = checkoutState(dir);
+
+  const runs = await Promise.all([
+    runMission(t, dir, 'backend', ['--tasks', 'tasks/backend']),
+    runMission(t, dir, 'frontend', ['--tasks', 'tasks/frontend']),
+  ]);
+
+  const own = { backend: ['api', 'db'], frontend: ['page'] };
+  for (const { mission, report } of runs) {
+    const integration = `relaylead/${mission}/integration`;
+    const merged = git(dir, 'log', '--merges', '--format=%s', integration)
+      .split('\n')
+      .map((subject) => (/Merge branch 'relaylead\/[a-z-]+\/([a-z]+)'/.exec(subject) || [])[1])
+      .filter(Boolean)
+      .sort();
+    assert.deepStrictEqual(merged, own[mission], report());
+    for (const id of own[mission]) {
+      assert.strictEqual(git(dir, 'show', `${integration}:${id}.txt`), `fake work on ${id}`);
+      assert.match(git(dir, 'show', `${integration}:tasks/${mission}/${id}.md`), /^state: done\r?$/m);
+    }
+  }
+  assert.deepStrictEqual(checkoutState(dir), before);
+});
+
+test('a mission is refused on the task folder of a mission of the project that is not over', { timeout: MISSION_MS }, async (t) => {
+  process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
+  writeJson(path.join(home(), 'config.json'), { watcher: { autoStart: false } });
+  const dir = gitRepo({ 'README.md': 'A test project.\n', 'tasks/backend/api.md': '---\ntitle: API\n---\n' });
+  t.after(async () => {
+    for (const session of listSessions('backend')) await fake.stop(session);
+  });
+  const first = await relaylead(['launch', '--agent', 'fake', '--name', 'backend', '--tasks', 'tasks/backend'], dir);
+  assert.strictEqual(first.code, 0, first.err);
+
+  // The same folder, spelled another way.
+  const refused = await relaylead(['launch', '--agent', 'fake', '--name', 'again', '--tasks', 'tasks/backend/'], dir);
+
+  assert.strictEqual(refused.code, 1);
+  assert.match(refused.err, /mission "backend" of this project already takes its tasks from tasks-dir "tasks\/backend"/);
+  assert.match(refused.err, /--tasks <folder>/);
+  assert.strictEqual(fs.existsSync(missionDir('again')), false);
 });

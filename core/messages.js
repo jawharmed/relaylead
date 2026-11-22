@@ -59,8 +59,17 @@ const messages = {
     deliveryCommit: 'chore(relaylead): deliver {id}',
     // Errors: the key is the error code (see codedError).
     usage: 'usage: {usage}',
-    'dir-busy':
-      'the folder {dir} is busy with mission "{mission}" ({state}); if its lead is gone, stop it first with: relaylead stop {mission}',
+    'repo-busy':
+      'the git repository of {dir} has been busy for too long with "relaylead {command}" (process {pid}, since {since}); try again once it is over',
+    'worktrees-dir-taken':
+      'the folder {dir}, where mission "{mission}" keeps its worktrees, is itself a git worktree, left by an earlier mission; save what it holds, remove it with: git worktree remove "{dir}", then launch again, or launch this mission under another name with --name',
+    'old-integration-unmerged':
+      'the branch {branch} of relaylead 0.1 has {count} commit(s) that your current branch does not have; this mission starts from your current branch, without that work, and may do its tasks again. To keep it, stop this mission, merge {branch} into your branch (or delete {branch} if that work is not wanted), then launch again',
+    'source-taken':
+      'mission "{mission}" of this project already takes its tasks from {source} and is not over: both would do the same tasks. Give this mission tasks of its own: another task folder with --tasks <folder> (for instance tasks/backend and tasks/frontend), or another source in .relaylead.json (another label for GitHub issues); or launch it once "{mission}" is over',
+    'bad-tasks-folder': 'the task folder "{folder}" is not inside the project {dir}; give a folder of the project, such as --tasks tasks/backend',
+    'old-mission-running':
+      'mission "{mission}" was launched by relaylead 0.1 and still runs in {dir} ({state}); a new mission can start in this folder once it is over; if its lead is gone, stop it with: relaylead stop {mission}',
     'mission-exists':
       'a mission named "{mission}" already exists; choose another name with --name, or remove the finished one with: relaylead remove {mission}',
     'mission-running': 'mission "{mission}" is {state}; stop it first with: relaylead stop {mission}',
@@ -104,7 +113,7 @@ const messages = {
       'mission "{mission}" is stopped, but its sessions are not stopped yet: "relaylead {holder}" still holds the mission; run relaylead stop {mission} again',
     'task-not-deliverable': 'task "{id}" is {state}; only a done task can be delivered',
     'protected-branch':
-      'the integration branch "{branch}" is protected; set another delivery.branch in .relaylead.json',
+      'the integration branch "{branch}" is protected (guard.protectedBranches); launch the mission under another name with --name',
     'not-a-git-repo':
       '{dir} is not the root of a git repository; run the mission at the root, or set "delivery": {"type": "files"} in .relaylead.json',
     'merge-conflict':
@@ -142,10 +151,8 @@ const messages = {
     'task-branch-missing': 'cannot deliver task "{id}": its branch {branch} is missing',
     'worktree-mismatch':
       'the folder {dir} is on branch "{actual}", not "{branch}"',
-    'branch-clash':
-      'the integration branch "{branch}" clashes with the task branches relaylead/{mission}/<id>; choose another mission name or delivery.branch',
     'integration-mismatch':
-      'the integration worktree {dir} is on branch "{actual}", not "{branch}"; set delivery.branch back to "{actual}", or remove the worktree with: git worktree remove "{dir}"',
+      'the integration worktree {dir} is on branch "{actual}", not "{branch}"; remove the worktree with: git worktree remove "{dir}", then launch again',
     'integration-dirty':
       'the integration worktree {dir} has changes nobody committed ({files}); commit them there, or remove the ones that are not under {tasksDir}, then launch again; files under {tasksDir} hold the state of delivered tasks: never remove them',
     'tasks-not-committed':
@@ -182,7 +189,7 @@ const messages = {
     decisionNoted: 'decision noted\n',
     'bad-question': 'cannot ask the question: {detail}',
     'bad-task-id':
-      'the task file {file} has a name unusable in a git branch; use letters, digits, ".", "_" and "-", not starting with "." or "-", not ending with "." (and not _integration)',
+      'the task file {file} has a name unusable in a git branch; use letters, digits, ".", "_" and "-", not starting with "." or "-", not ending with "." (and not _integration or integration)',
     'claude-not-found': 'claude was not found; install Claude Code, or set RELAYLEAD_CLAUDE to its executable',
     'claude-cmd-unsupported':
       '{file} cannot be run without a shell; set RELAYLEAD_CLAUDE to the real claude.exe or to its JavaScript entry (.js)',
@@ -305,8 +312,17 @@ const messages = {
       'relaylead launch : le veilleur n\'a pas pu être lancé ({detail}) ; lancez-le avec : relaylead watcher start\n',
     deliveryCommit: 'chore(relaylead): {id} livrée',
     usage: 'usage : {usage}',
-    'dir-busy':
-      'le dossier {dir} est occupé par la mission « {mission} » ({state}) ; si son lead a disparu, arrêtez-la d\'abord avec : relaylead stop {mission}',
+    'repo-busy':
+      'le dépôt git de {dir} est occupé depuis trop longtemps par « relaylead {command} » (processus {pid}, depuis {since}) ; réessayez une fois qu\'il a fini',
+    'worktrees-dir-taken':
+      'le dossier {dir}, où la mission « {mission} » range ses worktrees, est lui-même un worktree git laissé par une mission précédente ; sauvegardez ce qu\'il contient, supprimez-le avec : git worktree remove "{dir}", puis relancez, ou lancez cette mission sous un autre nom avec --name',
+    'old-integration-unmerged':
+      'la branche {branch} de relaylead 0.1 a {count} commit(s) absent(s) de votre branche courante ; cette mission part de votre branche courante, sans ce travail, et risque de refaire ses tâches. Pour le garder, arrêtez cette mission, fusionnez {branch} dans votre branche (ou supprimez {branch} si ce travail n\'est pas voulu), puis relancez',
+    'source-taken':
+      'la mission « {mission} » de ce projet prend déjà ses tâches dans {source} et n\'est pas finie : les deux feraient les mêmes tâches. Donnez à cette mission ses propres tâches : un autre dossier de tâches avec --tasks <dossier> (par exemple tasks/backend et tasks/frontend), ou une autre source dans .relaylead.json (un autre libellé pour les issues GitHub) ; ou lancez-la une fois « {mission} » finie',
+    'bad-tasks-folder': 'le dossier de tâches « {folder} » n\'est pas dans le projet {dir} ; indiquez un dossier du projet, par exemple --tasks tasks/backend',
+    'old-mission-running':
+      'la mission « {mission} » a été lancée par relaylead 0.1 et tourne encore dans {dir} ({state}) ; une nouvelle mission pourra démarrer dans ce dossier une fois celle-ci finie ; si son lead a disparu, arrêtez-la avec : relaylead stop {mission}',
     'mission-exists':
       'une mission nommée « {mission} » existe déjà ; choisissez un autre nom avec --name, ou supprimez celle qui est finie avec : relaylead remove {mission}',
     'mission-running': 'la mission « {mission} » est {state} ; arrêtez-la d\'abord avec : relaylead stop {mission}',
@@ -351,7 +367,7 @@ const messages = {
       'la mission « {mission} » est arrêtée, mais ses sessions ne le sont pas encore : « relaylead {holder} » tient encore la mission ; relancez relaylead stop {mission}',
     'task-not-deliverable': 'la tâche « {id} » est {state} ; seule une tâche done peut être livrée',
     'protected-branch':
-      'la branche d\'intégration « {branch} » est protégée ; indiquez une autre delivery.branch dans .relaylead.json',
+      'la branche d\'intégration « {branch} » est protégée (guard.protectedBranches) ; lancez la mission sous un autre nom avec --name',
     'not-a-git-repo':
       '{dir} n\'est pas la racine d\'un dépôt git ; lancez la mission à la racine, ou mettez "delivery": {"type": "files"} dans .relaylead.json',
     'merge-conflict':
@@ -389,10 +405,8 @@ const messages = {
     'task-branch-missing': 'impossible de livrer la tâche « {id} » : sa branche {branch} n\'existe plus',
     'worktree-mismatch':
       'le dossier {dir} est sur la branche « {actual} », pas « {branch} »',
-    'branch-clash':
-      'la branche d\'intégration « {branch} » entre en conflit avec les branches des tâches relaylead/{mission}/<id> ; choisissez un autre nom de mission ou une autre delivery.branch',
     'integration-mismatch':
-      'le worktree d\'intégration {dir} est sur la branche « {actual} », pas « {branch} » ; remettez delivery.branch à « {actual} », ou supprimez le worktree avec : git worktree remove "{dir}"',
+      'le worktree d\'intégration {dir} est sur la branche « {actual} », pas « {branch} » ; supprimez le worktree avec : git worktree remove "{dir}", puis relancez',
     'integration-dirty':
       'le worktree d\'intégration {dir} a des changements que personne n\'a commités ({files}) ; commitez-les dans ce dossier, ou retirez ceux qui ne sont pas sous {tasksDir}, puis relancez ; les fichiers sous {tasksDir} portent l\'état des tâches livrées : ne les retirez jamais',
     'tasks-not-committed':
@@ -429,7 +443,7 @@ const messages = {
     decisionNoted: 'décision notée\n',
     'bad-question': 'impossible de poser la question : {detail}',
     'bad-task-id':
-      'le fichier de tâche {file} a un nom inutilisable dans une branche git ; utilisez lettres, chiffres, « . », « _ » et « - », sans commencer par « . » ni « - », sans finir par « . » (et pas _integration)',
+      'le fichier de tâche {file} a un nom inutilisable dans une branche git ; utilisez lettres, chiffres, « . », « _ » et « - », sans commencer par « . » ni « - », sans finir par « . » (et ni _integration ni integration)',
     'claude-not-found': 'claude est introuvable ; installez Claude Code, ou indiquez son exécutable dans RELAYLEAD_CLAUDE',
     'claude-cmd-unsupported':
       '{file} ne se lance pas sans shell ; indiquez dans RELAYLEAD_CLAUDE le vrai claude.exe ou son point d\'entrée JavaScript (.js)',

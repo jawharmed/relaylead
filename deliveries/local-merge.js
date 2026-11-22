@@ -7,6 +7,7 @@ const { t, codedError } = require('../core/messages');
 const { sleepSync, retrySync } = require('../core/timing');
 const { runFileSync, gitTimeoutMs } = require('../core/run-file');
 const tasksDirSource = require('../sources/tasks-dir');
+const layout = require('../core/layout');
 
 // Git refuses to start when another git command holds a lock file (index.lock, a ref's .lock),
 // for instance a crew member committing, or git's background maintenance. Its message names the
@@ -95,16 +96,13 @@ function currentBranch(cwd) {
   return git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']);
 }
 
-function worktreesDir(mission) {
-  return path.join(mission.dir, '.relaylead', 'worktrees');
-}
-
+// The folders of core/layout.js: per mission since 0.2, shared by the missions of 0.1.
 function integrationDir(mission) {
-  return path.join(worktreesDir(mission), '_integration');
+  return layout.integrationDir(mission);
 }
 
 function taskDir(mission, task) {
-  return path.join(worktreesDir(mission), task.id);
+  return layout.taskDir(mission, task.id);
 }
 
 function taskBranch(mission, task) {
@@ -136,23 +134,14 @@ function excludeRelaylead(dir) {
   fs.appendFileSync(file, `${separator}.relaylead/\n`);
 }
 
-// Git cannot have both a branch a/b and a branch a/b/c: the integration branch must not be, or
-// contain, the folder of the task branches relaylead/<mission>/<id>.
-function branchesClash(branch, missionName) {
-  const tasksFolder = `relaylead/${missionName}`;
-  return branch === tasksFolder || branch.startsWith(tasksFolder + '/') || tasksFolder.startsWith(branch + '/');
-}
-
 // Checks everything before changing anything. Then creates the integration branch from the user's
 // current branch, with its worktree; or, when a former mission made them, brings the user's commits
 // made since into the integration branch, so this mission sees its new tasks.
+// Returns the warnings for the user (oldIntegrationWarnings).
 function prepareMission(mission) {
   const { branch } = mission.config.delivery;
   if (mission.config.guard.protectedBranches.includes(branch)) {
     throw codedError('protected-branch', { branch });
-  }
-  if (branchesClash(branch, mission.name)) {
-    throw codedError('branch-clash', { branch, mission: mission.name });
   }
   if (!fs.existsSync(path.join(mission.dir, '.git'))) {
     throw codedError('not-a-git-repo', { dir: mission.dir });
@@ -162,6 +151,12 @@ function prepareMission(mission) {
   const tasksInRepo = mission.config.source.type === 'tasks-dir';
   if (tasksInRepo && git(mission.dir, ['status', '--porcelain', '--', sourceDir(mission)]) !== '') {
     throw codedError('tasks-not-committed', { dir: sourceDir(mission), branch });
+  }
+  // A worktree of 0.1 left in .relaylead/worktrees/<id>, where <id> is this mission's name: this
+  // mission's worktrees would go inside it, and removing it would remove them too.
+  const ownFolder = layout.worktreesDir(mission);
+  if (layout.isPerMission(mission) && fs.existsSync(path.join(ownFolder, '.git'))) {
+    throw codedError('worktrees-dir-taken', { dir: ownFolder, mission: mission.name });
   }
   const integration = integrationDir(mission);
   if (fs.existsSync(integration)) {
@@ -187,6 +182,19 @@ function prepareMission(mission) {
       throw codedError('tasks-not-committed', { dir: sourceDir(mission), branch });
     }
   }
+  return oldIntegrationWarnings(mission);
+}
+
+// The integration branch of relaylead 0.1, shared by the missions of then. Since 0.2, a mission starts
+// from the user's branch: work delivered on relaylead/integration and not merged into it is not seen,
+// and its tasks would be done again. Not a refusal: the user may have left that work on purpose.
+const OLD_INTEGRATION_BRANCH = 'relaylead/integration';
+
+function oldIntegrationWarnings(mission) {
+  if (!layout.isPerMission(mission) || !branchExists(mission.dir, OLD_INTEGRATION_BRANCH)) return [];
+  const count = git(mission.dir, ['rev-list', '--count', `HEAD..refs/heads/${OLD_INTEGRATION_BRANCH}`]);
+  if (count === '0') return [];
+  return [codedError('old-integration-unmerged', { branch: OLD_INTEGRATION_BRANCH, count })];
 }
 
 // A state line that a delivery left uncommitted in the integration worktree, on purpose (a hook
@@ -282,8 +290,8 @@ function mergeInProgress(cwd) {
 }
 
 // Runs git in the integration worktree. A command stopped by its timeout was killed: it may have
-// left its index.lock, and a merge going. Only one relaylead at a time runs git there (a delivery
-// holds the mission's start.lock, a launch the folder's lock), and the killed git has ended, so
+// left its index.lock, and a merge going. Only one relaylead at a time runs git there (a launch or a
+// delivery holds the mission's start.lock), and the killed git has ended, so
 // that index.lock is stale: it is removed and the merge cancelled before the error is thrown.
 function gitInIntegration(mission, args) {
   try {
@@ -471,7 +479,8 @@ function commitStateLine(mission, id, hooks) {
 
 // The task worktrees of the mission, as git lists them: those on a branch relaylead/<mission>/….
 // `locked` is true for a worktree locked with `git worktree lock`. The user's own checkout, the
-// integration worktree and the worktrees of other missions are left out.
+// integration worktree and the worktrees of other missions are left out; so is any worktree on the
+// integration branch, wherever it is: since 0.2, that branch is relaylead/<mission>/integration.
 function missionWorktrees(mission) {
   const prefix = `refs/heads/relaylead/${mission.name}/`;
   const checkout = realPath(mission.dir);
@@ -486,7 +495,10 @@ function missionWorktrees(mission) {
     if (current && line.startsWith('branch ' + prefix)) current.branch = line.slice('branch refs/heads/'.length);
     if (current && (line === 'locked' || line.startsWith('locked '))) current.locked = true;
   }
-  return worktrees.filter((worktree) => worktree.branch && realPath(worktree.dir) !== checkout);
+  const integrationBranch = mission.config.delivery.branch;
+  return worktrees.filter(
+    (worktree) => worktree.branch && worktree.branch !== integrationBranch && realPath(worktree.dir) !== checkout,
+  );
 }
 
 // Git and the session registry may spell one folder differently: slashes, letter case, /private on macOS.

@@ -15,7 +15,8 @@ const { getAdapter } = require('../adapters');
 const { getDelivery } = require('../deliveries');
 const tasksDirSource = require('../sources/tasks-dir');
 const githubIssuesSource = require('../sources/github-issues');
-const { withMissionLock } = require('./mission-lock');
+const { withMissionLock, withRepoLock } = require('./mission-lock');
+const layout = require('./layout');
 
 // The option the lead adds to the question of a task that asks first (catalog/profiles/lead.md).
 const SKIP_CHOICE = 'Skip this task';
@@ -53,7 +54,7 @@ function resultOfAttempt(record, result) {
 
 // Once delivery has created the integration worktree, the source is read there.
 function sourceRoot(mission) {
-  const integration = path.join(mission.dir, '.relaylead', 'worktrees', '_integration');
+  const integration = layout.integrationDir(mission);
   return fs.existsSync(integration) ? integration : mission.dir;
 }
 
@@ -75,10 +76,12 @@ function taskState(sourceTask, record, result) {
 }
 
 // The id goes into a git branch name (relaylead/<mission>/<id>) and a worktree folder name;
-// _integration is the integration worktree's folder.
-function checkTaskId(task) {
+// _integration is the integration worktree's folder, and since 0.2 relaylead/<mission>/integration
+// is the integration branch.
+function checkTaskId(mission, task) {
   const usable = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/.test(task.id) && !task.id.includes('..') && !task.id.endsWith('.') && !task.id.endsWith('.lock');
-  if (!usable || task.id === '_integration') throw codedError('bad-task-id', { file: task.file });
+  const reserved = task.id === '_integration' || (layout.isPerMission(mission) && task.id === 'integration');
+  if (!usable || reserved) throw codedError('bad-task-id', { file: task.file });
 }
 
 // Each task with its state, and `ready`: todo with every dependency delivered. A task only done
@@ -97,7 +100,7 @@ function listTasks(name) {
       summary: (result || record || {}).summary || null,
     };
   });
-  tasks.forEach(checkTaskId);
+  tasks.forEach((task) => checkTaskId(mission, task));
   tasksDirSource.checkDependencies(tasks);
   const byId = new Map(tasks.map((task) => [task.id, task]));
   for (const task of tasks) {
@@ -206,7 +209,8 @@ async function launchCrew(mission, id, profile, { attempt = 1, previousSummary =
   const question = answeredQuestion(name, task);
   const crewProfile = loadProfile(profile, { dir: mission.dir });
 
-  const { cwd, branch } = getDelivery(mission.config.delivery.type).prepareTask(mission, task);
+  const delivery = getDelivery(mission.config.delivery.type);
+  const { cwd, branch } = await withRepoLock(mission.dir, `task start ${id}`, () => delivery.prepareTask(mission, task));
   const number = listSessions(name).filter((s) => s.name.startsWith(`${name}/${profile}/`)).length + 1;
   const adapter = getAdapter(mission.agent);
   const sessionName = `${name}/${profile}/${number}`;
@@ -316,14 +320,16 @@ function archiveAttempt(name, id, attempt, record) {
 async function deliverTask(name, id, { runHooks, env } = {}) {
   const mission = readMission(name); // before the lock, which lives in the mission folder
   const delivery = getDelivery(mission.config.delivery.type);
-  return withMissionLock(name, `task deliver ${id}`, () => {
+  // The merge and the removals change the repository: under the git lock, inside the mission lock.
+  const underRepoLock = (action) => withRepoLock(mission.dir, `task deliver ${id}`, action);
+  return withMissionLock(name, `task deliver ${id}`, async () => {
     checkCurrentLead(name, env);
     const task = findTask(name, id);
     if (task.state === 'delivered') {
-      return { outcome: 'already-delivered', warnings: delivery.finish(mission, task, { runHooks }) };
+      return { outcome: 'already-delivered', warnings: await underRepoLock(() => delivery.finish(mission, task, { runHooks })) };
     }
     if (task.state !== 'done') throw codedError('task-not-deliverable', { id, state: task.state });
-    return { outcome: 'delivered', warnings: delivery.deliver(mission, task, { runHooks }) };
+    return { outcome: 'delivered', warnings: await underRepoLock(() => delivery.deliver(mission, task, { runHooks })) };
   });
 }
 

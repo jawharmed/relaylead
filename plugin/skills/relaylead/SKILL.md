@@ -23,7 +23,7 @@ You are the console of Relaylead missions: the user talks to you, a lead and its
 - Other mission already active on this machine (state not `done`/`stopped` in `relaylead list`)? Before launching:
   - Priority: list the running missions with their priority (`"priority"` in `~/.relaylead/missions/<m>/mission.json`, shown as high, normal, low) and ask the priority of the new one (normal by default). Changing the priority of a running mission is not available yet: say so if the user asks. Skip the question if the user gave a priority or is not there to answer.
   - Overlap: the folder of a running mission is the 4th column of `relaylead list`; compare what the new tasks touch with its `tasks/` files and `relaylead task list --mission <m>`. If they share files or folders, warn: "X and Y both touch `src/api/`: chain them or run in parallel?". To chain: do not launch the second one until the `mission ... done` event of the first, then launch it. In parallel: launch now.
-- Launch: `relaylead launch --name <slug> --request "<one line>" [--priority p]`. Then start the wait (section 3) if it is not running.
+- Launch: `relaylead launch --name <slug> --request "<one line>" [--priority p] [--tasks <folder>]`. A second mission in the same project needs tasks of its own: its own task folder with `--tasks` (for instance `tasks/backend` and `tasks/frontend`); launch refuses a task folder that a mission of the project not over already uses. Then start the wait (section 3) if it is not running.
 
 ## 3. Waiting without blocking
 

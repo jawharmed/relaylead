@@ -7,6 +7,7 @@ const { writeJson } = require('../core/store');
 const { loadConfig } = require('../core/config');
 const { listSessions, isAlive } = require('../core/sessions');
 const { listMissions } = require('../core/missions');
+const { FORMAT, integrationBranch } = require('../core/layout');
 const fake = require('../adapters/fake');
 const { tmpDir } = require('./helpers');
 
@@ -49,13 +50,17 @@ function freshHome(t) {
 }
 
 // mission.json as createMission writes it, but no lead is started: the test plays the lead.
-function writeMission(name, dir) {
+// `format: 1` writes it as relaylead 0.1 did: no format, the shared integration branch of then.
+function writeMission(name, dir, { format = FORMAT } = {}) {
+  const config = loadConfig({ dir });
+  config.delivery.branch = format === FORMAT ? integrationBranch(name) : 'relaylead/integration';
   writeJson(path.join(missionDir(name), 'mission.json'), {
     name,
+    ...(format === FORMAT ? { format } : {}),
     dir,
     agent: 'fake',
     createdAt: new Date().toISOString(),
-    config: loadConfig({ dir }),
+    config,
   });
 }
 

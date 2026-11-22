@@ -18,6 +18,7 @@ const { writeMission, missionReport } = require('../fixtures/missions');
 const { git, gitRepo, recordingGit, lingeringGit } = require('../fixtures/git');
 const { needsPipes } = require('../core/run-file');
 
+const INTEGRATION = 'relaylead/demo/integration';
 const TASK_A = '---\ntitle: First task\n---\n\nWrite a.\n';
 const TASK_B = '---\ntitle: Second task\ndepends: [a]\n---\n\nWrite b.\n';
 
@@ -77,12 +78,13 @@ function finishedTask(mission, id, file = `${id}.txt`, text = id) {
   finishTask('demo', id, { state: 'done' });
 }
 
+// The worktrees of mission demo (core/layout.js).
 function integrationDir(dir) {
-  return path.join(dir, '.relaylead', 'worktrees', '_integration');
+  return path.join(dir, '.relaylead', 'worktrees', 'demo', '_integration');
 }
 
 function taskWorktree(dir, id) {
-  return path.join(dir, '.relaylead', 'worktrees', id);
+  return path.join(dir, '.relaylead', 'worktrees', 'demo', id);
 }
 
 // The integration worktree is on mission.config.delivery.branch.
@@ -99,8 +101,8 @@ test('prepareMission creates the integration worktree without touching the user 
   assert.strictEqual(launched.code, 0, launched.err);
 
   const integration = integrationDir(dir);
-  assert.strictEqual(git(integration, 'rev-parse', '--abbrev-ref', 'HEAD'), 'relaylead/integration');
-  assert.strictEqual(git(dir, 'rev-parse', 'relaylead/integration'), before.head);
+  assert.strictEqual(git(integration, 'rev-parse', '--abbrev-ref', 'HEAD'), 'relaylead/demo/integration');
+  assert.strictEqual(git(dir, 'rev-parse', 'relaylead/demo/integration'), before.head);
   assert.deepStrictEqual(checkoutState(dir), before);
 
   // A later mission on the same folder reuses the worktree and excludes .relaylead/ once.
@@ -128,13 +130,13 @@ test('deliver merges the task branch and marks the source done', async (t) => {
     ],
   );
   for (const id of ['a', 'b']) {
-    assert.strictEqual(git(dir, 'show', `relaylead/integration:${id}.txt`), `fake work on ${id}`);
-    assert.match(git(dir, 'show', `relaylead/integration:tasks/${id}.md`), /^state: done$/m);
+    assert.strictEqual(git(dir, 'show', `relaylead/demo/integration:${id}.txt`), `fake work on ${id}`);
+    assert.match(git(dir, 'show', `relaylead/demo/integration:tasks/${id}.md`), /^state: done$/m);
   }
-  const subjects = git(dir, 'log', '--format=%s', 'relaylead/integration').split('\n');
+  const subjects = git(dir, 'log', '--format=%s', 'relaylead/demo/integration').split('\n');
   assert.ok(subjects.includes('chore(relaylead): deliver a'), subjects.join('\n'));
   assert.ok(subjects.includes('chore(relaylead): deliver b'), subjects.join('\n'));
-  assert.strictEqual(git(dir, 'log', '--merges', '--format=%s', 'relaylead/integration').split('\n').length, 2);
+  assert.strictEqual(git(dir, 'log', '--merges', '--format=%s', 'relaylead/demo/integration').split('\n').length, 2);
 
   assert.deepStrictEqual(checkoutState(dir), before);
   assert.strictEqual(fs.existsSync(path.join(dir, 'a.txt')), false);
@@ -149,22 +151,23 @@ test('deliver twice is a no-op', async (t) => {
   const first = await deliver('a');
   assert.strictEqual(first.code, 0, first.err);
   assert.strictEqual(first.out, 'task a delivered\n');
-  const head = git(dir, 'rev-parse', 'relaylead/integration');
+  const head = git(dir, 'rev-parse', 'relaylead/demo/integration');
 
   const second = await deliver('a');
   assert.strictEqual(second.code, 0, second.err);
   assert.strictEqual(second.out, 'task a already delivered\n');
-  assert.strictEqual(git(dir, 'rev-parse', 'relaylead/integration'), head);
+  assert.strictEqual(git(dir, 'rev-parse', 'relaylead/demo/integration'), head);
 });
 
 test('refuses a protected integration branch', async (t) => {
   freshHome(t);
-  const dir = userRepo({ '.relaylead.json': JSON.stringify({ delivery: { branch: 'main' } }) });
+  const guard = { protectedBranches: ['main', 'relaylead/demo/integration'] };
+  const dir = userRepo({ '.relaylead.json': JSON.stringify({ guard }) });
   const before = checkoutState(dir);
 
   const launched = await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir]);
   assert.strictEqual(launched.code, 1, launched.err);
-  assert.match(launched.err, /"main" is protected/);
+  assert.match(launched.err, /"relaylead\/demo\/integration" is protected/);
   assert.strictEqual(fs.existsSync(missionDir('demo')), false);
   assert.strictEqual(fs.existsSync(path.join(dir, '.relaylead')), false);
   assert.deepStrictEqual(checkoutState(dir), before);
@@ -180,6 +183,20 @@ test('refuses a folder that is not a git repository', async (t) => {
   assert.strictEqual(fs.existsSync(missionDir('demo')), false);
 });
 
+// Two missions of one folder never share an output folder; a 0.1 mission keeps out/<id>.
+test('files delivery gives each mission its own output folders', (t) => {
+  freshHome(t);
+  const dir = fs.realpathSync.native(tmpDir('relaylead project-'));
+  writeMission('one', dir);
+  writeMission('two', dir);
+  writeMission('old', dir, { format: 1 });
+
+  assert.deepStrictEqual(
+    ['one', 'two', 'old'].map((name) => files.prepareTask(readMission(name), { id: 'a' }).cwd),
+    [path.join(dir, 'out', 'one', 'a'), path.join(dir, 'out', 'two', 'a'), path.join(dir, 'out', 'a')],
+  );
+});
+
 test('files delivery checks the output folder', async (t) => {
   freshHome(t);
   const dir = fs.realpathSync.native(tmpDir('relaylead project-'));
@@ -190,7 +207,7 @@ test('files delivery checks the output folder', async (t) => {
   const mission = readMission('demo');
 
   const { cwd, branch } = files.prepareTask(mission, { id: 'a' });
-  assert.strictEqual(cwd, path.join(dir, 'out', 'a'));
+  assert.strictEqual(cwd, path.join(dir, 'out', 'demo', 'a'));
   assert.strictEqual(branch, null);
   finishTask('demo', 'a', { state: 'done' });
 
@@ -206,12 +223,77 @@ test('files delivery checks the output folder', async (t) => {
   assert.strictEqual(readJson(path.join(missionDir('demo'), 'tasks', 'a.json')).state, 'delivered');
 });
 
+// Work a 0.1 mission delivered on relaylead/integration, never merged into the user's branch: a new
+// mission starts without it, so the launch says so, and goes on.
+test('a launch warns when relaylead/integration of 0.1 holds work the current branch lacks', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  git(dir, 'branch', 'relaylead/integration');
+  const old = path.join(tmpDir('relaylead-old-'), 'wt');
+  git(dir, 'worktree', 'add', '-q', old, 'relaylead/integration');
+  fs.writeFileSync(path.join(old, 'a.txt'), 'delivered by 0.1\n');
+  git(old, 'add', 'a.txt');
+  git(old, 'commit', '-q', '-m', 'work of 0.1');
+
+  const warned = await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir]);
+
+  assert.strictEqual(warned.code, 0, warned.err);
+  assert.strictEqual(warned.out, 'demo\n');
+  assert.match(warned.err, /relaylead launch: the branch relaylead\/integration of relaylead 0\.1 has 1 commit\(s\) that your current branch does not have/);
+
+  // Once merged into the user's branch, nothing more to say.
+  git(dir, 'merge', '-q', '--no-edit', 'relaylead/integration');
+  writeMission('later', dir);
+  assert.deepStrictEqual(localMerge.prepareMission(readMission('later')), []);
+});
+
+// Task demo of a 0.1 mission left its worktree at .relaylead/worktrees/demo: mission demo would put
+// its own worktrees inside it.
+test('a launch refuses a worktree of 0.1 in the folder of its worktrees', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const left = path.join(dir, '.relaylead', 'worktrees', 'demo');
+  git(dir, 'worktree', 'add', '-q', '-b', 'relaylead/old/demo', left);
+
+  writeMission('demo', dir);
+  assert.throws(() => localMerge.prepareMission(readMission('demo')), (err) => {
+    assert.strictEqual(err.code, 'worktrees-dir-taken');
+    assert.ok(err.message.includes(`git worktree remove "${left}"`), err.message);
+    return true;
+  });
+  assert.strictEqual(fs.existsSync(integrationDir(dir)), false);
+  assert.strictEqual(git(dir, 'branch', '--list', INTEGRATION), '');
+});
+
+// A mission launched by relaylead 0.1 keeps the names of then until it ends (core/layout.js).
+test('a 0.1 mission delivers into relaylead/integration, with its worktrees of then', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  writeMission('demo', dir, { format: 1 });
+  const mission = readMission('demo');
+  localMerge.prepareMission(mission);
+  const { cwd } = localMerge.prepareTask(mission, { id: 'a' });
+  assert.strictEqual(cwd, path.join(dir, '.relaylead', 'worktrees', 'a'));
+  fs.writeFileSync(path.join(cwd, 'a.txt'), 'a\n');
+  git(cwd, 'add', '-A');
+  git(cwd, 'commit', '-q', '-m', 'a');
+  finishTask('demo', 'a', { state: 'done' });
+
+  const delivered = await deliver('a');
+
+  assert.strictEqual(delivered.code, 0, delivered.err);
+  assert.strictEqual(git(dir, 'show', 'relaylead/integration:a.txt'), 'a');
+  const integration = path.join(dir, '.relaylead', 'worktrees', '_integration');
+  assert.strictEqual(git(integration, 'rev-parse', '--abbrev-ref', 'HEAD'), 'relaylead/integration');
+  assert.strictEqual(listTasks('demo')[0].state, 'delivered');
+});
+
 test('deliver removes the task worktree and branch', async (t) => {
   freshHome(t);
   const dir = userRepo({ 'tasks/a.md': TASK_A });
   const mission = preparedMission(dir);
   finishedTask(mission, 'a');
-  const worktree = path.join(dir, '.relaylead', 'worktrees', 'a');
+  const worktree = taskWorktree(dir, 'a');
   assert.ok(fs.existsSync(worktree));
 
   const delivered = await deliver('a');
@@ -237,7 +319,7 @@ test('a merge conflict is aborted and the task stays done', async (t) => {
   assert.match(refused.err, /conflict/);
   assert.strictEqual(listTasks('demo').find((task) => task.id === 'c').state, 'done');
   assert.strictEqual(git(integrationDir(dir), 'status', '--porcelain'), '');
-  assert.strictEqual(git(dir, 'show', 'relaylead/integration:shared.txt'), 'from a');
+  assert.strictEqual(git(dir, 'show', 'relaylead/demo/integration:shared.txt'), 'from a');
 });
 
 test('a delivery interrupted after the merge is finished by the next deliver', async (t) => {
@@ -253,7 +335,7 @@ test('a delivery interrupted after the merge is finished by the next deliver', a
   assert.strictEqual(replayed.code, 0, replayed.err);
   assert.strictEqual(replayed.out, 'task a already delivered\n');
   assert.strictEqual(git(integrationDir(dir), 'status', '--porcelain'), '');
-  assert.strictEqual(git(dir, 'log', '-1', '--format=%s', 'relaylead/integration'), 'chore(relaylead): deliver a');
+  assert.strictEqual(git(dir, 'log', '-1', '--format=%s', 'relaylead/demo/integration'), 'chore(relaylead): deliver a');
   assert.strictEqual(fs.existsSync(taskWorktree(dir, 'a')), false);
   assert.strictEqual(git(dir, 'branch', '--list', 'relaylead/demo/a'), '');
 });
@@ -271,7 +353,7 @@ test('a delivery whose cleanup failed succeeds and is cleaned up by the next del
   assert.strictEqual(delivered.out, 'task a delivered\n');
   assert.match(delivered.err, /could not be cleaned up/);
   assert.strictEqual(listTasks('demo')[0].state, 'delivered');
-  assert.strictEqual(git(dir, 'show', 'relaylead/integration:a.txt'), 'a');
+  assert.strictEqual(git(dir, 'show', 'relaylead/demo/integration:a.txt'), 'a');
 
   git(dir, 'worktree', 'unlock', taskWorktree(dir, 'a'));
   const replayed = await deliver('a');
@@ -349,7 +431,7 @@ test('refuses a task worktree on another branch', async (t) => {
   const dir = userRepo({ 'tasks/a.md': TASK_A });
   const mission = preparedMission(dir);
   // Left by an older mission on the same folder.
-  git(dir, 'worktree', 'add', '-q', '-b', 'relaylead/old/a', taskWorktree(dir, 'a'), 'relaylead/integration');
+  git(dir, 'worktree', 'add', '-q', '-b', 'relaylead/old/a', taskWorktree(dir, 'a'), 'relaylead/demo/integration');
 
   assert.throws(() => localMerge.prepareTask(mission, { id: 'a' }), { code: 'worktree-mismatch' });
 });
@@ -368,27 +450,13 @@ test('refuses to deliver a task whose branch is gone', async (t) => {
   assert.strictEqual(listTasks('demo')[0].state, 'done');
 });
 
-test('refuses an integration branch that clashes with the task branches', async (t) => {
-  freshHome(t);
-  const dir = userRepo({ 'tasks/a.md': TASK_A });
-  writeMission('integration', dir); // its tasks would be relaylead/integration/<id>
-  assert.throws(() => localMerge.prepareMission(readMission('integration')), { code: 'branch-clash' });
-
-  writeMission('demo', dir);
-  const mission = readMission('demo');
-  mission.config.delivery.branch = 'relaylead/demo/all';
-  assert.throws(() => localMerge.prepareMission(mission), { code: 'branch-clash' });
-});
-
 test('refuses an integration worktree on another branch', async (t) => {
   freshHome(t);
   const dir = userRepo({ 'tasks/a.md': TASK_A });
   preparedMission(dir);
+  git(integrationDir(dir), 'checkout', '-q', '-b', 'elsewhere');
 
-  writeMission('two', dir);
-  const second = readMission('two');
-  second.config.delivery.branch = 'relaylead/other';
-  assert.throws(() => localMerge.prepareMission(second), { code: 'integration-mismatch' });
+  assert.throws(() => localMerge.prepareMission(readMission('demo')), { code: 'integration-mismatch' });
 });
 
 test('refuses tasks not committed in the user checkout', async (t) => {
@@ -452,7 +520,7 @@ test('a failing hook stops the delivery with its output and the task stays done'
   removeHook(dir, 'pre-merge-commit');
   const delivered = await deliver('a');
   assert.strictEqual(delivered.code, 0, delivered.err);
-  assert.strictEqual(git(dir, 'show', 'relaylead/integration:a.txt'), 'a');
+  assert.strictEqual(git(dir, 'show', 'relaylead/demo/integration:a.txt'), 'a');
 });
 
 // A hook that formats a merged file then refuses: git cannot cancel that merge with merge --abort.
@@ -475,7 +543,7 @@ test('a hook that changes a merged file then refuses leaves the integration work
   removeHook(dir, 'pre-merge-commit');
   const delivered = await deliver('a');
   assert.strictEqual(delivered.code, 0, delivered.err);
-  assert.strictEqual(git(dir, 'show', 'relaylead/integration:a.txt'), 'a');
+  assert.strictEqual(git(dir, 'show', 'relaylead/demo/integration:a.txt'), 'a');
 });
 
 // Changes made before the merge (here a line not committed) must not be lost to a reset.
@@ -504,8 +572,8 @@ test('a hook refusing the update of the integration branch at launch is reported
   git(dir, 'commit', '-q', '-m', 'task b');
   writeHook(dir, 'pre-merge-commit', ['echo "lint failed" >&2', 'exit 1']);
 
-  writeMission('two', dir);
-  assert.throws(() => localMerge.prepareMission(readMission('two')), (err) => {
+  writeMission('demo', dir); // the same name, launched again
+  assert.throws(() => localMerge.prepareMission(readMission('demo')), (err) => {
     assert.strictEqual(err.code, 'launch-hook-failed');
     assert.match(err.vars.output, /lint failed/);
     assert.match(err.message, /"runHooks": false/);
@@ -531,7 +599,7 @@ test('deliver --no-hooks is for the user only and skips the hooks', async (t) =>
 
   const delivered = await cli(args);
   assert.strictEqual(delivered.code, 0, delivered.err);
-  assert.strictEqual(git(dir, 'show', 'relaylead/integration:a.txt'), 'a');
+  assert.strictEqual(git(dir, 'show', 'relaylead/demo/integration:a.txt'), 'a');
 });
 
 // A merge runs pre-merge-commit, not pre-commit: only the state line commit is refused here.
@@ -547,14 +615,14 @@ test('a hook refusing the state line commit is a warning, and the next deliver c
   assert.strictEqual(delivered.out, 'task a delivered\n');
   assert.match(delivered.err, /state line commit/);
   assert.match(delivered.err, /no commit today/);
-  assert.strictEqual(git(dir, 'show', 'relaylead/integration:a.txt'), 'a');
+  assert.strictEqual(git(dir, 'show', 'relaylead/demo/integration:a.txt'), 'a');
   assert.notStrictEqual(git(integrationDir(dir), 'status', '--porcelain', '--', 'tasks/a.md'), '');
 
   removeHook(dir, 'pre-commit');
   const replayed = await deliver('a');
   assert.strictEqual(replayed.code, 0, replayed.err);
   assert.strictEqual(replayed.err, '');
-  assert.strictEqual(git(dir, 'log', '-1', '--format=%s', 'relaylead/integration'), 'chore(relaylead): deliver a');
+  assert.strictEqual(git(dir, 'log', '-1', '--format=%s', 'relaylead/demo/integration'), 'chore(relaylead): deliver a');
   assert.strictEqual(git(integrationDir(dir), 'status', '--porcelain'), '');
 });
 
@@ -567,7 +635,7 @@ test('delivery.runHooks false skips the git hooks', async (t) => {
 
   const delivered = await deliver('a');
   assert.strictEqual(delivered.code, 0, delivered.err);
-  assert.strictEqual(git(dir, 'log', '-1', '--format=%s', 'relaylead/integration'), 'chore(relaylead): deliver a');
+  assert.strictEqual(git(dir, 'log', '-1', '--format=%s', 'relaylead/demo/integration'), 'chore(relaylead): deliver a');
 });
 
 test('the state line commit follows the mission language', async (t) => {
@@ -578,7 +646,7 @@ test('the state line commit follows the mission language', async (t) => {
 
   const delivered = await deliver('a');
   assert.strictEqual(delivered.code, 0, delivered.err);
-  assert.strictEqual(git(dir, 'log', '-1', '--format=%s', 'relaylead/integration'), 'chore(relaylead): a livrée');
+  assert.strictEqual(git(dir, 'log', '-1', '--format=%s', 'relaylead/demo/integration'), 'chore(relaylead): a livrée');
 });
 
 test('a launch refused for missing tasks works once they are committed', async (t) => {
@@ -597,7 +665,7 @@ test('a launch refused for missing tasks works once they are committed', async (
   assert.deepStrictEqual(listTasks('demo').map((task) => task.id), ['a']);
 });
 
-test('a new mission sees the tasks committed since the integration branch was made', async (t) => {
+test('a mission launched again sees the tasks committed since its integration branch was made', async (t) => {
   freshHome(t);
   const dir = userRepo({ 'tasks/a.md': TASK_A });
   preparedMission(dir);
@@ -606,14 +674,14 @@ test('a new mission sees the tasks committed since the integration branch was ma
   git(dir, 'commit', '-q', '-m', 'task b');
   const before = checkoutState(dir);
 
-  writeMission('two', dir);
-  localMerge.prepareMission(readMission('two'));
-  assert.deepStrictEqual(listTasks('two').map((task) => task.id), ['a', 'b']);
-  const head = git(dir, 'rev-parse', 'relaylead/integration');
+  writeMission('demo', dir); // the same name, launched again
+  localMerge.prepareMission(readMission('demo'));
+  assert.deepStrictEqual(listTasks('demo').map((task) => task.id), ['a', 'b']);
+  const head = git(dir, 'rev-parse', 'relaylead/demo/integration');
 
   // Already up to date: no new merge commit.
-  localMerge.prepareMission(readMission('two'));
-  assert.strictEqual(git(dir, 'rev-parse', 'relaylead/integration'), head);
+  localMerge.prepareMission(readMission('demo'));
+  assert.strictEqual(git(dir, 'rev-parse', 'relaylead/demo/integration'), head);
   assert.deepStrictEqual(checkoutState(dir), before);
 });
 
@@ -626,8 +694,8 @@ test('a conflict while updating the integration branch is aborted and refused', 
   fs.writeFileSync(path.join(dir, 'shared.txt'), 'from the user\n');
   git(dir, 'commit', '-q', '-m', 'user change', '--', 'shared.txt');
 
-  writeMission('two', dir);
-  assert.throws(() => localMerge.prepareMission(readMission('two')), { code: 'integration-sync-conflict' });
+  writeMission('demo', dir); // the same name, launched again
+  assert.throws(() => localMerge.prepareMission(readMission('demo')), { code: 'integration-sync-conflict' });
   assert.strictEqual(git(integrationDir(dir), 'status', '--porcelain'), '');
 });
 
@@ -651,7 +719,7 @@ test('a replayed delivery keeps work done on the task branch since', async (t) =
   assert.strictEqual(replayed.code, 0, replayed.err);
   assert.match(replayed.err, /kept/);
   assert.strictEqual(fs.readFileSync(path.join(cwd, 'later.txt'), 'utf8'), 'later\n');
-  assert.strictEqual(git(dir, 'rev-list', '--count', 'relaylead/integration..relaylead/demo/a'), '1');
+  assert.strictEqual(git(dir, 'rev-list', '--count', 'relaylead/demo/integration..relaylead/demo/a'), '1');
 });
 
 test('the fake lead logs a delivery that keeps failing, then stops', async (t) => {
@@ -685,7 +753,7 @@ test('a delivery waits for a git lock to be released', async (t) => {
 
   const delivered = await deliver('a');
   assert.strictEqual(delivered.code, 0, delivered.err);
-  assert.strictEqual(git(dir, 'show', 'relaylead/integration:a.txt'), 'a');
+  assert.strictEqual(git(dir, 'show', 'relaylead/demo/integration:a.txt'), 'a');
 });
 
 // A merge that meets a held index.lock stops like a failed hook, with a merge in progress, but says
@@ -708,7 +776,7 @@ test('a held index lock is retried, not taken for a hook', async (t) => {
 
   const delivered = await deliver('a');
   assert.strictEqual(delivered.code, 0, delivered.err);
-  assert.strictEqual(git(dir, 'show', 'relaylead/integration:a.txt'), 'a');
+  assert.strictEqual(git(dir, 'show', 'relaylead/demo/integration:a.txt'), 'a');
 });
 
 // A git that leaves a process behind (a hook's background job, a credential helper) that keeps
@@ -729,7 +797,7 @@ test('a git command that leaves a process behind does not hold the delivery', { 
   const delivered = await deliver('a');
   assert.strictEqual(delivered.code, 0, delivered.err);
   assert.ok(Date.now() - startedAt < 10000, `the delivery took ${Date.now() - startedAt} ms`);
-  assert.strictEqual(git(dir, 'show', 'relaylead/integration:a.txt'), 'a');
+  assert.strictEqual(git(dir, 'show', 'relaylead/demo/integration:a.txt'), 'a');
 });
 
 // A git command that never ends would hold the start lock forever.
@@ -802,7 +870,7 @@ test('a merge that does not end is cancelled', { skip: process.platform === 'win
 
   const delivered = await deliver('a');
   assert.strictEqual(delivered.code, 0, delivered.err);
-  assert.strictEqual(git(dir, 'show', 'relaylead/integration:a.txt'), 'a');
+  assert.strictEqual(git(dir, 'show', 'relaylead/demo/integration:a.txt'), 'a');
 });
 
 // Killed in the middle of the state line commit, git leaves its index.lock behind: every later git
@@ -823,7 +891,7 @@ test('a state line commit that does not end leaves no index.lock behind', { skip
 
   const replayed = await deliver('a');
   assert.strictEqual(replayed.code, 0, replayed.err);
-  assert.strictEqual(git(dir, 'log', '-1', '--format=%s', 'relaylead/integration'), 'chore(relaylead): deliver a');
+  assert.strictEqual(git(dir, 'log', '-1', '--format=%s', 'relaylead/demo/integration'), 'chore(relaylead): deliver a');
 });
 
 test('a launch after a mission that ended with an uncommitted state line commits it', async (t) => {
@@ -836,17 +904,17 @@ test('a launch after a mission that ended with an uncommitted state line commits
   assert.strictEqual(delivered.code, 0, delivered.err);
   assert.match(delivered.err, /state line commit/);
 
-  writeMission('two', dir);
-  assert.throws(() => localMerge.prepareMission(readMission('two')), (err) => {
+  writeMission('demo', dir); // the same name, launched again
+  assert.throws(() => localMerge.prepareMission(readMission('demo')), (err) => {
     assert.strictEqual(err.code, 'launch-state-line-hook-failed');
     assert.match(err.vars.output, /no commit today/);
     return true;
   });
 
   removeHook(dir, 'pre-commit');
-  localMerge.prepareMission(readMission('two'));
-  assert.strictEqual(git(dir, 'log', '-1', '--format=%s', 'relaylead/integration'), 'chore(relaylead): deliver a');
-  assert.deepStrictEqual(listTasks('two').map((task) => [task.id, task.state]), [['a', 'delivered']]);
+  localMerge.prepareMission(readMission('demo'));
+  assert.strictEqual(git(dir, 'log', '-1', '--format=%s', 'relaylead/demo/integration'), 'chore(relaylead): deliver a');
+  assert.deepStrictEqual(listTasks('demo').map((task) => [task.id, task.state]), [['a', 'delivered']]);
 });
 
 test('a launch refuses an integration worktree with stray changes', async (t) => {
@@ -858,16 +926,16 @@ test('a launch refuses an integration worktree with stray changes', async (t) =>
   git(dir, 'add', 'tasks');
   git(dir, 'commit', '-q', '-m', 'task b');
   fs.writeFileSync(path.join(integrationDir(dir), 'stray.txt'), 'left here\n');
-  const head = git(dir, 'rev-parse', 'relaylead/integration');
+  const head = git(dir, 'rev-parse', 'relaylead/demo/integration');
 
-  writeMission('two', dir);
-  assert.throws(() => localMerge.prepareMission(readMission('two')), (err) => {
+  writeMission('demo', dir); // the same name, launched again
+  assert.throws(() => localMerge.prepareMission(readMission('demo')), (err) => {
     assert.strictEqual(err.code, 'integration-dirty');
     assert.ok(err.message.includes(integrationDir(dir)), err.message);
     assert.match(err.vars.files, /stray\.txt/);
     return true;
   });
-  assert.strictEqual(git(dir, 'rev-parse', 'relaylead/integration'), head);
+  assert.strictEqual(git(dir, 'rev-parse', 'relaylead/demo/integration'), head);
 });
 
 test('a state line that cannot be written after the merge is a coded error, and the next deliver finishes', async (t) => {
@@ -891,7 +959,7 @@ test('a state line that cannot be written after the merge is a coded error, and 
 
   const delivered = await deliver('a');
   assert.strictEqual(delivered.code, 0, delivered.err);
-  const merges = git(dir, 'log', '--merges', '--format=%s', 'relaylead/integration').split('\n');
+  const merges = git(dir, 'log', '--merges', '--format=%s', 'relaylead/demo/integration').split('\n');
   assert.strictEqual(merges.filter((subject) => subject.includes('relaylead/demo/a')).length, 1, merges.join('\n'));
 });
 
@@ -975,12 +1043,29 @@ test('cleanMission keeps a worktree in keepDirs and goes on with the others', as
   assert.strictEqual(fs.existsSync(taskWorktree(dir, 'b')), false);
 });
 
+// Its integration branch is relaylead/demo/integration, in the folder of its task branches.
+test('stop and remove leave a worktree on the integration branch alone, wherever it is', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir);
+  const moved = path.join(tmpDir('relaylead-moved-'), 'integration');
+  git(dir, 'worktree', 'move', integrationDir(dir), moved);
+  stopped('demo');
+
+  assert.deepStrictEqual(localMerge.missionWorktrees(mission), []);
+  assert.deepStrictEqual(localMerge.cleanMission(mission, {}), []);
+  const removed = await cli(['remove', 'demo', '--force']);
+
+  assert.strictEqual(removed.code, 0, removed.err);
+  assert.strictEqual(git(moved, 'rev-parse', '--abbrev-ref', 'HEAD'), INTEGRATION);
+});
+
 test('cleanMission leaves the worktrees of other missions alone', async (t) => {
   freshHome(t);
   const dir = userRepo({ 'tasks/a.md': TASK_A });
   const mission = preparedMission(dir);
   const other = path.join(dir, '.relaylead', 'worktrees', 'other-a');
-  git(dir, 'worktree', 'add', '-q', '-b', 'relaylead/other/a', other, 'relaylead/integration');
+  git(dir, 'worktree', 'add', '-q', '-b', 'relaylead/other/a', other, 'relaylead/demo/integration');
   taskWithWork(mission, 'a', { committed: true });
 
   const warnings = localMerge.cleanMission(mission, {});
@@ -1044,7 +1129,7 @@ test('stop keeps the worktree of a crew session whose stop failed, and cleans th
 
   assert.strictEqual(stopped.code, 1);
   assert.match(stopped.err, /stop failed/);
-  assert.match(stopped.err, /worktrees[\\/]a\b/);
+  assert.match(stopped.err, /worktrees[\\/]demo[\\/]a\b/);
   assert.strictEqual(sessionEnded(second), true);
   assert.strictEqual(fs.existsSync(taskWorktree(dir, 'a')), true);
   assert.strictEqual(fs.existsSync(taskWorktree(dir, 'b')), false);
@@ -1069,13 +1154,10 @@ test('a session still alive after the wait keeps the folder', async (t) => {
 
   assert.strictEqual(stopped.code, 1);
   assert.match(stopped.err, /still running/);
-  assert.match(stopped.err, /relaylead stop: .*worktrees[\\/]a\b/);
+  assert.match(stopped.err, /relaylead stop: .*worktrees[\\/]demo[\\/]a\b/);
   assert.strictEqual(sessionEnded(crew), false);
   assert.strictEqual(readJson(path.join(missionDir('demo'), 'state.json')).stopping, true);
   assert.strictEqual(fs.existsSync(taskWorktree(dir, 'a')), true);
-  const refused = await cli(['launch', '--agent', 'fake', '--name', 'two', '--dir', dir]);
-  assert.strictEqual(refused.code, 1);
-  assert.match(refused.err, /busy with mission "demo"/);
 });
 
 test('a stop with nothing to do still cleans', async (t) => {
@@ -1108,7 +1190,7 @@ test('done cleans the task worktrees and notes the kept ones in the journal', as
   assert.strictEqual(fs.existsSync(taskWorktree(dir, 'a')), true);
   assert.strictEqual(fs.existsSync(taskWorktree(dir, 'b')), false);
   const journal = fs.readFileSync(path.join(missionDir('demo'), 'journal.log'), 'utf8');
-  assert.match(journal, /worktrees[\\/]a\b/);
+  assert.match(journal, /worktrees[\\/]demo[\\/]a\b/);
 });
 
 test('a skipped stop keeps the worktree of a session whose recorded process still runs', async (t) => {
@@ -1127,7 +1209,7 @@ test('a skipped stop keeps the worktree of a session whose recorded process stil
 
   assert.strictEqual(stopped.code, 0, stopped.err);
   assert.match(stopped.out, /were not stopped again/);
-  assert.match(stopped.err, /relaylead stop: .*worktrees[\\/]a\b.*may still be running/);
+  assert.match(stopped.err, /relaylead stop: .*worktrees[\\/]demo[\\/]a\b.*may still be running/);
   assert.strictEqual(fs.existsSync(taskWorktree(dir, 'a')), true);
 });
 
@@ -1214,8 +1296,12 @@ test('task done and a replayed delivery see untracked files even when git status
 });
 
 // The branches of mission demo, as `git branch` lists them.
+// The task branches of mission demo; its integration branch relaylead/demo/integration is left out.
 function demoBranches(dir) {
-  return git(dir, 'for-each-ref', '--format=%(refname:short)', 'refs/heads/relaylead/demo/');
+  return git(dir, 'for-each-ref', '--format=%(refname:short)', 'refs/heads/relaylead/demo/')
+    .split('\n')
+    .filter((branch) => branch !== INTEGRATION)
+    .join('\n');
 }
 
 function stopped(name) {
@@ -1255,7 +1341,7 @@ test('remove deletes the task worktrees, branches and mission folder, and keeps 
   assert.strictEqual(fs.existsSync(missionDir('demo')), false);
   assert.strictEqual(demoBranches(dir), '');
   assert.strictEqual(fs.existsSync(taskWorktree(dir, 'b')), false);
-  assert.strictEqual(git(integrationDir(dir), 'rev-parse', '--abbrev-ref', 'HEAD'), 'relaylead/integration');
+  assert.strictEqual(git(integrationDir(dir), 'rev-parse', '--abbrev-ref', 'HEAD'), 'relaylead/demo/integration');
   const worktrees = git(dir, 'worktree', 'list', '--porcelain').split('\n').filter((line) => line.startsWith('worktree '));
   assert.strictEqual(worktrees.length, 2, 'only the user checkout and the integration worktree remain');
 });
@@ -1291,7 +1377,7 @@ test('stop and remove --force of a mission leave a mission with a longer name al
   const dir = userRepo({ 'tasks/a.md': TASK_A });
   const mission = preparedMission(dir);
   const neighbour = path.join(dir, '.relaylead', 'worktrees', 'demo-x-a');
-  git(dir, 'worktree', 'add', '-q', '-b', 'relaylead/demo-x/a', neighbour, 'relaylead/integration');
+  git(dir, 'worktree', 'add', '-q', '-b', 'relaylead/demo-x/a', neighbour, 'relaylead/demo/integration');
   fs.writeFileSync(path.join(neighbour, 'x.txt'), 'x\n');
   git(neighbour, 'add', '-A');
   git(neighbour, 'commit', '-q', '-m', 'x');
@@ -1325,7 +1411,7 @@ test('remove refuses a dirty worktree unless --force', async (t) => {
   const refused = await cli(['remove', 'demo']);
 
   assert.strictEqual(refused.code, 1);
-  assert.match(refused.err, /worktrees[\\/]b\b/);
+  assert.match(refused.err, /worktrees[\\/]demo[\\/]b\b/);
   assert.strictEqual(fs.existsSync(path.join(b, 'draft.txt')), true);
   assert.strictEqual(demoBranches(dir), 'relaylead/demo/b');
   assert.strictEqual(fs.existsSync(missionDir('demo')), true);
@@ -1354,9 +1440,9 @@ test('a worktree left by another mission names the mission to remove', async (t)
   freshHome(t);
   const dir = userRepo({ 'tasks/a.md': TASK_A, 'tasks/b.md': TASK_A });
   const mission = preparedMission(dir);
-  git(dir, 'worktree', 'add', '-q', '-b', 'relaylead/old/a', taskWorktree(dir, 'a'), 'relaylead/integration');
-  git(dir, 'worktree', 'add', '-q', '-b', 'mine', taskWorktree(dir, 'b'), 'relaylead/integration');
-  git(dir, 'worktree', 'add', '-q', '-b', 'relaylead/demo/other', taskWorktree(dir, 'c'), 'relaylead/integration');
+  git(dir, 'worktree', 'add', '-q', '-b', 'relaylead/old/a', taskWorktree(dir, 'a'), 'relaylead/demo/integration');
+  git(dir, 'worktree', 'add', '-q', '-b', 'mine', taskWorktree(dir, 'b'), 'relaylead/demo/integration');
+  git(dir, 'worktree', 'add', '-q', '-b', 'relaylead/demo/other', taskWorktree(dir, 'c'), 'relaylead/demo/integration');
 
   assert.throws(() => localMerge.prepareTask(mission, { id: 'a' }), {
     code: 'worktree-mismatch',
@@ -1403,7 +1489,7 @@ test('remove counts every task branch as not delivered when the integration bran
   stopped('demo');
   // Removed by hand.
   git(dir, 'worktree', 'remove', '--force', integrationDir(dir));
-  git(dir, 'branch', '-D', 'relaylead/integration');
+  git(dir, 'branch', '-D', 'relaylead/demo/integration');
 
   const refused = await cli(['remove', 'demo']);
 
@@ -1423,7 +1509,7 @@ test('remove refuses, even with --force, a checkout on a task branch', async (t)
   const mission = preparedMission(dir);
   taskWithWork(mission, 'a', { committed: true });
   merge(dir, 'relaylead/demo/a');
-  git(dir, 'branch', 'relaylead/demo/b', 'relaylead/integration');
+  git(dir, 'branch', 'relaylead/demo/b', 'relaylead/demo/integration');
   git(dir, 'checkout', '-q', 'relaylead/demo/b'); // the user's own checkout
   stopped('demo');
 
@@ -1451,7 +1537,7 @@ test('remove keeps a locked task worktree unless --force', async (t) => {
   const refused = await cli(['remove', 'demo']);
 
   assert.strictEqual(refused.code, 1);
-  assert.match(refused.err, /worktrees[\\/]b\b/);
+  assert.match(refused.err, /worktrees[\\/]demo[\\/]b\b/);
   assert.strictEqual(fs.existsSync(b), true);
 
   const forced = await cli(['remove', 'demo', '--force']);
