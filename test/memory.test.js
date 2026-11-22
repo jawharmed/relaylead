@@ -5,7 +5,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { run } = require('../core/cli');
-const { home } = require('../core/paths');
+const { home, missionDir } = require('../core/paths');
 const { writeMemory: write, readMemory, memoryFile, archiveDir, projectRoot } = require('../core/memory');
 const { writeJson } = require('../core/store');
 const { gitRepo } = require('../fixtures/git');
@@ -219,4 +219,32 @@ test('over the byte ceiling, show prints only what fits and says so; write refus
   assert.strictEqual((await relaylead(['memory', 'write', ...base(dir), '--text', 'short'])).code, 0);
   // maxLines 5000 is out of range: the default 200 applies
   assert.strictEqual(readMemory(dir).maxLines, 200);
+});
+
+test('a lead cannot declare the mission done before it has written the memory', async (t) => {
+  const dir = project(t);
+  writeJson(path.join(missionDir('demo'), 'lead.json'), { sessionName: 'demo/lead/1', shortId: 'x', startedAt: new Date().toISOString() });
+  const lead = { RELAYLEAD_MISSION: 'demo', RELAYLEAD_ROLE: 'lead', RELAYLEAD_SESSION: 'demo/lead/1' };
+  const refused = await relaylead(['state', 'set', 'done'], lead);
+  assert.strictEqual(refused.code, 1);
+  assert.match(refused.err, /compact the project memory first/);
+  assert.notStrictEqual((await relaylead(['state', 'get'], lead)).out.trim(), 'done');
+  writeJson(path.join(home(), 'config.json'), { language: 'fr', delivery: { type: 'files' } });
+  assert.match((await relaylead(['state', 'set', 'done'], lead)).err, /compactez d'abord la mémoire/);
+  writeJson(path.join(home(), 'config.json'), { delivery: { type: 'files' } });
+
+  assert.strictEqual((await relaylead(['memory', 'write', ...base(dir), '--text', '- demo: done'], lead)).code, 0);
+  assert.strictEqual((await relaylead(['state', 'set', 'done'], lead)).code, 0);
+  assert.strictEqual((await relaylead(['state', 'get'], lead)).out.trim(), 'done');
+});
+
+test('--no-memory lets a lead finish without the memory, and a memory turned off asks nothing', async (t) => {
+  project(t);
+  writeJson(path.join(missionDir('demo'), 'lead.json'), { sessionName: 'demo/lead/1', shortId: 'x', startedAt: new Date().toISOString() });
+  const lead = { RELAYLEAD_MISSION: 'demo', RELAYLEAD_ROLE: 'lead', RELAYLEAD_SESSION: 'demo/lead/1' };
+  assert.strictEqual((await relaylead(['state', 'set', 'done', '--no-memory'], lead)).code, 0);
+
+  project(t, { memory: { enabled: false } });
+  writeJson(path.join(missionDir('demo'), 'lead.json'), { sessionName: 'demo/lead/1', shortId: 'x', startedAt: new Date().toISOString() });
+  assert.strictEqual((await relaylead(['state', 'set', 'done'], lead)).code, 0);
 });

@@ -20,7 +20,7 @@ const { waitForChanges } = require('./wait');
 const { waitForEvents } = require('./console-wait');
 const { tellMission, listTold } = require('./told');
 const { addDecision, readDecisions } = require('./decisions');
-const { readMemory, writeMemory, memorySettings } = require('./memory');
+const { readMemory, writeMemory, memorySettings, requireCompaction } = require('./memory');
 const { askQuestion, answerQuestion, listQuestions } = require('./questions');
 const { runPass, tendMission, stopPresent, loop, watcherRunning, startWatcher, stopWatcher } = require('./watcher');
 const { watchLogSize, watchLogSince } = require('./watch-log');
@@ -225,13 +225,16 @@ commands.state = async (args, io) => {
   const { positional, options } = parseArgs(args);
   const [action, state] = positional;
   if (action !== 'get' && !(action === 'set' && state)) {
-    throw codedError('usage', { usage: 'relaylead state get|set <state> [--note text] [--mission name]' });
+    throw codedError('usage', { usage: 'relaylead state get|set <state> [--note text] [--no-memory] [--mission name]' });
   }
   const mission = missionName(options, io);
   if (action === 'get') {
     io.out.write(getState(mission) + '\n');
   } else {
     refuseReplacedLead(mission, io);
+    // A lead compacts the project memory before it declares the mission done (--no-memory: a way out when
+    // the memory cannot be written); a replayed `done` has been through this already.
+    if (state === 'done' && io.env.RELAYLEAD_ROLE === 'lead' && !options['no-memory'] && getState(mission) !== 'done') requireCompaction(mission);
     const outcome = await setState(mission, state, options.note, { by: io.env.RELAYLEAD_SESSION || 'user' });
     if (outcome === 'skipped') io.out.write(t('missionStopSkipped', { mission }, language(io)));
     // The watcher stops the old lead and starts the next one at once.

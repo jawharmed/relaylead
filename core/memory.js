@@ -5,10 +5,10 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { home } = require('./paths');
+const { home, missionDir } = require('./paths');
 const { loadConfig } = require('./config');
 const { codedError } = require('./messages');
-const { writeText } = require('./store');
+const { writeText, writeJson, readJson } = require('./store');
 const { tryCreateLock, isStaleLock, removeQuietly, takeOverStaleLock } = require('./mission-lock');
 const { runFileSync } = require('./run-file');
 const { sleep } = require('./timing');
@@ -163,7 +163,18 @@ async function writeMemory(mission, text, base) {
     writeText(memoryFile(dir), body + '\n');
     updateExclude(dir, versioned);
   });
+  // Noted by the core, for the end of the mission (requireCompaction).
+  writeJson(path.join(missionDir(mission), 'memory.json'), { writtenAt: new Date().toISOString() });
   return lines;
 }
 
-module.exports = { projectRoot, memoryFile, archiveDir, memorySettings, readMemory, writeMemory, updateExclude, countLines };
+// A lead may not declare its mission done while the memory is on and the mission has not written it
+// (the compaction): the error says what to run.
+function requireCompaction(mission) {
+  const dir = require('./missions').readMission(mission).dir;
+  if (!memorySettings(dir).enabled) return;
+  if (readJson(path.join(missionDir(mission), 'memory.json'), null)) return;
+  throw codedError('memory-not-compacted', {});
+}
+
+module.exports = { requireCompaction, projectRoot, memoryFile, archiveDir, memorySettings, readMemory, writeMemory, updateExclude, countLines };

@@ -164,7 +164,7 @@ Sessions have a limited context. The `context` setting says when to hand over: `
 
 ### Memory
 
-Each project has a memory shared by its missions: `.relaylead/memoire.md` in the project folder (never in a worktree), in the main repository. It holds the conventions of the project, one line per past mission and the lessons learned. Every lead reads it when it starts (`relaylead memory show`), and compacts it before declaring its mission done: the mission becomes one line, the lessons are merged, what is out of date goes. The previous version is kept in `.relaylead/memoire-archive/`, which is never read again. Writes are done under a lock, so two missions never overwrite each other.
+Each project has a memory shared by its missions: `.relaylead/memoire.md` in the project folder (never in a worktree), in the main repository. It holds the conventions of the project, one line per past mission and the lessons learned. Every lead reads it when it starts (`relaylead memory show`), and compacts it before declaring its mission done (a lead's `state set done` is refused until the mission has written the memory; `--no-memory` is the way out when it cannot): the mission becomes one line, the lessons are merged, what is out of date goes. The previous version is kept in `.relaylead/memoire-archive/`, which is never read again. Writes are done under a lock, so two missions never overwrite each other.
 
 - `memory.enabled` (`true`): turns the memory off with `false`.
 - `memory.maxLines` (`200`): the ceiling. A memory over it is flagged when a lead starts (the lead must compact it before anything else, with no AI involved in the check), `relaylead doctor` warns about it in the folder you run it in, and a compaction over the ceiling is refused.
