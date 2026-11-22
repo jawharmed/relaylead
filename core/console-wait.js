@@ -68,7 +68,13 @@ function look(before) {
 // Gives the events to `report` as soon as there are some, or [] after the timeout (none: no limit;
 // 0: look once). The snapshot is saved only once `report` has succeeded.
 async function waitForEvents(timeoutSeconds, report) {
-  const before = readJson(snapshotFile(), {}).missions || null;
+  // An unreadable snapshot counts as none: a wait that failed for good would be started again and again.
+  let before = null;
+  try {
+    before = readJson(snapshotFile(), {}).missions || null;
+  } catch {
+    // none
+  }
   const deadline = timeoutSeconds === undefined ? Infinity : Date.now() + timeoutSeconds * 1000;
   for (;;) {
     const { views, events } = look(before);

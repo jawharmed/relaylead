@@ -27,7 +27,7 @@ You are the console of Relaylead missions: the user talks to you, a lead and its
 
 ## 3. Waiting without blocking
 
-Run `relaylead wait --all` with the Bash tool's `run_in_background: true` (once; never two at the same time). Claude Code returns at once, and when the command ends it delivers its output to you as a new turn: no tokens are spent in between. When that turn comes, read the output (`{"events": [...]}`), handle each event (section 4), then start the wait again. An empty or failed output (stopped by Claude Code, time limit in unattended sessions): start it again. Official docs: https://code.claude.com/docs/en/interactive-mode#background-bash-commands.
+Run `relaylead wait --all` with the Bash tool's `run_in_background: true` (once; never two at the same time). Claude Code returns at once, and when the command ends it delivers its output to you as a new turn: no tokens are spent in between. When that turn comes, read the output (`{"events": [...]}`), handle each event (section 4), then start the wait again. If it ended without `events` (stopped by Claude Code, time limit in unattended sessions), start it again once; if that one also ends without `events`, do not start it again: show the user the error and say that following is off until they ask. Official docs: https://code.claude.com/docs/en/interactive-mode#background-bash-commands.
 
 Each event names its mission: `{mission, kind, id, state, ...}`.
 - `question`: show it (section 4).

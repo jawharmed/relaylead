@@ -138,6 +138,18 @@ test('wait --all names the mission of each event, and ignores the answer of the 
   assert.deepStrictEqual(await waitAll(), []);
 });
 
+test('wait --all goes on with an unreadable snapshot or an unreadable mission', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  writeJson(path.join(missionDir('demo'), 'state.json'), { state: 'waiting' });
+  askQuestion('demo', { key: 'k', text: 'Ok?', options: ['Yes', 'No'] });
+  fs.mkdirSync(path.join(missionDir('broken')), { recursive: true });
+  fs.writeFileSync(path.join(missionDir('broken'), 'mission.json'), '{ not json');
+  fs.writeFileSync(path.join(require('../core/paths').home(), 'console-snapshot.json'), '{ not json');
+  const events = await waitAll();
+  assert.deepStrictEqual(events.map((event) => `${event.mission} ${event.id}`), ['demo q-k']);
+});
+
 test('wait --all is refused to a session', async () => {
   const result = await relaylead(['wait', '--all', '--timeout', '0'], { RELAYLEAD_MISSION: 'demo' });
   assert.strictEqual(result.code, 1);

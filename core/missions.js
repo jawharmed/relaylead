@@ -620,7 +620,12 @@ function listMissions() {
   const missions = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
-    const mission = readJson(missionFile(entry.name, 'mission.json'), null);
+    let mission;
+    try {
+      mission = readJson(missionFile(entry.name, 'mission.json'), null);
+    } catch {
+      continue; // unreadable: it does not hide the other missions
+    }
     if (!mission) continue; // still being created
     missions.push({
       name: mission.name,
