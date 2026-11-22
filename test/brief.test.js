@@ -8,6 +8,7 @@ const doctorCheck = require('../core/doctor');
 const { missionDir } = require('../core/paths');
 const { writeJson } = require('../core/store');
 const { askQuestion } = require('../core/questions');
+const { writePause, localTime } = require('../core/usage-pause');
 const { makeIo } = require('../fixtures/helpers');
 const { setupProject, writeMission } = require('../fixtures/missions');
 
@@ -74,6 +75,18 @@ test('brief shows the problems, each open question as it is, and one line per mi
   // Same catch-up as wait --all: the question is no longer new, and the next wait does not give it again.
   assert.match(await relaylead(['brief']), /\[old\] q-merge: Conflict/);
   assert.strictEqual(await relaylead(['wait', '--all', '--timeout', '0']), 'Nothing new.\n');
+});
+
+test('brief says a queued task once, as waiting for a place, and a pause with its end', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  setState('demo', 'working');
+  writeJson(path.join(missionDir('demo'), 'tasks', 'a.json'), { id: 'a', profile: 'developer', attempt: 1, state: 'queued', session: null, queuedAt: new Date().toISOString() });
+  const resumeAt = Date.now() + 3600 * 1000;
+  writePause('demo', { reason: 'limit', resumeAt });
+  doctorSays(t, []);
+  const line = (await relaylead(['brief'])).split('\n').find((text) => text.startsWith('  demo:'));
+  assert.strictEqual(line, `  demo: working · tasks 0/2 delivered · 1 waiting for a place · paused until ${localTime(new Date(resumeAt).toISOString())}`);
 });
 
 test('brief gives a mission over and a failed task once, in French when the project says so', async (t) => {

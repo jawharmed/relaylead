@@ -43,7 +43,8 @@ function missionLine(mission, lang) {
   const counts = {};
   for (const task of mission.tasks) counts[task.state] = (counts[task.state] || 0) + 1;
   let tasks = t('briefTasks', { delivered: counts.delivered || 0, total: mission.tasks.length }, lang);
-  const others = Object.keys(counts).filter((state) => !['todo', 'delivered'].includes(state));
+  // Queued tasks are said once, below, as waiting for a place.
+  const others = Object.keys(counts).filter((state) => !['todo', 'delivered', 'queued'].includes(state));
   if (others.length > 0) tasks += ` (${others.map((state) => `${counts[state]} ${state}`).join(', ')})`;
   const parts = [mission.state, tasks];
   if (mission.queued > 0) parts.push(t('briefQueued', { n: mission.queued }, lang));
@@ -73,6 +74,9 @@ function briefText({ problems, events, overview }, lang) {
 // Writes the brief with `write`. As for `wait --all`, the snapshot of the console is saved only once
 // the text is written, so no news is lost on the way out. `dir`: the folder of the command (doctor
 // checks its project memory). doctor is read from its module, so a test can replace it.
+// The overview is read just after the catch-up: a question opened in between is shown, not marked
+// new, and given again by the next wait (shown twice rather than missed). A mission the overview
+// cannot read is left out of the text, though the catch-up has counted it as seen.
 async function brief(dir, lang, write) {
   const problems = (await doctorCheck.doctor(dir)).filter((line) => line.level !== 'ok');
   await waitForEvents(0, (events) => write(briefText({ problems, events, overview: buildOverview() }, lang)));
