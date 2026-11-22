@@ -254,14 +254,37 @@ async function followAnswer(mission, merge) {
 // how the branch left ('merged' or 'deleted') once the mission is removed, otherwise null.
 async function removeIfMerged(name) {
   if (!/^[a-z0-9-]+$/.test(name)) return null;
-  const folder = missionDir(name);
   let mission;
   try {
-    mission = readJson(path.join(folder, 'mission.json'), null);
+    mission = readJson(path.join(missionDir(name), 'mission.json'), null);
   } catch {
     return null; // unreadable: its pass has reported it
   }
-  if (!mission || !layout.isPerMission(mission)) return null;
+  // A first look without the lock, so that a mission to keep is never locked; the decision is taken
+  // again under the mission lock, by removeMission.
+  if (!mission || !removable(name, mission)) return null;
+  let how = null;
+  const refused = (err) => {
+    if (!['remove-unmerged-work', 'checkout-on-task-branch'].includes(err.code)) return;
+    writeJson(path.join(missionDir(name), 'cleanup.json'), { refusedAt: now(), reason: err.message }, { createDir: false });
+    watchLog(name, 'cleanup-refused', err.message);
+  };
+  try {
+    const check = (current) => Boolean((how = removable(name, current)));
+    if ((await removeMission(name, { integrationWorktree: true, check, onRefused: refused })) === null) return null;
+  } catch (err) {
+    if (['remove-unmerged-work', 'checkout-on-task-branch', 'mission-running'].includes(err.code)) return null;
+    throw err;
+  }
+  watchLog(name, 'mission-removed', `integration branch ${how}`);
+  return how;
+}
+
+// How the integration branch of a mission left ('merged' or 'deleted') when the mission may be
+// removed by the cleanup (removeIfMerged), otherwise null.
+function removable(name, mission) {
+  const folder = missionDir(name);
+  if (!layout.isPerMission(mission)) return null;
   const delivery = getDelivery(mission.config.delivery.type);
   if (!delivery.integrationState || !fs.existsSync(mission.dir)) return null;
   const record = readJson(path.join(folder, 'state.json'), { state: 'starting' });
@@ -270,18 +293,7 @@ async function removeIfMerged(name) {
   if (fs.existsSync(path.join(folder, 'cleanup.json'))) return null;
   const merge = readMerge(name);
   if (merge && merge.state !== 'merged') return null;
-  const how = merge ? 'merged' : delivery.integrationState(mission);
-  if (!how) return null;
-  try {
-    await removeMission(name, { integrationWorktree: true });
-  } catch (err) {
-    if (!['remove-unmerged-work', 'checkout-on-task-branch'].includes(err.code)) throw err;
-    writeJson(path.join(folder, 'cleanup.json'), { refusedAt: now(), reason: err.message }, { createDir: false });
-    watchLog(name, 'cleanup-refused', err.message);
-    return null;
-  }
-  watchLog(name, 'mission-removed', `integration branch ${how}`);
-  return how;
+  return merge ? 'merged' : delivery.integrationState(mission);
 }
 
 // Whether a merge needs the mission's crew: a resolution under way, or a question waiting for an answer.

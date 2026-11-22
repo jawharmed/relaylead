@@ -779,8 +779,10 @@ async function stopSessions(mission, justStopped, note) {
 // again by an adapter that stops by id, then forgotten by the agent, its task worktrees and branches are removed by the delivery,
 // then its folder under missions/ is deleted. Returns the deleted branches ("<name> <sha>"), each
 // also passed to onBranchDeleted as soon as it is deleted. `integrationWorktree`: the integration
-// worktree goes too, when clean (the cleanup of a merged mission, core/merge.js).
-async function removeMission(name, { force = false, onBranchDeleted, integrationWorktree = false } = {}) {
+// worktree goes too, when clean (the cleanup of a merged mission, core/merge.js). The cleanup decides
+// under the mission lock: `check(mission)`, run there first, returns false to keep the mission (then
+// null is returned), and `onRefused(err)` is called there when the delivery refuses the removal.
+async function removeMission(name, { force = false, onBranchDeleted, integrationWorktree = false, check, onRefused } = {}) {
   // The name ends up in a recursive removal: no "..", no separator.
   if (!/^[a-z0-9-]+$/.test(name)) throw codedError('usage', { usage: 'relaylead remove <mission> [--force]' });
   const folder = missionDir(name);
@@ -795,6 +797,7 @@ async function removeMission(name, { force = false, onBranchDeleted, integration
     if (!FINISHED.includes(record.state) || record.stopping) {
       throw codedError('mission-running', { mission: name, state: shownState(record) });
     }
+    if (check && !check(mission)) return null;
     // Stopping by id again is harmless, and catches a session restarted since. A stop by pid is not
     // tried: the recorded pids may belong to unrelated processes by now.
     const adapter = getAdapter(mission.agent);
@@ -805,12 +808,19 @@ async function removeMission(name, { force = false, onBranchDeleted, integration
     await forgetSessions(mission, listSessions(name));
     // A project folder deleted since has no worktree or branch left to remove.
     const delivery = getDelivery(mission.config.delivery.type);
-    const branches = fs.existsSync(mission.dir)
-      ? await withRepoLock(mission.dir, 'remove', () => delivery.removeMission(mission, { force, onBranchDeleted, integrationWorktree }))
-      : [];
+    let branches = [];
+    try {
+      if (fs.existsSync(mission.dir)) {
+        branches = await withRepoLock(mission.dir, 'remove', () => delivery.removeMission(mission, { force, onBranchDeleted, integrationWorktree }));
+      }
+    } catch (err) {
+      if (onRefused) onRefused(err);
+      throw err;
+    }
     await releaseLock(mission.dir, mission);
     return branches;
   });
+  if (deleted === null) return null;
   // Retries: on Windows, a helper that has just ended may still hold a file for a moment.
   fs.rmSync(folder, { recursive: true, force: true, maxRetries: 5 });
   return deleted;

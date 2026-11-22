@@ -7,7 +7,9 @@ const path = require('node:path');
 const { run } = require('../core/cli');
 const { readMission } = require('../core/missions');
 const { listTasks, deliverMergeTask } = require('../core/tasks');
-const { tendMerge, OPTIONS } = require('../core/merge');
+const { tendMerge, removeIfMerged, OPTIONS } = require('../core/merge');
+const { withMissionLock } = require('../core/mission-lock');
+const { sleep } = require('../core/timing');
 const { listQuestions } = require('../core/questions');
 const { listSessions } = require('../core/sessions');
 const { readJson, writeJson } = require('../core/store');
@@ -339,4 +341,21 @@ test('a resolution whose launch met a busy lock is started at the next pass', as
   await waitFor(() => taskState('merge-into-main') === 'done', 30000, 'the resolution to be done', () => missionReport('demo'));
   await tendMerge('demo');
   assert.strictEqual(mergeRecord().state, 'merged');
+});
+
+test('the cleanup decides again under the mission lock: a merge started meanwhile keeps the mission', async (t) => {
+  const { dir, integration } = project(t);
+  commitIn(integration, 'feature.txt', 'new feature\n', 'feature');
+  done();
+  git(dir, 'merge', '-q', '--no-edit', 'relaylead/demo/integration');
+
+  let cleanup;
+  await withMissionLock('demo', 'test', async () => {
+    cleanup = removeIfMerged('demo');
+    await sleep(300);
+    writeJson(path.join(missionDir('demo'), 'merge.json'), { state: 'resolving', target: 'main', task: 'merge-into-main', attempts: 1, conflicts: [] });
+  });
+
+  assert.strictEqual(await cleanup, null);
+  assert.ok(fs.existsSync(path.join(missionDir('demo'), 'mission.json')));
 });
