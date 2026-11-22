@@ -86,6 +86,21 @@ test('every worktree of a repository shares one git lock, and a folder outside g
   assert.strictEqual(repoLockFile(tmpDir('relaylead-project-')), null);
 });
 
+// A git that fails for another reason than "not a git repository" must not let a merge run unlocked.
+test('a failing git is an error, not a repository without lock', { skip: process.platform === 'win32' }, (t) => {
+  process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
+  const dir = gitRepo({ 'README.md': 'hello\n' });
+  const bin = tmpDir('relaylead-git-');
+  fs.writeFileSync(path.join(bin, 'git'), '#!/bin/sh\necho "fatal: something broke" >&2\nexit 128\n', { mode: 0o755 });
+  const { PATH } = process.env;
+  process.env.PATH = bin + path.delimiter + PATH;
+  t.after(() => {
+    process.env.PATH = PATH;
+  });
+
+  assert.throws(() => repoLockFile(dir), /something broke/);
+});
+
 test('a git lock left by a process that died is taken over', async (t) => {
   process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
   const dir = gitRepo({ 'README.md': 'hello\n' });

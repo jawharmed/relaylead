@@ -154,24 +154,32 @@ async function withMissionLock(name, command, action) {
 }
 
 // The git lock of the repository holding `dir`, keyed by the real path of its common git folder: every
-// worktree of one repository shares it. Null when `dir` is in no git repository (the files delivery):
-// there is nothing shared to protect.
+// worktree of one repository shares it. Null only when there is no repository to protect: `dir` is in
+// none (the files delivery), or git cannot be run at all (ENOENT: no git, or no folder). Any other
+// failure of git (a timeout on a loaded machine, say) is thrown: a merge never runs unlocked.
 function repoLockFile(dir) {
-  let commonDir;
+  // Without background maintenance, like every git call of relaylead (deliveries/local-merge.js);
+  // LC_ALL=C, so git's message can be read.
+  const args = ['-c', 'gc.auto=0', '-c', 'maintenance.auto=false', 'rev-parse', '--git-common-dir'];
+  let output;
   try {
-    // Without background maintenance, like every git call of relaylead (deliveries/local-merge.js).
-    const args = ['-c', 'gc.auto=0', '-c', 'maintenance.auto=false', 'rev-parse', '--git-common-dir'];
-    const output = runFileSync('git', args, {
+    output = runFileSync('git', args, {
       cwd: dir,
+      env: { ...process.env, LC_ALL: 'C' },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
       timeout: gitTimeoutMs(),
     });
-    commonDir = fs.realpathSync.native(path.resolve(dir, output.trim()));
-  } catch {
-    return null;
+  } catch (err) {
+    if (err.code === 'ENOENT' || /not a git repository/i.test(String(err.stderr || ''))) return null;
+    if (err.code === 'ETIMEDOUT') {
+      const seconds = Math.round(gitTimeoutMs() / 1000);
+      throw new Error(`git rev-parse --git-common-dir did not end within ${seconds} s`);
+    }
+    throw err;
   }
+  const commonDir = fs.realpathSync.native(path.resolve(dir, output.trim()));
   const hash = crypto.createHash('sha1').update(commonDir).digest('hex').slice(0, 16);
   return path.join(home(), 'locks', `git-${hash}.lock`);
 }
