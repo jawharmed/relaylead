@@ -23,7 +23,8 @@ function snapshotFile() {
 // What the console follows in one mission, by key: question:<id> -> open|answered, task:<id> -> its
 // state and attempt, mission -> its state. Plus the events these states make now, by key.
 function viewOfMission(mission) {
-  const view = { mission: mission.state };
+  // "done, stopping" then "done": one state, so one event.
+  const view = { mission: mission.state.replace(/, stopping$/, '') };
   const events = { mission: FINISHED.test(mission.state) ? { kind: 'mission', id: mission.name, state: mission.state } : null };
   for (const question of listQuestions(mission.name)) {
     view[`question:${question.id}`] = question.state;
