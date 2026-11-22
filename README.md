@@ -14,16 +14,24 @@ Relaylead runs a team of Claude Code sessions in the background on a mission: a 
 ```sh
 npm install -g relaylead     # the relaylead command
 relaylead install            # launchd watcher and the Claude Code plugin
+```
+
+Then open Claude Code in your project and type `/relaylead` (or say "use relaylead to ..."). The conversation becomes the console: it sets the project up if needed, writes the mission with you, launches it, shows each question the lead asks as it comes (with the mission's name), sends your answers, and passes on what you tell the lead ("tell the lead of X to ..."). A new conversation starts by listing the open questions and the missions still running. Several missions can run at once.
+
+Without Claude Code open, the command line does the same:
+
+```sh
 relaylead init               # machine settings, then this project's .relaylead.json
 relaylead launch --request "Carry out the tasks"
 relaylead list               # follow the missions
 ```
 
-Then, as the lead asks questions:
+As the lead asks questions:
 
 ```sh
 relaylead question list <mission>
 relaylead answer <mission> <question id> <choice>
+relaylead tell <mission> "Use the v2 API"   # tell the lead something
 relaylead show <mission>     # open the lead's session
 ```
 

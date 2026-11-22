@@ -24,7 +24,7 @@ test('each command only allows the relaylead command it runs; the plugin has one
     assert.match(text, /^description: .+$/m);
     assert.match(text, new RegExp(`^allowed-tools: Bash\\(relaylead ${name} \\*\\)$`, 'm'));
   }
-  assert.deepStrictEqual(fs.readdirSync(PLUGIN_DIR).sort(), ['.claude-plugin', 'commands', 'hooks', 'types']);
+  assert.deepStrictEqual(fs.readdirSync(PLUGIN_DIR).sort(), ['.claude-plugin', 'commands', 'hooks', 'skills', 'types']);
   // The mod (status line entry, pane, /panneau) is checked by `claude plugin validate plugin`, which CI has no claude to run.
   const hooks = JSON.parse(fs.readFileSync(path.join(PLUGIN_DIR, 'hooks', 'hooks.json'), 'utf8'));
   assert.deepStrictEqual(hooks, { modules: ['./register.tsx'] });

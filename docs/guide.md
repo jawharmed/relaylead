@@ -25,6 +25,22 @@ relaylead doctor        # everything should say ok
 
 `init` writes the machine settings in `~/.relaylead/config.json` (once) and a `.relaylead.json` at the root of your project. The project must be a git repository, and `init` must run at its root. Run `claude` once in the folder and accept the trust question, so sessions can start there.
 
+### From Claude Code: the console
+
+After `relaylead install`, open Claude Code in your project and type `/relaylead`, or ask for it ("use relaylead to add a health check"). The `relaylead` skill of the plugin turns the conversation into a console:
+
+- it checks the installation and, without a `.relaylead.json`, asks the questions of `init` in the conversation and writes the files; later you can ask for changes in plain words ("limit to 2 developers here");
+- it writes the mission's tasks with you, launches it, then waits for events in the background (`relaylead wait --all` as a background command: Claude Code wakes the conversation when it ends, and nothing is spent in between);
+- each question the lead asks is shown as it is, with the mission's name and numbered options; your choice goes back with `relaylead answer`;
+- "tell the lead of X to ..." becomes `relaylead tell`; "where is X?" reads the state of the missions;
+- it wakes you only for a question, a failed task, or a mission that is done or stopped;
+- when another mission is already active on the machine, it asks the new mission's priority (and may change the others') and warns when two missions touch the same files;
+- a new conversation first lists every open question and the missions that are not finished, including what happened while no console was open. Questions asked while the console was closed are never lost: the watcher still sends the Mac notification, and the questions stay open until answered.
+
+The plugin's `/relaylead:*` commands remain.
+
+### From the command line
+
 Add one Markdown file per task in `tasks/`:
 
 ```markdown
@@ -210,7 +226,19 @@ Reads or sets the state declared by the lead (`working`, `waiting`, `done`, `han
 
 ### `relaylead wait [--timeout seconds] [--mission name]`
 
-Waits until a task or a question of the mission changes, then prints the changes as JSON. `--timeout 0` does not wait. The lead uses it.
+Waits until a task or a question of the mission changes, then prints the changes as JSON; a message from `relaylead tell` is a change of kind `message`, with its text. `--timeout 0` does not wait. The lead uses it.
+
+### `relaylead wait --all [--timeout seconds]`
+
+For the console: waits until something the user must know about happens in any mission of the machine, then prints `{"events": [...]}`; every event has a `mission` and a `kind`: `question` (opened, with its text and options), `task` (failed, with its summary) or `mission` (done or stopped). Without `--timeout` it waits as long as needed; `--timeout 0` looks once. What it has reported is remembered in `~/.relaylead/console-snapshot.json`, so each event is given once; it never touches what the leads see. It cannot be run from a session.
+
+### `relaylead tell <mission> <text>`
+
+Tells the lead of a mission something (a change of plan, a constraint). The message is recorded in the mission (`missions/<mission>/told/`, one file per message, kept as its memory) and the lead is woken within seconds; it reads the message, with its text, in the output of its next `relaylead wait`. Refused for a mission that is done or stopped. It cannot be run from a session.
+
+### `relaylead decision <text>` and `decision --list`
+
+For the lead: notes a decision taken with the user as a line of `decisions.md` in the mission's folder. `decision --list` prints them, then every message told with `tell`: a new lead (after a relaunch or a handover) reads it before going on.
 
 ### `relaylead question ask|list`
 

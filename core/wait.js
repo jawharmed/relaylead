@@ -9,6 +9,7 @@ const { sleep } = require('./timing');
 const { codedError } = require('./messages');
 const { listTasks, markFailed } = require('./tasks');
 const { listQuestions } = require('./questions');
+const { listTold } = require('./told');
 const { getAdapter } = require('../adapters');
 
 const DEFAULT_TIMEOUT_S = 100;
@@ -28,7 +29,7 @@ const RETRY_INTERRUPTED = 'retry interrupted before its crew started';
 // Without a snapshot, everything that exists is reported as new (from: null).
 // lostSince keeps, per session, when it was first seen missing, without a process, or waiting; and,
 // under the key task:<id>, when a running task was first seen without a session.
-const EMPTY_SNAPSHOT = { tasks: {}, questions: {}, lostSince: {} };
+const EMPTY_SNAPSHOT = { tasks: {}, questions: {}, messages: {}, lostSince: {} };
 
 function snapshotFile(name) {
   return path.join(missionDir(name), 'wait-snapshot.json');
@@ -78,6 +79,8 @@ function viewOf(name, sessions, lostSince, now) {
     view: {
       tasks: Object.fromEntries(tasks.map((task) => [task.id, failing.has(task.id) ? 'failed' : task.state])),
       questions: Object.fromEntries(listQuestions(name).map((question) => [question.id, question.state])),
+      // Messages the user told the lead (`relaylead tell`): each one is a change once, with its text.
+      messages: Object.fromEntries(listTold(name).map((message) => [message.id, 'sent'])),
     },
     toFail,
     lostSince: stillLost,
@@ -89,6 +92,8 @@ function viewOf(name, sessions, lostSince, now) {
 function viewKeyOf(tasks, view) {
   const byId = [...tasks].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   return JSON.stringify({
+    // Only when there are some, so the key of a view without messages is what it was before `tell`.
+    ...(Object.keys(view.messages).length > 0 ? { messages: Object.keys(view.messages).sort() } : {}),
     questions: Object.fromEntries(Object.keys(view.questions).sort().map((id) => [id, view.questions[id]])),
     tasks: Object.fromEntries(byId.map((task) => [task.id, { attempt: task.attempt, state: view.tasks[task.id] }])),
   });
@@ -107,7 +112,7 @@ function unseenChanges(name, sessions, lostSince, now) {
 
 function diff(before, after) {
   const changes = [];
-  for (const [kind, key] of [['task', 'tasks'], ['question', 'questions']]) {
+  for (const [kind, key] of [['task', 'tasks'], ['question', 'questions'], ['message', 'messages']]) {
     const ids = new Set([...Object.keys(before[key]), ...Object.keys(after[key])]);
     for (const id of [...ids].sort()) {
       const from = id in before[key] ? before[key][id] : null;
@@ -116,6 +121,16 @@ function diff(before, after) {
     }
   }
   return changes;
+}
+
+// The text of each message change, which the lead needs to read it.
+function withMessageText(name, changes) {
+  if (!changes.some((change) => change.kind === 'message')) return changes;
+  const told = listTold(name);
+  return changes.map((change) => {
+    const message = change.kind === 'message' && told.find((one) => one.id === change.id);
+    return message ? { ...change, text: message.text } : change;
+  });
 }
 
 // A finished task's crew session is stopped: a Claude session that is done keeps its process alive.
@@ -151,7 +166,7 @@ async function waitForChanges(name, timeoutSeconds = DEFAULT_TIMEOUT_S, report =
     // ended by a stop is never taken for a crew failure. A wait left behind by a stopped lead ends here.
     if (getState(name) === 'stopped') throw codedError('mission-stopped', { mission: name });
     for (const one of toFail) markFailed(name, one.id, one.summary);
-    const changes = diff(snapshot, view);
+    const changes = withMessageText(name, diff(snapshot, view));
     if (changes.length > 0 || Date.now() >= deadline) {
       report(changes);
       await stopFinishedCrew(adapter, changes, tasks, sessions);
