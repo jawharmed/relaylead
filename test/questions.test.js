@@ -55,6 +55,16 @@ test('answer accepts a free text for a question of the lead, not for one of the 
   assert.throws(() => answerQuestion('demo', 'q-db', 'sqlite'), { code: 'question-answered' });
 });
 
+test('question ask is refused on a mission that is over', async (t) => {
+  demoMission(t);
+  writeJson(path.join(missionDir('demo'), 'state.json'), { state: 'done', updatedAt: new Date().toISOString() });
+  const io = makeIo();
+  const code = await run(['question', 'ask', '--mission', 'demo', '--key', 'k', '--text', 't', '--option', 'a', '--option', 'b'], io);
+  assert.strictEqual(code, 1);
+  assert.match(io.err.text, /is over/);
+  assert.deepStrictEqual(listQuestions('demo'), []);
+});
+
 test('asking twice with the same key returns the same question', (t) => {
   demoMission(t);
   const first = askQuestion('demo', QUESTION);

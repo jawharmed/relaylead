@@ -360,6 +360,8 @@ commands.question = async (args, io) => {
   if (action === 'ask') {
     const name = missionName(options, io);
     refuseReplacedLead(name, io);
+    // The questions of a merge are asked by Relaylead itself (core/merge.js), not by this command.
+    if (/^(done|stopped)/.test(getState(name))) throw codedError('mission-question-over', { mission: name });
     // The keys irr-… and perm-… belong to the hooks: only the user answers those questions.
     if (/^(irr|perm)[^a-z0-9]/i.test(String(options.key || ''))) {
       throw codedError('bad-question', { detail: 'the keys irr-… and perm-… are kept for Relaylead' });
