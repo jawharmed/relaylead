@@ -28,14 +28,23 @@ function readFiles(folder) {
   return files;
 }
 
-// Every file under `folder` whose text holds the sentinel.
+// Every file under `folder` whose text holds the sentinel. A file removed while the walk runs (a lock
+// that `state set done` releases, say) holds nothing.
 function filesWithSentinel(folder) {
   const found = [];
+  const read = (file) => {
+    try {
+      return fs.readFileSync(file);
+    } catch (err) {
+      if (err.code === 'ENOENT') return Buffer.alloc(0);
+      throw err;
+    }
+  };
   const walk = (current) => {
     for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
       const file = path.join(current, entry.name);
       if (entry.isDirectory()) walk(file);
-      else if (fs.readFileSync(file).includes(SENTINEL)) found.push(path.relative(folder, file));
+      else if (read(file).includes(SENTINEL)) found.push(path.relative(folder, file));
     }
   };
   walk(folder);
