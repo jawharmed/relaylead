@@ -85,24 +85,50 @@ function reserveName(name) {
   }
 }
 
-// A mission launched by relaylead 0.1 that still runs in the folder `realDir`, or null: one that is
-// neither finished nor still stopping its sessions. It keeps the shared names of then
-// (relaylead/integration, .relaylead/worktrees/_integration), so no new mission starts beside it.
-function oldMissionIn(realDir) {
-  return (
-    allMissions().find((mission) => {
-      if (layout.isPerMission(mission) || mission.dir !== realDir) return false;
-      const record = readStateRecord(mission.name);
-      return !FINISHED.includes(record.state) || record.stopping;
-    }) || null
-  );
+// Whether a mission is not over yet: neither finished nor still stopping its sessions.
+function isActive(mission) {
+  const record = readStateRecord(mission.name);
+  return !FINISHED.includes(record.state) || record.stopping;
 }
 
-async function createMission({ name, dir, request, team, priority, agent, params }) {
+// A mission launched by relaylead 0.1 that still runs in the folder `realDir`, or null. It keeps the
+// shared names of then (relaylead/integration, .relaylead/worktrees/_integration), so no new mission
+// starts beside it.
+function oldMissionIn(realDir) {
+  return allMissions().find((mission) => !layout.isPerMission(mission) && mission.dir === realDir && isActive(mission)) || null;
+}
+
+// What a task source is, as a text: two missions with the same text would do the same tasks.
+function sourceText(source) {
+  if (source.type === 'tasks-dir') return `tasks-dir "${path.posix.normalize(String(source.dir).replace(/\\/g, '/')).replace(/\/+$/, '')}"`;
+  if (source.type === 'github-issues') return `github-issues "${source.repo || '.'}" label "${source.label || 'relaylead'}"`;
+  return JSON.stringify(source);
+}
+
+// The mission of the project `realDir`, not over yet, that takes its tasks from the same source, or
+// null. Each mission has its own tasks: two missions on one source would both do every task.
+function sourceTakenBy(realDir, source) {
+  const text = sourceText(source);
+  return allMissions().find((mission) => mission.dir === realDir && sourceText(mission.config.source) === text && isActive(mission)) || null;
+}
+
+// The task folder given with `relaylead launch --tasks`, relative to the project, with / separators.
+// A folder outside the project is refused: the tasks must be committed in the repository.
+function tasksFolder(realDir, folder) {
+  const relative = path.relative(realDir, path.resolve(realDir, folder)).split(path.sep).join('/');
+  if (relative === '' || relative.startsWith('../') || relative === '..' || path.isAbsolute(relative)) {
+    throw codedError('bad-tasks-folder', { folder, dir: realDir });
+  }
+  return relative;
+}
+
+// `tasks`: the task folder of this mission (`--tasks`), in place of source.dir.
+async function createMission({ name, dir, request, team, priority, agent, tasks, params }) {
   // The native version also gives the real letter case (macOS, Windows): CaseProj and caseproj are one folder.
   const realDir = fs.realpathSync.native(dir);
   const missionName = slug(name || path.basename(realDir));
   const config = loadConfig({ dir: realDir, params });
+  if (tasks !== undefined) config.source.dir = tasksFolder(realDir, tasks);
   // Its own integration branch: several missions may share the repository (core/layout.js).
   config.delivery.branch = layout.integrationBranch(missionName);
   const adapter = getAdapter(agent || config.agent);
@@ -126,6 +152,8 @@ async function createMission({ name, dir, request, team, priority, agent, params
   if (old) {
     throw codedError('old-mission-running', { dir: realDir, mission: old.name, state: shownState(readStateRecord(old.name)) });
   }
+  const sharing = sourceTakenBy(realDir, config.source);
+  if (sharing) throw codedError('source-taken', { mission: sharing.name, source: sourceText(config.source) });
   reserveName(missionName);
   try {
     // Under the mission lock until mission.json is written: a removal of the folder waits for it.

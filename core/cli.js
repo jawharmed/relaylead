@@ -126,6 +126,7 @@ commands.launch = async (args, io) => {
     team: options.team,
     priority: options.priority,
     agent: options.agent,
+    tasks: options.tasks,
   });
   io.out.write(mission.name + '\n');
   await startWatcherAfterLaunch(io);

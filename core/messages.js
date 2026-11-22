@@ -61,6 +61,9 @@ const messages = {
     usage: 'usage: {usage}',
     'repo-busy':
       'the git repository of {dir} has been busy for too long with "relaylead {command}" (process {pid}, since {since}); try again once it is over',
+    'source-taken':
+      'mission "{mission}" of this project already takes its tasks from {source} and is not over: both would do the same tasks. Give this mission tasks of its own: another task folder with --tasks <folder> (for instance tasks/backend and tasks/frontend), or another source in .relaylead.json (another label for GitHub issues); or launch it once "{mission}" is over',
+    'bad-tasks-folder': 'the task folder "{folder}" is not inside the project {dir}; give a folder of the project, such as --tasks tasks/backend',
     'old-mission-running':
       'mission "{mission}" was launched by relaylead 0.1 and still runs in {dir} ({state}); a new mission can start in this folder once it is over; if its lead is gone, stop it with: relaylead stop {mission}',
     'mission-exists':
@@ -307,6 +310,9 @@ const messages = {
     usage: 'usage : {usage}',
     'repo-busy':
       'le dépôt git de {dir} est occupé depuis trop longtemps par « relaylead {command} » (processus {pid}, depuis {since}) ; réessayez une fois qu\'il a fini',
+    'source-taken':
+      'la mission « {mission} » de ce projet prend déjà ses tâches dans {source} et n\'est pas finie : les deux feraient les mêmes tâches. Donnez à cette mission ses propres tâches : un autre dossier de tâches avec --tasks <dossier> (par exemple tasks/backend et tasks/frontend), ou une autre source dans .relaylead.json (un autre libellé pour les issues GitHub) ; ou lancez-la une fois « {mission} » finie',
+    'bad-tasks-folder': 'le dossier de tâches « {folder} » n\'est pas dans le projet {dir} ; indiquez un dossier du projet, par exemple --tasks tasks/backend',
     'old-mission-running':
       'la mission « {mission} » a été lancée par relaylead 0.1 et tourne encore dans {dir} ({state}) ; une nouvelle mission pourra démarrer dans ce dossier une fois celle-ci finie ; si son lead a disparu, arrêtez-la avec : relaylead stop {mission}',
     'mission-exists':

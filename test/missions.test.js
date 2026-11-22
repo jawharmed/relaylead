@@ -92,7 +92,7 @@ test('two missions launch at once in the same folder', async (t) => {
   const dir = tmpDir('relaylead-project-');
 
   const results = await Promise.all(
-    ['one', 'two'].map((name) => cliProcess(['launch', '--agent', 'fake', '--name', name, '--dir', dir])),
+    ['one', 'two'].map((name) => cliProcess(['launch', '--agent', 'fake', '--name', name, '--dir', dir, '--tasks', `tasks/${name}`])),
   );
   assert.deepStrictEqual(results.map((r) => r.code), [0, 0], JSON.stringify(results));
   assert.deepStrictEqual(listMissions().map((mission) => mission.name), ['one', 'two']);
@@ -100,8 +100,21 @@ test('two missions launch at once in the same folder', async (t) => {
     const mission = readMission(name);
     assert.strictEqual(mission.format, 2);
     assert.strictEqual(mission.config.delivery.branch, `relaylead/${name}/integration`);
+    assert.strictEqual(mission.config.source.dir, `tasks/${name}`);
     await waitUntilWorking(name);
   }
+});
+
+test('a task folder outside the project is refused', async (t) => {
+  freshHome(t);
+  const dir = tmpDir('relaylead-project-');
+
+  for (const folder of ['..', '../elsewhere', '.']) {
+    const refused = await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir, '--tasks', folder]);
+    assert.strictEqual(refused.code, 1, folder);
+    assert.match(refused.err, /is not inside the project/, folder);
+  }
+  assert.strictEqual(fs.existsSync(missionDir('demo')), false);
 });
 
 // A mission of relaylead 0.1 keeps the shared names of then: nothing starts beside it in its folder.

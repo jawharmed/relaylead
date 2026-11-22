@@ -196,7 +196,17 @@ Run them from the root of your project unless said otherwise. A mission name is 
 Starts a mission with a lead and its crew and prints its name.
 
 - `--request <text>`: what you want done.
-- `--name <name>`: the mission's name (the folder's name by default). Names are unique on the machine: to run a second mission in the same folder, give it another name. Several missions of one project run side by side, each with its own integration branch and worktrees; their git operations on the repository (worktrees, branches, merges) take turns. A mission launched by Relaylead 0.1 that is still running keeps its folder to itself: `launch` is refused there until it is over (or stopped).
+- `--name <name>`: the mission's name (the folder's name by default). Names are unique on the machine: to run a second mission in the same folder, give it another name.
+- `--tasks <folder>`: the mission's task folder, inside the project (`source.dir`, `tasks` by default).
+
+Several missions of one project run side by side, each with its own integration branch and worktrees; their git operations on the repository (worktrees, branches, merges) take turns. Each mission needs tasks of its own: `launch` is refused while a mission of the same project that is not over takes its tasks from the same source (the same task folder, or the same GitHub label). For instance, a backend mission and a frontend mission:
+
+```sh
+relaylead launch --name backend --tasks tasks/backend --request "Build the API"
+relaylead launch --name frontend --tasks tasks/frontend --request "Build the pages"
+```
+
+A mission launched by Relaylead 0.1 that is still running keeps its folder to itself: `launch` is refused there until it is over (or stopped).
 - `--dir <path>`: the project folder (the current folder by default).
 - `--team <name>` and `--agent <name>`: the team and the agent to use (the built-in team `code` and `claude`).
 - `--priority <value>`: recorded with the mission (`normal` by default).
