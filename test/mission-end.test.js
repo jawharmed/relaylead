@@ -4,7 +4,8 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { startTask } = require('../core/tasks');
-const { stopMission } = require('../core/missions');
+const { stopMission, reapLead } = require('../core/missions');
+const { readJson, writeJson } = require('../core/store');
 const { askQuestion } = require('../core/questions');
 const { listSessions } = require('../core/sessions');
 const { missionDir } = require('../core/paths');
@@ -56,4 +57,24 @@ test('a mission waiting for an answer with nothing moving for abandonDays is sho
   assert.match(doctor.out, /^warn mission quiet: abandoned: a question is open and nothing has moved for 7 days;/m);
   assert.doesNotMatch(doctor.out, /mission recent/);
   assert.ok(fs.existsSync(path.join(missionDir('quiet'), 'mission.json')));
+});
+
+test('the helper that stops the lead of a done mission forgets only the sessions that have ended', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  const gate = tmpDir('relaylead-gate-');
+  const before = process.env.RELAYLEAD_FAKE_CREW_GATE;
+  process.env.RELAYLEAD_FAKE_CREW_GATE = gate; // the crew member keeps working
+  t.after(() => {
+    if (before === undefined) delete process.env.RELAYLEAD_FAKE_CREW_GATE;
+    else process.env.RELAYLEAD_FAKE_CREW_GATE = before;
+  });
+  await startTask('demo', { id: 'a' });
+  const [crew] = listSessions('demo');
+  // A lead already gone: the helper has nothing to stop.
+  writeJson(path.join(missionDir('demo'), 'lead.json'), { shortId: 'dead0001', sessionName: 'demo/lead/1' });
+
+  await reapLead('demo', readJson(path.join(missionDir('demo'), 'mission.json')).createdAt);
+
+  assert.ok(!forgotten('demo').includes(crew.shortId), 'a live crew member stays in the agent\'s list');
 });

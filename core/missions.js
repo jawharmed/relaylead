@@ -554,18 +554,35 @@ async function spawnReaper(name, createdAt) {
 // the deadline and breaks a run of idle reads; at the deadline the lead is stopped anyway. Nobody
 // watches the helper, so a stop that fails is written to the mission's journal. A helper of an older
 // mission of the same name returns at once.
-// Once the lead is stopped (or not, the helper gives up), every session of the mission leaves the
-// agent's list (forgetSessions): the mission is over.
+// Once the lead is stopped (or not, the helper gives up), the sessions of the mission that have ended
+// leave the agent's list (forgetSessions): the mission is over. A session still running (a lead that
+// could not be stopped, the crew member resolving a merge conflict meanwhile) stays listed.
 async function reapLead(name, createdAt) {
   if (!isMissionOf(name, createdAt)) return;
   const mission = readMission(name);
+  let stopped = null;
   try {
-    await stopLeadAfterTurn(mission);
+    stopped = await stopLeadAfterTurn(mission);
   } finally {
-    await forgetSessions(mission, listSessions(name));
+    const ended = await endedForGood(mission);
+    // The lead just stopped may still show its process for a moment: it is forgotten all the same.
+    if (stopped && !ended.some((session) => session.shortId === stopped.shortId)) ended.push(stopped);
+    await forgetSessions(mission, ended);
   }
 }
 
+// The sessions of the registry the adapter lists without a process; none when its list fails.
+async function endedForGood(mission) {
+  let rows;
+  try {
+    rows = await getAdapter(mission.agent).list(mission.name);
+  } catch {
+    return [];
+  }
+  return listSessions(mission.name).filter((session) => !hasProcess(rows, session));
+}
+
+// Returns the lead's session once this helper has stopped it, otherwise nothing.
 async function stopLeadAfterTurn(mission) {
   const name = mission.name;
   const adapter = getAdapter(mission.agent);
@@ -590,6 +607,7 @@ async function stopLeadAfterTurn(mission) {
   if (!session) return;
   try {
     await adapter.stop(session);
+    return session;
   } catch (err) {
     writeJournal(name, 'reaper', `could not stop the lead ${lead.shortId}: ${err.message}`);
   }
