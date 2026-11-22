@@ -490,6 +490,21 @@ function pidToWaitFor(listed, registry, session) {
   return { pid: recorded, settleMs: settleBoundMs(stopWaitMs(), { fallback: true }) };
 }
 
+// Takes stopped sessions out of the agent's own list of sessions, when it keeps one (`claude agents`):
+// at the end of a mission, as `relaylead remove` does. Best effort: a session left listed is harmless,
+// and must not keep the mission from ending.
+async function forgetSessions(mission, sessions) {
+  const adapter = getAdapter(mission.agent);
+  if (!adapter.forget) return;
+  for (const session of sessions) {
+    try {
+      await adapter.forget(session);
+    } catch {
+      // left in the list
+    }
+  }
+}
+
 // The folders of these sessions. An adapter row may have no folder: the registry has it.
 function sessionDirs(mission, sessions) {
   const registry = listSessions(mission.name);
@@ -534,9 +549,20 @@ async function spawnReaper(name, createdAt) {
 // the deadline and breaks a run of idle reads; at the deadline the lead is stopped anyway. Nobody
 // watches the helper, so a stop that fails is written to the mission's journal. A helper of an older
 // mission of the same name returns at once.
+// Once the lead is stopped (or not, the helper gives up), every session of the mission leaves the
+// agent's list (forgetSessions): the mission is over.
 async function reapLead(name, createdAt) {
   if (!isMissionOf(name, createdAt)) return;
   const mission = readMission(name);
+  try {
+    await stopLeadAfterTurn(mission);
+  } finally {
+    await forgetSessions(mission, listSessions(name));
+  }
+}
+
+async function stopLeadAfterTurn(mission) {
+  const name = mission.name;
   const adapter = getAdapter(mission.agent);
   const lead = readJson(missionFile(name, 'lead.json'), {});
   const giveUpAt = Date.now() + reapMaxMs();
@@ -668,9 +694,19 @@ async function stopAndFree(mission, record, stopAll) {
     firstError.warnings = warnings;
     throw firstError;
   }
+  if (!skipped) await forgetSessions(mission, endedSessions(mission, record));
   writeState(mission.name, { state: record.state, note: record.note });
   await releaseLock(mission.dir, mission);
   return { outcome: skipped ? 'skipped' : 'stopped', warnings };
+}
+
+// The sessions of a mission once it is stopped: all of them, but the lead of a done mission while
+// the helper `_reap` has not ended: that lead is still ending its turn, and the helper forgets it.
+function endedSessions(mission, record) {
+  const sessions = listSessions(mission.name);
+  if (record.state !== 'done' || fs.existsSync(missionFile(mission.name, 'reaper-ended.json'))) return sessions;
+  const lead = readJson(missionFile(mission.name, 'lead.json'), {});
+  return sessions.filter((session) => session.shortId !== lead.shortId);
 }
 
 // Returns {outcome, warnings}. outcome: 'stopped' (the mission was running, or was stopped and is
@@ -741,11 +777,8 @@ async function removeMission(name, { force = false, onBranchDeleted } = {}) {
     if (adapter.stopById) {
       for (const session of listSessions(name)) await adapter.stop(session);
     }
-    // Then out of the agent's own list of sessions, when it keeps one (claude agents). Best effort: a
-    // session left listed is harmless, and must not keep the mission from being removed.
-    if (adapter.forget) {
-      for (const session of listSessions(name)) await adapter.forget(session).catch(() => {});
-    }
+    // Then out of the agent's own list of sessions, when it keeps one (claude agents).
+    await forgetSessions(mission, listSessions(name));
     // A project folder deleted since has no worktree or branch left to remove.
     const delivery = getDelivery(mission.config.delivery.type);
     const branches = fs.existsSync(mission.dir)
@@ -768,6 +801,7 @@ module.exports = {
   listMissions,
   stopMission,
   stopSessionsAndWait,
+  forgetSessions,
   removeMission,
   readMission,
   getState,

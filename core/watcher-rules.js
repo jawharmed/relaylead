@@ -11,6 +11,7 @@
 // (usage-pause.json, null when the mission is not paused), config, watch (watch.json)}.
 //
 // obs.questions: the open questions (questions.js listQuestions), null when they could not be read.
+// obs.lastActivityAt: when a file of the mission folder last changed, in ms (abandon.js lastActivity).
 //
 // Actions: {type: 'stop-session', session, log}, {type: 'log', text, journal}, {type: 'mark-failed',
 // id, summary, log}, {type: 'wake-lead', reasons, log}, {type: 'relaunch-lead', resume} and
@@ -19,10 +20,11 @@
 // tokens}, {type: 'mail', shortId, text, log}, {type: 'answer-question', id, choice, log} (answers it
 // as the user would, and writes `log` to both logs), {type: 'remind-question', id, text, log} (a
 // notification to the user), {type: 'pause-mission', resumeAt, reason, wake, log} and
-// {type: 'resume-mission', log}.
+// {type: 'resume-mission', log}; {type: 'notify', text, log} (a notification to the user).
 const { contextOf } = require('./readings');
 const { DEFAULTS, deepMerge } = require('./config');
 const { isFresh } = require('./usage');
+const { abandonDays, isSilent } = require('./abandon');
 
 // An active lead whose last heartbeat is older than this is reported, never stopped.
 const SILENT_MS = 30 * 60 * 1000;
@@ -84,6 +86,7 @@ function emptyWatch() {
     notifiedQuestions: {},
     usageTries: 0,
     usagePausedFor: null,
+    abandonedNoticeFor: null,
   };
 }
 
@@ -177,6 +180,7 @@ function decide(obs) {
   // questions (rule 30), which start no session.
   if (tendUsage(obs, watch, actions, log)) {
     tendQuestions(obs, watch, actions);
+    tendAbandoned(obs, watch, actions);
     return result;
   }
   stopExtraLeads(obs, actions);
@@ -205,6 +209,7 @@ function decide(obs) {
   }
   if (actions.slice(before).every((action) => action.type === 'log')) adviseLead(obs, watch, status, actions, log);
   tendQuestions(obs, watch, actions); // rule 30
+  tendAbandoned(obs, watch, actions); // rule 31
   return result;
 }
 
@@ -575,6 +580,23 @@ function tendQuestions(obs, watch, actions) {
     const text = `Question ${question.id} waits for your answer: ${question.text}`;
     actions.push({ type: 'remind-question', id: question.id, text, log: `question-reminder ${question.id}` });
   }
+}
+
+// Rule 31: a mission that waits for the user (a question open) while nothing has changed in its folder
+// for abandonDays days is abandoned: the user is told once per silence (a notification and the log).
+// Nothing is stopped or removed. Its journal is not written: that would end the silence.
+function tendAbandoned(obs, watch, actions) {
+  const open = obs.questions || [];
+  if (!isSilent(obs.config, open.length, obs.lastActivityAt, obs.now)) return;
+  const silence = iso(obs.lastActivityAt);
+  if (watch.abandonedNoticeFor === silence) return;
+  watch.abandonedNoticeFor = silence;
+  const days = abandonDays(obs.config);
+  actions.push({
+    type: 'notify',
+    text: `Mission ${obs.mission.name} looks abandoned: question ${open[0].id} is open and nothing has moved for ${days} days. Answer it, or stop the mission.`,
+    log: `mission-abandoned ${open[0].id} ${days} days`,
+  });
 }
 
 // The usage settings of a mission: its configuration over the defaults.

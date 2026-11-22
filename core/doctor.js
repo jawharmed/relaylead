@@ -14,6 +14,8 @@ const API_KEY_CHECK = 'in a running session (relaylead show <mission>), /status 
 const { watcherRunning } = require('./watcher');
 const { runFileSync } = require('./run-file');
 const { readMemory, memorySettings } = require('./memory');
+const { listMissions } = require('./missions');
+const { abandonment } = require('./abandon');
 
 const MIN_NODE = 18;
 
@@ -95,6 +97,18 @@ async function doctor(dir) {
     } catch (err) {
       add('warn', 'memory', `could not read the project memory (${err.message})`);
     }
+  }
+
+  // Missions that wait for an answer while nothing moves (core/abandon.js): reported, never removed.
+  try {
+    for (const mission of listMissions()) {
+      const abandoned = abandonment(mission.name);
+      if (abandoned) {
+        add('warn', `mission ${mission.name}`, `abandoned: a question is open and nothing has moved for ${abandoned.days} days; answer it (relaylead question list ${mission.name}) or stop the mission (relaylead stop ${mission.name})`);
+      }
+    }
+  } catch (err) {
+    add('warn', 'missions', `could not read the missions (${err.message})`);
   }
 
   if (fs.existsSync(path.join(home(), 'STOP'))) add('warn', 'STOP', `present in ${home()}: the watcher does nothing until it is removed`);

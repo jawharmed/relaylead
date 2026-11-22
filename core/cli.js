@@ -33,6 +33,7 @@ const { doctor } = require('./doctor');
 const { init } = require('./init');
 const { buildOverview } = require('./overview');
 const { queuedCount } = require('./places');
+const { abandonment } = require('./abandon');
 const { startDashboard } = require('./dashboard');
 const pkg = require('../package.json');
 
@@ -162,13 +163,17 @@ commands.list = async (args, io) => {
 };
 
 // The state of a mission as the user sees it: that of its lead, or its pause for the usage limit,
-// then its tasks waiting for a place (left alone once the mission is done or stopped).
+// then its tasks waiting for a place, and whether it looks abandoned (core/abandon.js). Left alone once
+// the mission is done or stopped.
 function shownState(name, state, io) {
   if (/^(done|stopped)/.test(state)) return state;
+  const lang = language(io);
   const pause = readPause(name);
-  const shown = pause ? t('usagePausedState', { resumeAt: localTime(pause.resumeAt) }, language(io)) : state;
+  let shown = pause ? t('usagePausedState', { resumeAt: localTime(pause.resumeAt) }, lang) : state;
   const queued = queuedCount(name);
-  return queued > 0 ? shown + t('queuedMark', { n: queued }, language(io)) : shown;
+  if (queued > 0) shown += t('queuedMark', { n: queued }, lang);
+  if (abandonment(name)) shown += t('abandonedMark', {}, lang);
+  return shown;
 }
 
 // A mission paused for the usage limit says so before its lead's session is shown: that session is

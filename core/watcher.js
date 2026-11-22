@@ -28,6 +28,7 @@ const { withMissionLock, takeOverStaleLock, EMPTY_LOCK_STALE_MS } = require('./m
 const { sleep } = require('./timing');
 const { watchLog, watchLogFile } = require('./watch-log');
 const { decide, emptyWatch, wakeWithoutEffect } = require('./watcher-rules');
+const { lastActivity } = require('./abandon');
 const { getAdapter } = require('../adapters');
 
 const FINISHED = ['done', 'stopped'];
@@ -199,6 +200,7 @@ async function observe(name) {
     config: mission.config,
     watch,
     questions,
+    lastActivityAt: lastActivity(name),
   };
 }
 
@@ -232,6 +234,9 @@ async function act(name, action, watch) {
       answerQuestion(name, action.id, action.choice); // throws when the user answered meanwhile
       logLine(name, action.log);
       writeJournal(name, 'watcher', action.log);
+    } else if (action.type === 'notify') {
+      logLine(name, action.log);
+      notify({ title: `Relaylead: ${name}`, text: action.text });
     } else if (action.type === 'remind-question') {
       logLine(name, action.log);
       notify({ title: `Relaylead: ${name}`, text: action.text });

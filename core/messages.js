@@ -261,6 +261,7 @@ const messages = {
       'mission "{mission}" is paused by the usage limit until {resumeAt}; it resumes by itself then, and starts no session before',
     usagePausedState: 'usage-pause (resume {resumeAt})',
     queuedMark: ' ({n} queued)',
+    abandonedMark: ' (abandoned)',
   },
   fr: {
     help: [
@@ -484,6 +485,7 @@ const messages = {
       'la mission « {mission} » est en pause (limite d\'usage) jusqu\'à {resumeAt} ; elle reprendra seule à cette heure, et ne lance aucune session d\'ici là',
     usagePausedState: 'usage-pause (reprise {resumeAt})',
     queuedMark: ' ({n} en file)',
+    abandonedMark: ' (abandonnée)',
   },
 };
 

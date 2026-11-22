@@ -162,13 +162,22 @@ async function attach(session) {
   return 0;
 }
 
+// Like `claude rm`: the fake agent keeps no list of its own, so the call is logged in the mission
+// folder (fake-forget.log) for the tests. A mission folder already removed is left alone.
+async function forget(session) {
+  const folder = missionDir(session.name.split('/')[0]);
+  if (!fs.existsSync(folder)) return;
+  fs.appendFileSync(path.join(folder, 'fake-forget.log'), `${new Date().toISOString()} forget ${session.shortId}\n`);
+}
+
 module.exports = {
   name: 'fake',
-  capabilities: ['launch', 'list', 'stop', 'attach', 'wake'],
+  capabilities: ['launch', 'list', 'stop', 'attach', 'wake', 'forget'],
   stopById: true,
   launch,
   list,
   stop,
   attach,
   wake,
+  forget,
 };
