@@ -48,7 +48,7 @@ test('startTask launches a crew member and records the task', async (t) => {
     profile: 'developer',
     state: 'running',
     session: session.shortId,
-    cwd: path.join(dir, 'out', 'a'),
+    cwd: path.join(dir, 'out', 'demo', 'a'),
     branch: null,
     startedAt: record.startedAt,
     attempt: 1,
@@ -63,7 +63,7 @@ test('startTask launches a crew member and records the task', async (t) => {
   assert.deepStrictEqual(spec.profile, loadProfile('developer', { dir }));
   assert.match(spec.prompt, /First task/);
   assert.match(spec.prompt, /Write the first file\./);
-  assert.strictEqual(spec.cwd, path.join(dir, 'out', 'a'));
+  assert.strictEqual(spec.cwd, path.join(dir, 'out', 'demo', 'a'));
   assert.ok(spec.prompt.includes('relaylead task done a --summary'));
 
   const tasks = listTasks('demo');
@@ -85,7 +85,7 @@ test('a task with an unknown profile is refused before anything is launched', as
 
   assert.strictEqual(specs.length, 0);
   assert.strictEqual(fs.existsSync(path.join(missionDir('demo'), 'tasks', 'a.json')), false);
-  assert.strictEqual(fs.existsSync(path.join(dir, 'out', 'a')), false);
+  assert.strictEqual(fs.existsSync(path.join(dir, 'out', 'demo', 'a')), false);
 });
 
 test('a task that asks first starts once answered, and its crew member gets the answer', async (t) => {
@@ -118,7 +118,7 @@ test('a task whose dependencies are not delivered is refused, naming them', asyn
 
   assert.strictEqual(specs.length, 1);
   assert.strictEqual(fs.existsSync(path.join(missionDir('demo'), 'tasks', 'b.json')), false);
-  assert.strictEqual(fs.existsSync(path.join(dir, 'out', 'b')), false);
+  assert.strictEqual(fs.existsSync(path.join(dir, 'out', 'demo', 'b')), false);
 });
 
 test('a task the user chose to skip is refused', async (t) => {
@@ -365,8 +365,8 @@ test('a dependency counts once it is delivered', async (t) => {
     ],
   );
 
-  fs.mkdirSync(path.join(dir, 'out', 'a'), { recursive: true });
-  fs.writeFileSync(path.join(dir, 'out', 'a', 'a.txt'), 'a\n');
+  fs.mkdirSync(path.join(dir, 'out', 'demo', 'a'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'out', 'demo', 'a', 'a.txt'), 'a\n');
   assert.strictEqual((await deliverTask('demo', 'a')).outcome, 'delivered');
   assert.deepStrictEqual(
     listTasks('demo').map((task) => [task.id, task.state, task.ready]),
@@ -412,7 +412,7 @@ test('fake mission runs two dependent tasks to done', async (t) => {
       ['b', 'delivered'],
     ],
   );
-  assert.strictEqual(fs.readFileSync(path.join(dir, 'out', 'b', 'b.txt'), 'utf8'), 'fake work on b\n');
+  assert.strictEqual(fs.readFileSync(path.join(dir, 'out', 'demo', 'b', 'b.txt'), 'utf8'), 'fake work on b\n');
   const tasksDir = path.join(missionDir('demo'), 'tasks');
   const aResult = readJson(path.join(tasksDir, 'a.result.json'));
   const bRecord = readJson(path.join(tasksDir, 'b.json'));
@@ -612,8 +612,8 @@ test('retry refuses a task that has not failed, and replays a running one', asyn
 
   await assert.rejects(retryTask('demo', { id: 'b' }), { code: 'task-not-retryable', vars: { id: 'b', state: 'todo' } });
   finishTask('demo', 'a', { state: 'done' });
-  fs.mkdirSync(path.join(dir, 'out', 'a'), { recursive: true });
-  fs.writeFileSync(path.join(dir, 'out', 'a', 'a.txt'), 'a\n');
+  fs.mkdirSync(path.join(dir, 'out', 'demo', 'a'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'out', 'demo', 'a', 'a.txt'), 'a\n');
   await deliverTask('demo', 'a');
   await assert.rejects(retryTask('demo', { id: 'a' }), { code: 'task-not-retryable', vars: { id: 'a', state: 'delivered' } });
 

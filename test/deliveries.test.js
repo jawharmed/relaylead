@@ -183,6 +183,20 @@ test('refuses a folder that is not a git repository', async (t) => {
   assert.strictEqual(fs.existsSync(missionDir('demo')), false);
 });
 
+// Two missions of one folder never share an output folder; a 0.1 mission keeps out/<id>.
+test('files delivery gives each mission its own output folders', (t) => {
+  freshHome(t);
+  const dir = fs.realpathSync.native(tmpDir('relaylead project-'));
+  writeMission('one', dir);
+  writeMission('two', dir);
+  writeMission('old', dir, { format: 1 });
+
+  assert.deepStrictEqual(
+    ['one', 'two', 'old'].map((name) => files.prepareTask(readMission(name), { id: 'a' }).cwd),
+    [path.join(dir, 'out', 'one', 'a'), path.join(dir, 'out', 'two', 'a'), path.join(dir, 'out', 'a')],
+  );
+});
+
 test('files delivery checks the output folder', async (t) => {
   freshHome(t);
   const dir = fs.realpathSync.native(tmpDir('relaylead project-'));
@@ -193,7 +207,7 @@ test('files delivery checks the output folder', async (t) => {
   const mission = readMission('demo');
 
   const { cwd, branch } = files.prepareTask(mission, { id: 'a' });
-  assert.strictEqual(cwd, path.join(dir, 'out', 'a'));
+  assert.strictEqual(cwd, path.join(dir, 'out', 'demo', 'a'));
   assert.strictEqual(branch, null);
   finishTask('demo', 'a', { state: 'done' });
 

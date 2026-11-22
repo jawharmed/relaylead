@@ -118,7 +118,7 @@ When a task is delivered, its `state:` line becomes `done` in the integration br
 
 - **`local-merge`** (default): each finished task is merged into the mission's integration branch, `relaylead/<mission>/integration`. Nothing leaves your machine. (`delivery.branch` is no longer read: each mission has its own branch.)
 - **`github-pr`**: meant for the `github-issues` source. A finished task's branch is pushed to the remote (`origin`, or `delivery.remote`), a pull request to the integration branch is opened and merged on GitHub in the same step, the task's branch is deleted on the remote, the local integration branch follows the remote one, and the issue is closed. No review is waited for: the lead delivers a task it has found finished, so its pull request is opened, then merged at once. If you want to review the work, do it on the integration branch before you merge it into your own. The integration branch must be pushable to the remote.
-- **`files`**: no git needed; each task writes its output into `out/<task id>/` in the project folder.
+- **`files`**: no git needed; each task writes its output into `out/<mission>/<task id>/` in the project folder.
 
 Relaylead's own commits run your git hooks (with `LC_ALL=C`). These run in the integration worktree, where no dependencies are installed: a hook that needs `node_modules` (husky, commitlint, lint-staged) fails there. Such projects set `"delivery": {"runHooks": false}`, or deliver with `relaylead task deliver <id> --no-hooks --mission <mission>`.
 

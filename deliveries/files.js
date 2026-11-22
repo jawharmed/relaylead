@@ -1,12 +1,14 @@
-// Delivery "files in a folder": each task writes into <dir>/out/<id>/, no git needed.
+// Delivery "files in a folder": each task writes into <dir>/out/<mission>/<id>/ (core/layout.js), no
+// git needed: several missions of one folder never write into the same folder.
 const fs = require('node:fs');
 const path = require('node:path');
 const { missionDir } = require('../core/paths');
 const { writeJson, readJson } = require('../core/store');
 const { codedError } = require('../core/messages');
+const layout = require('../core/layout');
 
 function outDir(mission, task) {
-  return path.join(mission.dir, 'out', task.id);
+  return layout.outDir(mission, task.id);
 }
 
 function prepareMission() {
