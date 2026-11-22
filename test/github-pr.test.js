@@ -9,7 +9,9 @@ const { tmpDir } = require('../fixtures/helpers');
 const { git, gitRepo } = require('../fixtures/git');
 const { fakeGh, issue } = require('../fixtures/github');
 
-const INTEGRATION = 'relaylead/integration';
+const { FORMAT, integrationBranch } = require('../core/layout');
+
+const INTEGRATION = integrationBranch('m');
 
 // A project whose origin is a bare repository, the fake GitHub with `issues`, and a prepared mission.
 function setup(t, issues) {
@@ -21,7 +23,8 @@ function setup(t, issues) {
   git(dir, 'push', '-q', 'origin', 'main');
   const github = fakeGh(t, { remote, issues });
   const config = loadConfig({ params: { source: { type: 'github-issues' }, delivery: { type: 'github-pr' } } });
-  const mission = { name: 'm', dir, config };
+  config.delivery.branch = INTEGRATION; // as createMission writes it
+  const mission = { name: 'm', format: FORMAT, dir, config };
   githubPr.prepareMission(mission);
   return { dir, remote, github, mission };
 }
@@ -54,7 +57,7 @@ test('deliver pushes the branch, opens and merges a pull request, deletes the br
   assert.strictEqual(git(remote, 'show', `${INTEGRATION}:one.txt`), 'one');
   assert.strictEqual(git(dir, 'show', `${INTEGRATION}:one.txt`), 'one');
   assert.deepStrictEqual(warnings.map((warning) => [warning.code, warning.vars.url]), [['pr-merged', state.prs[0].url]]);
-  assert.ok(!fs.existsSync(path.join(dir, '.relaylead', 'worktrees', 'issue-1')));
+  assert.ok(!fs.existsSync(path.join(dir, '.relaylead', 'worktrees', 'm', 'issue-1')));
   assert.strictEqual(git(remote, 'branch', '--list', 'relaylead/m/issue-1'), '');
 });
 

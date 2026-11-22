@@ -387,6 +387,17 @@ test('task ids must be usable in branch names', async (t) => {
   }
 });
 
+// Its branch relaylead/<mission>/integration would be the integration branch; a 0.1 mission has another.
+test('a task named integration is refused, except in a 0.1 mission', async (t) => {
+  const dir = setupProject(t, 'demo');
+  fs.writeFileSync(path.join(dir, 'tasks', 'integration.md'), '---\ntitle: Named like the branch\n---\n');
+  writeMission('demo', dir);
+  assert.throws(() => listTasks('demo'), { code: 'bad-task-id' });
+
+  writeMission('demo', dir, { format: 1 });
+  assert.ok(listTasks('demo').some((task) => task.id === 'integration'));
+});
+
 test('fake mission runs two dependent tasks to done', async (t) => {
   const dir = setupProject(t, 'demo');
 

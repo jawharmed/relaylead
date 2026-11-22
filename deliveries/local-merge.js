@@ -7,6 +7,7 @@ const { t, codedError } = require('../core/messages');
 const { sleepSync, retrySync } = require('../core/timing');
 const { runFileSync, gitTimeoutMs } = require('../core/run-file');
 const tasksDirSource = require('../sources/tasks-dir');
+const layout = require('../core/layout');
 
 // Git refuses to start when another git command holds a lock file (index.lock, a ref's .lock),
 // for instance a crew member committing, or git's background maintenance. Its message names the
@@ -95,16 +96,13 @@ function currentBranch(cwd) {
   return git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']);
 }
 
-function worktreesDir(mission) {
-  return path.join(mission.dir, '.relaylead', 'worktrees');
-}
-
+// The folders of core/layout.js: per mission since 0.2, shared by the missions of 0.1.
 function integrationDir(mission) {
-  return path.join(worktreesDir(mission), '_integration');
+  return layout.integrationDir(mission);
 }
 
 function taskDir(mission, task) {
-  return path.join(worktreesDir(mission), task.id);
+  return layout.taskDir(mission, task.id);
 }
 
 function taskBranch(mission, task) {
@@ -136,13 +134,6 @@ function excludeRelaylead(dir) {
   fs.appendFileSync(file, `${separator}.relaylead/\n`);
 }
 
-// Git cannot have both a branch a/b and a branch a/b/c: the integration branch must not be, or
-// contain, the folder of the task branches relaylead/<mission>/<id>.
-function branchesClash(branch, missionName) {
-  const tasksFolder = `relaylead/${missionName}`;
-  return branch === tasksFolder || branch.startsWith(tasksFolder + '/') || tasksFolder.startsWith(branch + '/');
-}
-
 // Checks everything before changing anything. Then creates the integration branch from the user's
 // current branch, with its worktree; or, when a former mission made them, brings the user's commits
 // made since into the integration branch, so this mission sees its new tasks.
@@ -150,9 +141,6 @@ function prepareMission(mission) {
   const { branch } = mission.config.delivery;
   if (mission.config.guard.protectedBranches.includes(branch)) {
     throw codedError('protected-branch', { branch });
-  }
-  if (branchesClash(branch, mission.name)) {
-    throw codedError('branch-clash', { branch, mission: mission.name });
   }
   if (!fs.existsSync(path.join(mission.dir, '.git'))) {
     throw codedError('not-a-git-repo', { dir: mission.dir });

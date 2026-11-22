@@ -104,7 +104,7 @@ const messages = {
       'mission "{mission}" is stopped, but its sessions are not stopped yet: "relaylead {holder}" still holds the mission; run relaylead stop {mission} again',
     'task-not-deliverable': 'task "{id}" is {state}; only a done task can be delivered',
     'protected-branch':
-      'the integration branch "{branch}" is protected; set another delivery.branch in .relaylead.json',
+      'the integration branch "{branch}" is protected (guard.protectedBranches); launch the mission under another name with --name',
     'not-a-git-repo':
       '{dir} is not the root of a git repository; run the mission at the root, or set "delivery": {"type": "files"} in .relaylead.json',
     'merge-conflict':
@@ -142,10 +142,8 @@ const messages = {
     'task-branch-missing': 'cannot deliver task "{id}": its branch {branch} is missing',
     'worktree-mismatch':
       'the folder {dir} is on branch "{actual}", not "{branch}"',
-    'branch-clash':
-      'the integration branch "{branch}" clashes with the task branches relaylead/{mission}/<id>; choose another mission name or delivery.branch',
     'integration-mismatch':
-      'the integration worktree {dir} is on branch "{actual}", not "{branch}"; set delivery.branch back to "{actual}", or remove the worktree with: git worktree remove "{dir}"',
+      'the integration worktree {dir} is on branch "{actual}", not "{branch}"; remove the worktree with: git worktree remove "{dir}", then launch again',
     'integration-dirty':
       'the integration worktree {dir} has changes nobody committed ({files}); commit them there, or remove the ones that are not under {tasksDir}, then launch again; files under {tasksDir} hold the state of delivered tasks: never remove them',
     'tasks-not-committed':
@@ -182,7 +180,7 @@ const messages = {
     decisionNoted: 'decision noted\n',
     'bad-question': 'cannot ask the question: {detail}',
     'bad-task-id':
-      'the task file {file} has a name unusable in a git branch; use letters, digits, ".", "_" and "-", not starting with "." or "-", not ending with "." (and not _integration)',
+      'the task file {file} has a name unusable in a git branch; use letters, digits, ".", "_" and "-", not starting with "." or "-", not ending with "." (and not _integration or integration)',
     'claude-not-found': 'claude was not found; install Claude Code, or set RELAYLEAD_CLAUDE to its executable',
     'claude-cmd-unsupported':
       '{file} cannot be run without a shell; set RELAYLEAD_CLAUDE to the real claude.exe or to its JavaScript entry (.js)',
@@ -351,7 +349,7 @@ const messages = {
       'la mission « {mission} » est arrêtée, mais ses sessions ne le sont pas encore : « relaylead {holder} » tient encore la mission ; relancez relaylead stop {mission}',
     'task-not-deliverable': 'la tâche « {id} » est {state} ; seule une tâche done peut être livrée',
     'protected-branch':
-      'la branche d\'intégration « {branch} » est protégée ; indiquez une autre delivery.branch dans .relaylead.json',
+      'la branche d\'intégration « {branch} » est protégée (guard.protectedBranches) ; lancez la mission sous un autre nom avec --name',
     'not-a-git-repo':
       '{dir} n\'est pas la racine d\'un dépôt git ; lancez la mission à la racine, ou mettez "delivery": {"type": "files"} dans .relaylead.json',
     'merge-conflict':
@@ -389,10 +387,8 @@ const messages = {
     'task-branch-missing': 'impossible de livrer la tâche « {id} » : sa branche {branch} n\'existe plus',
     'worktree-mismatch':
       'le dossier {dir} est sur la branche « {actual} », pas « {branch} »',
-    'branch-clash':
-      'la branche d\'intégration « {branch} » entre en conflit avec les branches des tâches relaylead/{mission}/<id> ; choisissez un autre nom de mission ou une autre delivery.branch',
     'integration-mismatch':
-      'le worktree d\'intégration {dir} est sur la branche « {actual} », pas « {branch} » ; remettez delivery.branch à « {actual} », ou supprimez le worktree avec : git worktree remove "{dir}"',
+      'le worktree d\'intégration {dir} est sur la branche « {actual} », pas « {branch} » ; supprimez le worktree avec : git worktree remove "{dir}", puis relancez',
     'integration-dirty':
       'le worktree d\'intégration {dir} a des changements que personne n\'a commités ({files}) ; commitez-les dans ce dossier, ou retirez ceux qui ne sont pas sous {tasksDir}, puis relancez ; les fichiers sous {tasksDir} portent l\'état des tâches livrées : ne les retirez jamais',
     'tasks-not-committed':
@@ -429,7 +425,7 @@ const messages = {
     decisionNoted: 'décision notée\n',
     'bad-question': 'impossible de poser la question : {detail}',
     'bad-task-id':
-      'le fichier de tâche {file} a un nom inutilisable dans une branche git ; utilisez lettres, chiffres, « . », « _ » et « - », sans commencer par « . » ni « - », sans finir par « . » (et pas _integration)',
+      'le fichier de tâche {file} a un nom inutilisable dans une branche git ; utilisez lettres, chiffres, « . », « _ » et « - », sans commencer par « . » ni « - », sans finir par « . » (et ni _integration ni integration)',
     'claude-not-found': 'claude est introuvable ; installez Claude Code, ou indiquez son exécutable dans RELAYLEAD_CLAUDE',
     'claude-cmd-unsupported':
       '{file} ne se lance pas sans shell ; indiquez dans RELAYLEAD_CLAUDE le vrai claude.exe ou son point d\'entrée JavaScript (.js)',

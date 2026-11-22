@@ -16,7 +16,8 @@ const DEFAULTS = {
   // recommended option, 'skip' its "Skip this task" option (core/watcher-rules.js, rule 30).
   questions: { onTimeout: 'wait', timeoutMinutes: 60 },
   source: { type: 'tasks-dir', dir: 'tasks' },
-  delivery: { type: 'local-merge', branch: 'relaylead/integration', runHooks: true },
+  // The integration branch is the mission's own, relaylead/<mission>/integration (core/layout.js).
+  delivery: { type: 'local-merge', runHooks: true },
   guard: {
     protectedBranches: ['main', 'master'],
     secrets: ['.env', '.env.*'],

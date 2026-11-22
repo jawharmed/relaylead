@@ -14,7 +14,6 @@ const { fakeGh, issue } = require('../../fixtures/github');
 
 const BIN = path.join(__dirname, '..', '..', 'bin', 'relaylead.js');
 const MISSION_MS = 60 * 1000;
-const INTEGRATION = 'relaylead/integration';
 
 // Runs `relaylead <args>` in its own process, like a person in a terminal. No shell.
 function relaylead(args, cwd) {
@@ -46,6 +45,7 @@ test('a mission delivers two GitHub issues by two merged pull requests', { timeo
   const launched = await relaylead(['launch', '--agent', 'fake', '--request', 'Do the issues'], dir);
   assert.strictEqual(launched.code, 0, launched.err);
   mission = launched.out.trim();
+  const INTEGRATION = `relaylead/${mission}/integration`;
   const report = () => `--- gh calls\n${github.calls().map((call) => call.join(' ')).join('\n')}\n` + missionReport(mission);
   await waitFor(
     async () => (await relaylead(['state', 'get', '--mission', mission], dir)).out.trim() === 'done',
@@ -62,7 +62,7 @@ test('a mission delivers two GitHub issues by two merged pull requests', { timeo
   assert.deepStrictEqual(state.issues.map((one) => one.state), ['CLOSED', 'CLOSED', 'OPEN']);
   for (const id of ['issue-1', 'issue-2']) {
     assert.strictEqual(git(remote, 'show', `${INTEGRATION}:${id}.txt`), `fake work on ${id}`);
-    assert.ok(!fs.existsSync(path.join(dir, '.relaylead', 'worktrees', id)), `the worktree of ${id} should be removed`);
+    assert.ok(!fs.existsSync(path.join(dir, '.relaylead', 'worktrees', mission, id)), `the worktree of ${id} should be removed`);
   }
   const listed = await relaylead(['task', 'list', '--mission', mission], dir);
   assert.deepStrictEqual(JSON.parse(listed.out).map((task) => [task.id, task.state]), [

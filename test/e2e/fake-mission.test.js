@@ -135,7 +135,7 @@ test('fake mission delivers two tasks with one answered question', { timeout: 3 
   assert.deepStrictEqual([settled.state, settled.answer.choice], ['answered', 'yes']);
 
   // Both task branches are merged into the integration branch, and the source says done there.
-  const integration = 'relaylead/integration';
+  const integration = `relaylead/${mission}/integration`;
   const merges = git(dir, 'log', '--merges', '--format=%s', integration);
   for (const id of ['a', 'b']) {
     assert.match(merges, new RegExp(`Merge branch 'relaylead/${mission}/${id}'`), report());
@@ -164,7 +164,7 @@ test('fake mission delivers two tasks with one answered question', { timeout: 3 
   await waitFor(() => readJson(endedFile, {}).pid === reaper.pid, 15000, 'the helper to end', report);
 
   // Only the user's checkout and the integration worktree are left.
-  const integrationDir = path.join(dir, '.relaylead', 'worktrees', '_integration');
+  const integrationDir = path.join(dir, '.relaylead', 'worktrees', mission, '_integration');
   assert.deepStrictEqual(worktrees(dir).sort(), [dir, integrationDir].sort());
 
   assert.deepStrictEqual(checkoutState(dir), before);
@@ -195,7 +195,7 @@ test('a second mission runs in the same folder after remove', { timeout: 3 * MIS
   // The same name again: the folder's.
   const second = await runMission(t, dir, null);
   assert.strictEqual(second.mission, mission);
-  assert.strictEqual(git(dir, 'show', 'relaylead/integration:c.txt'), 'fake work on c', second.report());
+  assert.strictEqual(git(dir, 'show', `relaylead/${mission}/integration:c.txt`), 'fake work on c', second.report());
   const listed = (await relaylead(['list'], dir)).out.trim().split('\n');
   assert.strictEqual(listed.length, 1, listed.join('\n'));
 });

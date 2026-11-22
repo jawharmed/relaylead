@@ -15,6 +15,7 @@ const { sleep } = require('./timing');
 const { spawnDetached } = require('./detached');
 const { withMissionLock, takeOverStaleLock, EMPTY_LOCK_STALE_MS } = require('./mission-lock');
 const { watchLog } = require('./watch-log');
+const layout = require('./layout');
 
 // States the lead may declare. 'stopped' is written by the core only.
 const STATES = ['starting', 'working', 'waiting', 'handover', 'done'];
@@ -177,6 +178,8 @@ async function createMission({ name, dir, request, team, priority, agent, params
   const realDir = fs.realpathSync.native(dir);
   const missionName = slug(name || path.basename(realDir));
   const config = loadConfig({ dir: realDir, params });
+  // Its own integration branch: several missions may share the repository (core/layout.js).
+  config.delivery.branch = layout.integrationBranch(missionName);
   const adapter = getAdapter(agent || config.agent);
   const delivery = getDelivery(config.delivery.type);
   // Read before anything is created: an unknown profile or method leaves nothing behind.
@@ -184,6 +187,7 @@ async function createMission({ name, dir, request, team, priority, agent, params
   loadMethod(config.method, { dir: realDir });
   const mission = {
     name: missionName,
+    format: layout.FORMAT,
     dir: realDir,
     request: request || null,
     team: team || null,
