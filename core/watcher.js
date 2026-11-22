@@ -29,7 +29,7 @@ const { sleep } = require('./timing');
 const { watchLog, watchLogFile } = require('./watch-log');
 const { decide, emptyWatch, wakeWithoutEffect } = require('./watcher-rules');
 const { lastActivity } = require('./abandon');
-const { tendMerge, mergeOngoing } = require('./merge');
+const { tendMerge, removeIfMerged, mergeOngoing } = require('./merge');
 const { getAdapter } = require('../adapters');
 
 const FINISHED = ['done', 'stopped'];
@@ -594,6 +594,11 @@ async function runPass() {
         watchLog(name, 'error', `observe ${name}: ${err.message}`);
       }
       await tendMergeOf(name);
+      try {
+        await removeIfMerged(name);
+      } catch (err) {
+        if (!LOCK_GAVE_UP.includes(err.code)) watchLog(name, 'error', `cleanup: ${err.message}`);
+      }
     }
     await startQueuedTasks();
     return { outcome: 'done', missions };

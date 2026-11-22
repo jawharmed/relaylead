@@ -6,11 +6,12 @@
 // (no tokens spent for one task). When the crew member fails, the user is asked what to do.
 // merge.json, written here alone, under the mission lock: {state: 'resolving' | 'asked' | 'paused' |
 // 'merged', target, task, attempts (resolutions started), conflicts, hints, question, title, body, at}.
+const fs = require('node:fs');
 const path = require('node:path');
 const { missionDir, slug } = require('./paths');
 const { readJson, writeJson } = require('./store');
 const { codedError } = require('./messages');
-const { readMission, stopSessionsAndWait, forgetSessions } = require('./missions');
+const { readMission, stopSessionsAndWait, forgetSessions, removeMission } = require('./missions');
 const { listTasks, startMergeTask, deliverMergeTask } = require('./tasks');
 const { listSessions } = require('./sessions');
 const { askQuestion, listQuestions } = require('./questions');
@@ -194,10 +195,49 @@ async function followAnswer(mission, merge) {
   await startResolution(mission, { target: merge.target, conflicts: merge.conflicts || [], attempts: merge.attempts || 0, hints });
 }
 
+// The cleanup of the watcher, at each full pass (core/watcher.js): a finished mission of 0.2 delivered
+// by git, whose integration branch is merged (by `relaylead merge`, or by hand: its tip, past the commit
+// it started from, is in the branch it merges into) or deleted, is removed as by `relaylead remove`,
+// without --force, with its clean integration worktree; the integration branch stays. Not while a
+// merge is being resolved, asked about or paused, nor while the helper `_reap` may still run. A
+// removal refused (work not delivered) is noted once in cleanup.json, and the mission stays. Returns
+// how the branch left ('merged' or 'deleted') once the mission is removed, otherwise null.
+async function removeIfMerged(name) {
+  if (!/^[a-z0-9-]+$/.test(name)) return null;
+  const folder = missionDir(name);
+  let mission;
+  try {
+    mission = readJson(path.join(folder, 'mission.json'), null);
+  } catch {
+    return null; // unreadable: its pass has reported it
+  }
+  if (!mission || !layout.isPerMission(mission)) return null;
+  const delivery = getDelivery(mission.config.delivery.type);
+  if (!delivery.integrationState || !fs.existsSync(mission.dir)) return null;
+  const record = readJson(path.join(folder, 'state.json'), { state: 'starting' });
+  if (!['done', 'stopped'].includes(record.state) || record.stopping) return null;
+  if (fs.existsSync(path.join(folder, 'reaper.json')) && !fs.existsSync(path.join(folder, 'reaper-ended.json'))) return null;
+  if (fs.existsSync(path.join(folder, 'cleanup.json'))) return null;
+  const merge = readMerge(name);
+  if (merge && merge.state !== 'merged') return null;
+  const how = merge ? 'merged' : delivery.integrationState(mission);
+  if (!how) return null;
+  try {
+    await removeMission(name, { integrationWorktree: true });
+  } catch (err) {
+    if (!['remove-unmerged-work', 'checkout-on-task-branch'].includes(err.code)) throw err;
+    writeJson(path.join(folder, 'cleanup.json'), { refusedAt: now(), reason: err.message }, { createDir: false });
+    watchLog(name, 'cleanup-refused', err.message);
+    return null;
+  }
+  watchLog(name, 'mission-removed', `integration branch ${how}`);
+  return how;
+}
+
 // Whether a merge needs the mission's crew: a resolution under way, or a question waiting for an answer.
 function mergeOngoing(name) {
   const merge = readMerge(name);
   return Boolean(merge) && ['resolving', 'asked'].includes(merge.state);
 }
 
-module.exports = { mergeMission, tendMerge, readMerge, mergeOngoing, OPTIONS, MAX_RESOLUTIONS };
+module.exports = { mergeMission, tendMerge, removeIfMerged, readMerge, mergeOngoing, OPTIONS, MAX_RESOLUTIONS };

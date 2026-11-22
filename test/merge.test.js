@@ -212,3 +212,34 @@ test('"Pause the mission" leaves the merge paused; relaylead merge tries again w
   assert.strictEqual(merged.code, 0, merged.err);
   assert.match(merged.out, /^mission demo merged into main/);
 });
+
+test('once merged, a pass of the watcher removes the mission and its worktrees; the integration branch stays', async (t) => {
+  const { dir, integration } = project(t);
+  commitIn(integration, 'feature.txt', 'new feature\n', 'feature');
+  done();
+  assert.strictEqual((await cli(['merge', 'demo'])).code, 0);
+
+  const pass = await cli(['watcher', 'run']);
+
+  assert.strictEqual(pass.code, 0, pass.err);
+  assert.match(pass.out, / demo mission-removed integration branch merged/);
+  assert.ok(!fs.existsSync(missionDir('demo')));
+  assert.ok(!fs.existsSync(integration));
+  assert.doesNotMatch(git(dir, 'worktree', 'list'), /_integration/);
+  assert.match(git(dir, 'branch', '--list', 'relaylead/demo/integration'), /relaylead\/demo\/integration/);
+});
+
+test('a finished mission stays while its work is not merged, or when it delivered nothing; merged by hand, it goes', async (t) => {
+  const { dir, integration } = project(t);
+  done();
+  await cli(['watcher', 'run']);
+  assert.ok(fs.existsSync(path.join(missionDir('demo'), 'mission.json')), 'nothing delivered: kept');
+
+  commitIn(integration, 'feature.txt', 'new feature\n', 'feature');
+  await cli(['watcher', 'run']);
+  assert.ok(fs.existsSync(path.join(missionDir('demo'), 'mission.json')), 'not merged: kept');
+
+  git(dir, 'merge', '-q', '--no-edit', 'relaylead/demo/integration');
+  await cli(['watcher', 'run']);
+  assert.ok(!fs.existsSync(missionDir('demo')));
+});

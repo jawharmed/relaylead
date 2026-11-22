@@ -591,7 +591,9 @@ function missionBranches(mission) {
 //   when the integration branch is gone).
 // Calls onBranchDeleted("<name> <sha>") as soon as each branch is deleted, so the sha is shown even
 // if a later step fails: `git branch <name> <sha>` makes it again. Returns all of them.
-function removeMission(mission, { force = false, onBranchDeleted = () => {} } = {}) {
+// `integrationWorktree`: once the integration branch is merged (core/merge.js), its worktree is removed
+// too when it is clean; the branch stays.
+function removeMission(mission, { force = false, onBranchDeleted = () => {}, integrationWorktree = false } = {}) {
   const integrationBranch = mission.config.delivery.branch;
   const integration = realPath(integrationDir(mission));
   const branches = missionBranches(mission).filter((branch) => branch !== integrationBranch);
@@ -624,7 +626,23 @@ function removeMission(mission, { force = false, onBranchDeleted = () => {} } = 
     git(mission.dir, ['branch', '-D', branch]);
     onBranchDeleted(deleted[index]);
   });
+  if (integrationWorktree) removeIntegrationWorktree(mission);
   return deleted;
+}
+
+// The integration worktree, when it has nothing that is not committed, then the mission's folder of
+// worktrees once empty.
+function removeIntegrationWorktree(mission) {
+  const integration = integrationDir(mission);
+  if (fs.existsSync(integration)) {
+    if (git(integration, ['status', '--porcelain', '--untracked-files=all']) !== '') return;
+    removeWorktree(mission, integration);
+  }
+  try {
+    fs.rmdirSync(layout.worktreesDir(mission));
+  } catch {
+    // not empty, or already gone
+  }
 }
 
 // Noted in mission.json at the launch, once prepareMission is done: the branch the user is on, which

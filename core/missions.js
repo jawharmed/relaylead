@@ -760,8 +760,9 @@ async function stopSessions(mission, justStopped, note) {
 // `relaylead remove`: frees the name and the folder of a finished mission. Its sessions are stopped
 // again by an adapter that stops by id, then forgotten by the agent, its task worktrees and branches are removed by the delivery,
 // then its folder under missions/ is deleted. Returns the deleted branches ("<name> <sha>"), each
-// also passed to onBranchDeleted as soon as it is deleted.
-async function removeMission(name, { force = false, onBranchDeleted } = {}) {
+// also passed to onBranchDeleted as soon as it is deleted. `integrationWorktree`: the integration
+// worktree goes too, when clean (the cleanup of a merged mission, core/merge.js).
+async function removeMission(name, { force = false, onBranchDeleted, integrationWorktree = false } = {}) {
   // The name ends up in a recursive removal: no "..", no separator.
   if (!/^[a-z0-9-]+$/.test(name)) throw codedError('usage', { usage: 'relaylead remove <mission> [--force]' });
   const folder = missionDir(name);
@@ -787,7 +788,7 @@ async function removeMission(name, { force = false, onBranchDeleted } = {}) {
     // A project folder deleted since has no worktree or branch left to remove.
     const delivery = getDelivery(mission.config.delivery.type);
     const branches = fs.existsSync(mission.dir)
-      ? await withRepoLock(mission.dir, 'remove', () => delivery.removeMission(mission, { force, onBranchDeleted }))
+      ? await withRepoLock(mission.dir, 'remove', () => delivery.removeMission(mission, { force, onBranchDeleted, integrationWorktree }))
       : [];
     await releaseLock(mission.dir, mission);
     return branches;
