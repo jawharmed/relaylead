@@ -1,6 +1,6 @@
 const path = require('node:path');
 const { t, codedError } = require('./messages');
-const { loadConfig, watcherSettings } = require('./config');
+const { loadConfig, watcherSettings, setConfigValue } = require('./config');
 const {
   createMission,
   listMissions,
@@ -25,10 +25,12 @@ const detached = require('./detached');
 const { install, uninstall } = require('./install');
 const { doctor } = require('./doctor');
 const { init } = require('./init');
+const { buildOverview } = require('./overview');
+const { startDashboard } = require('./dashboard');
 const pkg = require('../package.json');
 
 // Options that take no value.
-const FLAGS = ['all', 'force', 'no-hooks', 'purge', 'yes'];
+const FLAGS = ['all', 'force', 'json', 'no-hooks', 'no-open', 'purge', 'yes'];
 
 // Splits arguments into positional values and `--name value` (or `--name=value`) options.
 // A repeated option (--option a --option b) is also kept in full in `lists`.
@@ -432,6 +434,64 @@ commands.init = async (args, io) => {
   await init(parseArgs(args).options, io, language(io));
   return 0;
 };
+
+// The one view the displays share (core/overview.js), as JSON.
+commands.overview = async (args, io) => {
+  if (!parseArgs(args).options.json) throw codedError('usage', { usage: 'relaylead overview --json' });
+  io.out.write(JSON.stringify(buildOverview(), null, 2) + '\n');
+  return 0;
+};
+
+commands.config = async (args, io) => {
+  refuseInSession('config', io);
+  const [action, key, value] = parseArgs(args).positional;
+  if (action !== 'set' || !key || value === undefined) throw codedError('usage', { usage: 'relaylead config set <key> <value>' });
+  io.out.write(t('configSet', { key, value: setConfigValue(key, value) }, language(io)));
+  return 0;
+};
+
+// Runs a command of the CLI for the dashboard and gives back {ok, message}, in the user's language.
+async function runForDashboard(args, io) {
+  const out = { text: '', write(chunk) { this.text += chunk; } };
+  const err = { text: '', write(chunk) { this.text += chunk; } };
+  const code = await run(args, { out, err, env: {}, cwd: io.cwd });
+  return { ok: code === 0, message: (code === 0 ? out.text : err.text).trim() };
+}
+
+// `relaylead dashboard`: serves the page until Ctrl-C. --no-open does not open the browser; --port
+// overrides display.dashboardPort for this launch.
+commands.dashboard = async (args, io) => {
+  refuseInSession('dashboard', io);
+  const { options } = parseArgs(args);
+  const port = options.port === undefined ? loadConfig().display.dashboardPort : Number(options.port);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) throw codedError('usage', { usage: 'relaylead dashboard [--port n] [--no-open]' });
+  const { server, url } = await startDashboard({
+    port,
+    actions: {
+      answer: (mission, id, choice) => runForDashboard(['answer', mission, id, String(choice)], io),
+      stop: (mission) => runForDashboard(['stop', mission], io),
+    },
+  });
+  io.out.write(t('dashboardRunning', { url }, language(io)));
+  if (!options['no-open']) openInBrowser(url);
+  await new Promise((resolve) => {
+    process.once('SIGINT', resolve);
+    server.once('close', resolve);
+  });
+  server.close();
+  return 0;
+};
+
+// The browser is opened by macOS `open`; a failure is not an error (the url is printed).
+function openInBrowser(url) {
+  try {
+    const child = require('node:child_process').spawn('open', [url], { stdio: 'ignore', detached: true });
+    child.on('error', () => {});
+    child.unref();
+  } catch {
+    // the url is on screen
+  }
+}
 
 // Internal, not in the help: started by `state set done`, it stops the lead once its turn is over.
 // The createdAt of its mission (absent when started by an older relaylead) keeps it off a newer
