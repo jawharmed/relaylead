@@ -55,6 +55,7 @@ By default the tasks are the Markdown files of the `tasks/` folder, one per task
 
 - **Guardrails.** Sessions run with nobody watching, so some actions are refused whatever the permission mode: pushes to protected branches (`main` and `master` by default), forced pushes, commits on a protected branch, secret files (`.env` and friends) and the mission's own state folder. Crew sessions only get the commands their profile allows.
 - **Questions before the irreversible.** The lead never decides alone on what cannot be undone: a delivery that failed, a task set to ask first, a failed task. It asks you, with options, and waits for your answer.
+- **A project memory, kept short.** Leads read `.relaylead/memoire.md` at the start and compact it (200 lines at most) before finishing; it stays out of git unless you choose otherwise.
 - **Your checkout stays yours.** Work happens in separate worktrees and branches; nothing is merged into your branch.
 - **API key never shown.** With `relaylead init --api-key-env NAME`, the key is copied to a file readable by you alone; Relaylead never prints it, and it is not stored in the configuration, a log or a launchd file. The sessions get it through Claude Code's `apiKeyHelper` setting, and `relaylead doctor` checks that Claude Code picks it over your signed-in account.
 

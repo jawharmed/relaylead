@@ -162,6 +162,16 @@ Sessions have a limited context. The `context` setting says when to hand over: `
 - `watcher.everySeconds` (`300`): time between two passes of the loop.
 - An empty file `~/.relaylead/STOP` makes the watcher do nothing until you remove it.
 
+### Memory
+
+Each project has a memory shared by its missions: `.relaylead/memoire.md` in the project folder (never in a worktree), in the main repository. It holds the conventions of the project, one line per past mission and the lessons learned. Every lead reads it when it starts (`relaylead memory show`), and compacts it before declaring its mission done: the mission becomes one line, the lessons are merged, what is out of date goes. The previous version is kept in `.relaylead/memoire-archive/`, which is never read again. Writes are done under a lock, so two missions never overwrite each other.
+
+- `memory.enabled` (`true`): turns the memory off with `false`.
+- `memory.maxLines` (`200`): the ceiling. A memory over it is flagged when a lead starts (the lead must compact it before anything else, with no AI involved in the check), `relaylead doctor` warns about it in the folder you run it in, and a compaction over the ceiling is refused.
+- `memory.versioned` (`false`): by default the memory stays out of git: `relaylead init` adds it and its archive to `.git/info/exclude` (your `.gitignore` is not touched). With `true`, it is committed with the code.
+
+`relaylead init` asks the two questions (turn it on; version it), with these defaults; `--yes` takes them, `--no-memory` and `--versioned-memory` answer them. The memory of one mission (its decisions and the messages you told it) lives in the mission's folder and is deleted with it.
+
 ### API key
 
 By default Claude signs in with your connected account (`auth.mode` `login`). To use an API key, run `relaylead init --api-key-env NAME` (copies the variable `NAME` to `~/.relaylead/api-key`, readable by you alone) or `relaylead init --api-key-file PATH`. The key is never printed, and never written to the configuration, a log or a launchd file. Each session gets it through Claude Code's `apiKeyHelper` setting, in the settings Relaylead passes to the session: a small command reads the key file when Claude Code asks for it, and nothing needs approving. Claude Code prefers this key to the account you are signed in with, and an `ANTHROPIC_API_KEY` of your shell is not passed to the sessions. `relaylead doctor` asks Claude Code which credential it would use (`ok api-key-use`). To check a running session, open it with `relaylead show <mission>` and run `/status`: it must name `apiKeyHelper`, not your Claude account.
@@ -240,6 +250,10 @@ Tells the lead of a mission something (a change of plan, a constraint). The mess
 
 For the lead: notes a decision taken with the user as a line of `decisions.md` in the mission's folder. `decision --list` prints them, then every message told with `tell`: a new lead (after a relaunch or a handover) reads it before going on.
 
+### `relaylead memory show` and `memory write --file <file> | --text <text>`
+
+For the lead: `show` prints the project memory (and a warning when it is over its ceiling); `write` replaces it with the text of a file or with `--text`, where `\n` stands for a line break, after archiving the previous version. A text over `memory.maxLines` is refused.
+
 ### `relaylead question ask|list`
 
 - `question list [<mission>] [--all]`: the open questions as JSON (all of them with `--all`). Each has an id, a text, numbered options and the recommended one.
@@ -258,7 +272,7 @@ Answers a question with an option number or text. This also wakes the lead withi
 
 ### `relaylead init [--yes] [--api-key-env NAME] [--api-key-file PATH]`
 
-Sets up the machine once (`~/.relaylead/config.json`), then the current project (`.relaylead.json`, never overwritten). In a terminal it asks a few questions; with `--yes`, or without a terminal, it takes the defaults. Existing files are kept. The project folder must be the root of a git repository.
+Sets up the machine once (`~/.relaylead/config.json`), then the current project (`.relaylead.json`, never overwritten). In a terminal it asks a few questions, among them whether to keep a project memory and whether to version it; with `--yes`, or without a terminal, it takes the defaults. Existing files are kept. The project folder must be the root of a git repository.
 
 ### `relaylead install`
 
