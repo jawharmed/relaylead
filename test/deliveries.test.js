@@ -1043,6 +1043,23 @@ test('cleanMission keeps a worktree in keepDirs and goes on with the others', as
   assert.strictEqual(fs.existsSync(taskWorktree(dir, 'b')), false);
 });
 
+// Its integration branch is relaylead/demo/integration, in the folder of its task branches.
+test('stop and remove leave a worktree on the integration branch alone, wherever it is', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const mission = preparedMission(dir);
+  const moved = path.join(tmpDir('relaylead-moved-'), 'integration');
+  git(dir, 'worktree', 'move', integrationDir(dir), moved);
+  stopped('demo');
+
+  assert.deepStrictEqual(localMerge.missionWorktrees(mission), []);
+  assert.deepStrictEqual(localMerge.cleanMission(mission, {}), []);
+  const removed = await cli(['remove', 'demo', '--force']);
+
+  assert.strictEqual(removed.code, 0, removed.err);
+  assert.strictEqual(git(moved, 'rev-parse', '--abbrev-ref', 'HEAD'), INTEGRATION);
+});
+
 test('cleanMission leaves the worktrees of other missions alone', async (t) => {
   freshHome(t);
   const dir = userRepo({ 'tasks/a.md': TASK_A });

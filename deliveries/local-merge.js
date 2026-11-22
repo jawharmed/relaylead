@@ -479,7 +479,8 @@ function commitStateLine(mission, id, hooks) {
 
 // The task worktrees of the mission, as git lists them: those on a branch relaylead/<mission>/….
 // `locked` is true for a worktree locked with `git worktree lock`. The user's own checkout, the
-// integration worktree and the worktrees of other missions are left out.
+// integration worktree and the worktrees of other missions are left out; so is any worktree on the
+// integration branch, wherever it is: since 0.2, that branch is relaylead/<mission>/integration.
 function missionWorktrees(mission) {
   const prefix = `refs/heads/relaylead/${mission.name}/`;
   const checkout = realPath(mission.dir);
@@ -494,7 +495,10 @@ function missionWorktrees(mission) {
     if (current && line.startsWith('branch ' + prefix)) current.branch = line.slice('branch refs/heads/'.length);
     if (current && (line === 'locked' || line.startsWith('locked '))) current.locked = true;
   }
-  return worktrees.filter((worktree) => worktree.branch && realPath(worktree.dir) !== checkout);
+  const integrationBranch = mission.config.delivery.branch;
+  return worktrees.filter(
+    (worktree) => worktree.branch && worktree.branch !== integrationBranch && realPath(worktree.dir) !== checkout,
+  );
 }
 
 // Git and the session registry may spell one folder differently: slashes, letter case, /private on macOS.
