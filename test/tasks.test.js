@@ -272,11 +272,11 @@ test('the start lock names its holder', async (t) => {
   assert.ok(Date.parse(lock.since) >= before - 1000, lock.since);
 });
 
-// Its holder is alive (this very process) but has held it for 16 minutes: it is stuck.
+// Its holder is alive (this very process) but has held it for 20 minutes, past the 3 min wait for the git lock and 3 git timeouts: it is stuck.
 test('a start lock held for too long is reported at once, with its holder', { timeout: 5000 }, async (t) => {
   const dir = setupProject(t, 'demo');
   writeMission('demo', dir);
-  const since = new Date(Date.now() - 16 * 60 * 1000).toISOString();
+  const since = new Date(Date.now() - 20 * 60 * 1000).toISOString();
   fs.writeFileSync(startLock(), JSON.stringify({ pid: process.pid, command: 'task deliver a', since }));
 
   await assert.rejects(startTask('demo', { id: 'a' }), {
@@ -538,7 +538,7 @@ test('a stop that gives up behind a slow holder says to run it again', async (t)
 test('a stop behind a stuck holder keeps the start-stuck error and the stopped state', async (t) => {
   const dir = setupProject(t, 'demo');
   writeMission('demo', dir);
-  const since = new Date(Date.now() - 16 * 60 * 1000).toISOString();
+  const since = new Date(Date.now() - 20 * 60 * 1000).toISOString();
   fs.writeFileSync(startLock(), JSON.stringify({ pid: process.pid, command: 'task deliver a', since }));
 
   await assert.rejects(stopMission('demo'), { code: 'start-stuck' });

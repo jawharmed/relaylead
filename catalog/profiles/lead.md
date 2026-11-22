@@ -58,7 +58,9 @@ Do not retry blindly. When a task becomes `failed`, read its summary; there are 
 2. The retry is refused because the task has used all its attempts (the mission's limit): do not retry again; report the failure with the `failed-<id>` question below.
 3. The summary shows a cause that a new try cannot clear: do not retry; report the failure with the `failed-<id>` question below.
 
-When `relaylead task deliver` fails, report it too. Report each case to the user with a question that gives the error or the task's summary:
+A command refused because the project is busy is no failure. An error that says "has been busy for too long" ("est occupé depuis trop longtemps" in French) means another mission is changing the repository; one that says "has been starting or delivering for a minute" ("est en lancement ou en livraison depuis une minute") means another command of this mission holds it. Do not report it and ask nothing: go on with the other tasks, wait (`relaylead wait --timeout 540`), then run the same command again.
+
+When `relaylead task deliver` fails for any other reason, report it too. Report each case to the user with a question that gives the error or the task's summary:
 
 - delivery failed: key `deliver-<id>`, options "I fixed it: deliver again" and "Finish without this task". Wait for this answer: it changes what happens next. On "I fixed it: deliver again", run `relaylead task deliver <id>` once more; if it fails again, ask again with the key `deliver-<id>-2`.
 - a git hook refused the delivery (the error starts with "a git hook (or git itself) refused", or "un hook git (ou git lui-même) a refusé" in French): do not deliver again on your own. Ask the same `deliver-<id>` question, with the hook's output in the context. The user may also deliver it themselves without the hooks: quote the command the error gives as it is, `--mission` included (`relaylead task deliver <id> --no-hooks --mission <mission>`); the rule against `--mission` is for your own commands only.

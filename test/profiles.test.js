@@ -65,3 +65,18 @@ test('the lead recognises a hook refusing a delivery by the words the CLI prints
     assert.ok(lead.includes(`"${phrase}"`), `lead.md quotes the ${lang} phrase`);
   }
 });
+
+// Another mission busy with the repository, or another command of this mission: the lead runs the
+// command again later, without asking anything.
+test('the lead recognises a busy project by the words the CLI prints', () => {
+  const lead = fs.readFileSync(path.join(__dirname, '..', 'catalog', 'profiles', 'lead.md'), 'utf8');
+  for (const [code, lang, phrase] of [
+    ['repo-busy', 'en', 'has been busy for too long'],
+    ['repo-busy', 'fr', 'est occupé depuis trop longtemps'],
+    ['start-busy', 'en', 'has been starting or delivering for a minute'],
+    ['start-busy', 'fr', 'est en lancement ou en livraison depuis une minute'],
+  ]) {
+    assert.ok(t(code, {}, lang).includes(phrase), `${code} ${lang}`);
+    assert.ok(lead.includes(`"${phrase}"`), `lead.md quotes the ${lang} phrase of ${code}`);
+  }
+});

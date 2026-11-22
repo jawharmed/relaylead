@@ -17,14 +17,16 @@ const { sleep } = require('./timing');
 
 // Long enough for a slow agent launch held by another start. Read at each call.
 const lockWaitMs = () => Number(process.env.RELAYLEAD_START_LOCK_WAIT_MS) || 60 * 1000;
-// How long a wait for the git lock may last: a delivery whose git hooks run the project's tests may
-// hold it for minutes. Read at each call; tests shorten it.
-const repoLockWaitMs = () => Number(process.env.RELAYLEAD_REPO_LOCK_WAIT_MS) || 10 * 60 * 1000;
+// How long a wait for the git lock may last. Well under the 10 min a session's Bash command may run
+// (BASH_DEFAULT_TIMEOUT_MS, adapters/claude/settings.js), so that the waiting command still has time
+// for its own work: one that gives up says repo-busy, and the lead runs it again later
+// (catalog/profiles/lead.md). Read at each call; tests shorten it.
+const repoLockWaitMs = () => Number(process.env.RELAYLEAD_REPO_LOCK_WAIT_MS) || 3 * 60 * 1000;
 // An empty or partly written lock file this old was left by a holder that crashed.
 const EMPTY_LOCK_STALE_MS = 10 * 1000;
-// A live holder this old is stuck: a delivery runs a few git commands, each stopped after
-// gitTimeoutMs(), so even a slow one ends well before.
-const startLockStuckMs = () => Math.max(15 * 60 * 1000, 3 * gitTimeoutMs());
+// A live holder this old is stuck: a delivery may first wait for the git lock, then runs a few git
+// commands, each stopped after gitTimeoutMs(), so even a slow one ends well before.
+const startLockStuckMs = () => Math.max(15 * 60 * 1000, repoLockWaitMs() + 3 * gitTimeoutMs());
 
 function now() {
   return new Date().toISOString();
