@@ -156,6 +156,19 @@ test('decision notes a line in decisions.md of the mission, and lists them', asy
   assert.strictEqual((await relaylead(['decision'], env)).code, 1);
 });
 
+test('a message already read by a lead is read again by its successor with decision --list', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  const env = { RELAYLEAD_MISSION: 'demo' };
+  await relaylead(['tell', 'demo', 'Do not use the v2 API']);
+  const first = await relaylead(['wait', '--timeout', '0'], env);
+  assert.strictEqual(JSON.parse(first.out).changes.find((change) => change.kind === 'message').text, 'Do not use the v2 API');
+  // The first lead ends before noting anything; the next one finds nothing new in wait, but still reads it.
+  assert.deepStrictEqual(JSON.parse((await relaylead(['wait', '--timeout', '0'], env)).out).changes, []);
+  const listed = (await relaylead(['decision', '--list'], env)).out;
+  assert.match(listed, /Messages from the user:\n- \S+ Do not use the v2 API\n$/);
+});
+
 test('the errors of tell and decision are also in French', () => {
   const { t } = require('../core/messages');
   for (const code of ['bad-tell', 'bad-decision', 'mission-over']) {

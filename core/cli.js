@@ -17,7 +17,7 @@ const {
 const { listTasks, startTask, retryTask, deliverTask, finishTask } = require('./tasks');
 const { waitForChanges } = require('./wait');
 const { waitForEvents } = require('./console-wait');
-const { tellMission } = require('./told');
+const { tellMission, listTold } = require('./told');
 const { addDecision, readDecisions } = require('./decisions');
 const { askQuestion, answerQuestion, listQuestions } = require('./questions');
 const { runPass, tendMission, stopPresent, loop, watcherRunning, startWatcher, stopWatcher } = require('./watcher');
@@ -363,7 +363,9 @@ commands.decision = async (args, io) => {
   if (positional.length === 0 && !options.list) throw codedError('usage', { usage: 'relaylead decision <text> | decision --list' });
   const mission = missionName(options, io);
   if (options.list) {
-    io.out.write(readDecisions(mission));
+    // The messages of the user too: a successor of the lead that read them has no other way back to them.
+    const told = listTold(mission).map((message) => `- ${message.at} ${message.text.replace(/\s+/g, ' ')}\n`);
+    io.out.write(readDecisions(mission) + (told.length > 0 ? `\nMessages from the user:\n${told.join('')}` : ''));
     return 0;
   }
   refuseReplacedLead(mission, io);

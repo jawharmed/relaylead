@@ -238,7 +238,7 @@ Tells the lead of a mission something (a change of plan, a constraint). The mess
 
 ### `relaylead decision <text>` and `decision --list`
 
-For the lead: notes a decision taken with the user as a line of `decisions.md` in the mission's folder. A new lead (after a relaunch or a handover) reads it with `decision --list` before going on.
+For the lead: notes a decision taken with the user as a line of `decisions.md` in the mission's folder. `decision --list` prints them, then every message told with `tell`: a new lead (after a relaunch or a handover) reads it before going on.
 
 ### `relaylead question ask|list`
 
