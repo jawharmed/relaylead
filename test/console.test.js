@@ -177,6 +177,10 @@ test('decision notes a line in decisions.md of the mission, and lists them', asy
   assert.match(text, /^- \S+ Use SQLite: no server\n- \S+ Skip the admin page\n$/);
   assert.strictEqual((await relaylead(['decision', '--list'], env)).out, text);
   assert.strictEqual((await relaylead(['decision'], env)).code, 1);
+  writeJson(path.join(missionDir('demo'), 'state.json'), { state: 'done' });
+  const over = await relaylead(['decision', 'Too late'], env);
+  assert.strictEqual(over.code, 1);
+  assert.match(over.err, /is over/);
 });
 
 test('a message already read by a lead is read again by its successor with decision --list', async (t) => {
@@ -194,7 +198,7 @@ test('a message already read by a lead is read again by its successor with decis
 
 test('the errors of tell and decision are also in French', () => {
   const { t } = require('../core/messages');
-  for (const code of ['bad-tell', 'bad-decision', 'mission-over']) {
+  for (const code of ['bad-tell', 'bad-decision', 'mission-over', 'mission-decision-over']) {
     assert.notStrictEqual(t(code, { mission: 'x' }, 'fr'), t(code, { mission: 'x' }, 'en'));
   }
 });

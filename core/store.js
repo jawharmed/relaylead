@@ -49,6 +49,12 @@ function writeText(file, text, { mode, retryMs, createDir = true } = {}) {
   }
 }
 
+// Adds `text` at the end of a file (made when missing). For a file with a single writer, a line at a time.
+function appendText(file, text) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  withWindowsRetry(() => fs.appendFileSync(file, text));
+}
+
 function writeJson(file, data, options) {
   writeText(file, JSON.stringify(data, null, 2) + '\n', options);
 }
@@ -89,4 +95,4 @@ function readJson(file, fallback) {
   }
 }
 
-module.exports = { writeText, writeTextExclusive, writeRetryMs, writeJson, writeJsonExclusive, readJson, withWindowsRetry };
+module.exports = { appendText, writeText, writeTextExclusive, writeRetryMs, writeJson, writeJsonExclusive, readJson, withWindowsRetry };

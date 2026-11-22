@@ -5,7 +5,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { missionDir } = require('./paths');
 const { codedError } = require('./messages');
-const { readMission } = require('./missions');
+const { appendText } = require('./store');
+const { readMission, getState } = require('./missions');
 
 function decisionsFile(mission) {
   return path.join(missionDir(mission), 'decisions.md');
@@ -13,9 +14,10 @@ function decisionsFile(mission) {
 
 function addDecision(mission, text) {
   readMission(mission); // mission-unknown
+  if (['done', 'stopped'].includes(getState(mission))) throw codedError('mission-decision-over', { mission });
   const line = String(text || '').replace(/\s+/g, ' ').trim();
   if (!line) throw codedError('bad-decision', {});
-  fs.appendFileSync(decisionsFile(mission), `- ${new Date().toISOString()} ${line}\n`);
+  appendText(decisionsFile(mission), `- ${new Date().toISOString()} ${line}\n`);
 }
 
 // The decisions noted so far; an empty text when there are none.
