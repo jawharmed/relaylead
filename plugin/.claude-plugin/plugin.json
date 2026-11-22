@@ -11,6 +11,7 @@
   "documentationUrl": "https://github.com/jawharmed/relaylead/blob/main/docs/guide.md",
   "supportUrl": "https://github.com/jawharmed/relaylead/issues",
   "icon": "./icon.svg",
+  "network": { "hosts": [] },
   "license": "MIT",
   "keywords": ["claude-code", "agents", "missions", "automation", "github", "macos"]
 }
