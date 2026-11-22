@@ -223,6 +223,30 @@ test('files delivery checks the output folder', async (t) => {
   assert.strictEqual(readJson(path.join(missionDir('demo'), 'tasks', 'a.json')).state, 'delivered');
 });
 
+// Work a 0.1 mission delivered on relaylead/integration, never merged into the user's branch: a new
+// mission starts without it, so the launch says so, and goes on.
+test('a launch warns when relaylead/integration of 0.1 holds work the current branch lacks', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  git(dir, 'branch', 'relaylead/integration');
+  const old = path.join(tmpDir('relaylead-old-'), 'wt');
+  git(dir, 'worktree', 'add', '-q', old, 'relaylead/integration');
+  fs.writeFileSync(path.join(old, 'a.txt'), 'delivered by 0.1\n');
+  git(old, 'add', 'a.txt');
+  git(old, 'commit', '-q', '-m', 'work of 0.1');
+
+  const warned = await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir]);
+
+  assert.strictEqual(warned.code, 0, warned.err);
+  assert.strictEqual(warned.out, 'demo\n');
+  assert.match(warned.err, /relaylead launch: the branch relaylead\/integration of relaylead 0\.1 has 1 commit\(s\) that your current branch does not have/);
+
+  // Once merged into the user's branch, nothing more to say.
+  git(dir, 'merge', '-q', '--no-edit', 'relaylead/integration');
+  writeMission('later', dir);
+  assert.deepStrictEqual(localMerge.prepareMission(readMission('later')), []);
+});
+
 // A mission launched by relaylead 0.1 keeps the names of then until it ends (core/layout.js).
 test('a 0.1 mission delivers into relaylead/integration, with its worktrees of then', async (t) => {
   freshHome(t);

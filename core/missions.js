@@ -122,8 +122,9 @@ function tasksFolder(realDir, folder) {
   return relative;
 }
 
-// `tasks`: the task folder of this mission (`--tasks`), in place of source.dir.
-async function createMission({ name, dir, request, team, priority, agent, tasks, params }) {
+// `tasks`: the task folder of this mission (`--tasks`), in place of source.dir. `onWarning(err)` gets
+// each warning of the delivery's preparation (a coded error that does not stop the launch).
+async function createMission({ name, dir, request, team, priority, agent, tasks, params, onWarning = () => {} }) {
   // The native version also gives the real letter case (macOS, Windows): CaseProj and caseproj are one folder.
   const realDir = fs.realpathSync.native(dir);
   const missionName = slug(name || path.basename(realDir));
@@ -159,7 +160,8 @@ async function createMission({ name, dir, request, team, priority, agent, tasks,
     // Under the mission lock until mission.json is written: a removal of the folder waits for it.
     await withMissionLock(missionName, 'launch', async () => {
       // Before the lead starts: the integration worktree is where the lead reads the tasks.
-      await withRepoLock(realDir, 'launch', () => delivery.prepareMission(mission));
+      const warnings = await withRepoLock(realDir, 'launch', () => delivery.prepareMission(mission));
+      (warnings || []).forEach(onWarning);
       writeJson(missionFile(missionName, 'mission.json'), mission);
     });
     await launchLead(mission);

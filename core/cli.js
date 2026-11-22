@@ -127,6 +127,7 @@ commands.launch = async (args, io) => {
     priority: options.priority,
     agent: options.agent,
     tasks: options.tasks,
+    onWarning: (warning) => io.err.write(`relaylead launch: ${t(warning.code, warning.vars, language(io))}\n`),
   });
   io.out.write(mission.name + '\n');
   await startWatcherAfterLaunch(io);

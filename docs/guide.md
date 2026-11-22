@@ -10,7 +10,8 @@ macOS only for now. This guide goes from a first mission to the settings you wil
 4. [Displays](#displays)
 5. [Commands](#commands)
 6. [Troubleshooting](#troubleshooting)
-7. [Uninstalling](#uninstalling)
+7. [Updating from 0.1](#updating-from-01)
+8. [Uninstalling](#uninstalling)
 
 ## Getting started
 
@@ -322,6 +323,15 @@ Checks Node, Claude Code, git, the scheduler, the plugin, the watcher, the authe
 - **A delivery fails.** The lead asks you what to do. Fix the cause on the task's branch and answer "I fixed it: deliver again", or deliver it yourself.
 - **Claude Code says the folder is not trusted.** Run `claude` once in the project folder and accept.
 - **GitHub errors.** Check `gh auth status`; the source and the `github-pr` delivery need a signed-in `gh`.
+
+## Updating from 0.1
+
+Relaylead 0.1 ran one mission per folder, delivered on the shared branch `relaylead/integration` and kept its worktrees directly under `.relaylead/worktrees/`. Since 0.2, each mission has its own branch `relaylead/<mission>/integration` and its own folder `.relaylead/worktrees/<mission>/`.
+
+- **A 0.1 mission still running** finishes with the names of then. Until it is over, `launch` is refused in its folder; stop it with `relaylead stop <mission>` if its lead is gone.
+- **Work delivered by 0.1 and not merged into your branch** stays on `relaylead/integration`. A new mission starts from your current branch, so it does not see that work and may do its tasks again: `launch` warns about it, and goes on. Before launching, merge `relaylead/integration` into your branch (`git merge relaylead/integration`), or delete the branch if that work is not wanted.
+- **`delivery.branch`** in `.relaylead.json` is no longer read.
+- **Output of the `files` delivery** now goes to `out/<mission>/<task id>/`.
 
 ## Uninstalling
 

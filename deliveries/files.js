@@ -11,8 +11,9 @@ function outDir(mission, task) {
   return layout.outDir(mission, task.id);
 }
 
+// Nothing to prepare: the output folders are made per task. No warnings.
 function prepareMission() {
-  // Nothing to prepare: the output folders are made per task.
+  return [];
 }
 
 function prepareTask(mission, task) {

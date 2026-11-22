@@ -137,6 +137,7 @@ function excludeRelaylead(dir) {
 // Checks everything before changing anything. Then creates the integration branch from the user's
 // current branch, with its worktree; or, when a former mission made them, brings the user's commits
 // made since into the integration branch, so this mission sees its new tasks.
+// Returns the warnings for the user (oldIntegrationWarnings).
 function prepareMission(mission) {
   const { branch } = mission.config.delivery;
   if (mission.config.guard.protectedBranches.includes(branch)) {
@@ -175,6 +176,19 @@ function prepareMission(mission) {
       throw codedError('tasks-not-committed', { dir: sourceDir(mission), branch });
     }
   }
+  return oldIntegrationWarnings(mission);
+}
+
+// The integration branch of relaylead 0.1, shared by the missions of then. Since 0.2, a mission starts
+// from the user's branch: work delivered on relaylead/integration and not merged into it is not seen,
+// and its tasks would be done again. Not a refusal: the user may have left that work on purpose.
+const OLD_INTEGRATION_BRANCH = 'relaylead/integration';
+
+function oldIntegrationWarnings(mission) {
+  if (!layout.isPerMission(mission) || !branchExists(mission.dir, OLD_INTEGRATION_BRANCH)) return [];
+  const count = git(mission.dir, ['rev-list', '--count', `HEAD..refs/heads/${OLD_INTEGRATION_BRANCH}`]);
+  if (count === '0') return [];
+  return [codedError('old-integration-unmerged', { branch: OLD_INTEGRATION_BRANCH, count })];
 }
 
 // A state line that a delivery left uncommitted in the integration worktree, on purpose (a hook

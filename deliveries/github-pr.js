@@ -28,8 +28,9 @@ function push(mission, branch, options = []) {
 // gh must work before anything is made. The pull requests need the integration branch on GitHub.
 function prepareMission(mission) {
   checkGh({ cwd: mission.dir });
-  localMerge.prepareMission(mission);
+  const warnings = localMerge.prepareMission(mission);
   push(mission, mission.config.delivery.branch);
+  return warnings;
 }
 
 // The pull request of the task's branch, merged by an earlier delivery or open; null when none.

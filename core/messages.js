@@ -61,6 +61,8 @@ const messages = {
     usage: 'usage: {usage}',
     'repo-busy':
       'the git repository of {dir} has been busy for too long with "relaylead {command}" (process {pid}, since {since}); try again once it is over',
+    'old-integration-unmerged':
+      'the branch {branch} of relaylead 0.1 has {count} commit(s) that your current branch does not have; this mission starts from your current branch, without that work, and may do its tasks again. To keep it, stop this mission, merge {branch} into your branch (or delete {branch} if that work is not wanted), then launch again',
     'source-taken':
       'mission "{mission}" of this project already takes its tasks from {source} and is not over: both would do the same tasks. Give this mission tasks of its own: another task folder with --tasks <folder> (for instance tasks/backend and tasks/frontend), or another source in .relaylead.json (another label for GitHub issues); or launch it once "{mission}" is over',
     'bad-tasks-folder': 'the task folder "{folder}" is not inside the project {dir}; give a folder of the project, such as --tasks tasks/backend',
@@ -310,6 +312,8 @@ const messages = {
     usage: 'usage : {usage}',
     'repo-busy':
       'le dépôt git de {dir} est occupé depuis trop longtemps par « relaylead {command} » (processus {pid}, depuis {since}) ; réessayez une fois qu\'il a fini',
+    'old-integration-unmerged':
+      'la branche {branch} de relaylead 0.1 a {count} commit(s) absent(s) de votre branche courante ; cette mission part de votre branche courante, sans ce travail, et risque de refaire ses tâches. Pour le garder, arrêtez cette mission, fusionnez {branch} dans votre branche (ou supprimez {branch} si ce travail n\'est pas voulu), puis relancez',
     'source-taken':
       'la mission « {mission} » de ce projet prend déjà ses tâches dans {source} et n\'est pas finie : les deux feraient les mêmes tâches. Donnez à cette mission ses propres tâches : un autre dossier de tâches avec --tasks <dossier> (par exemple tasks/backend et tasks/frontend), ou une autre source dans .relaylead.json (un autre libellé pour les issues GitHub) ; ou lancez-la une fois « {mission} » finie',
     'bad-tasks-folder': 'le dossier de tâches « {folder} » n\'est pas dans le projet {dir} ; indiquez un dossier du projet, par exemple --tasks tasks/backend',
