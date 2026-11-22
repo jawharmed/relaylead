@@ -14,7 +14,7 @@ function request(url, { method = 'GET', headers = {}, body } = {}) {
     const req = http.request({ host: '127.0.0.1', port: target.port, path: target.pathname, method, headers: { Host: target.host, ...headers } }, (res) => {
       let text = '';
       res.on('data', (chunk) => (text += chunk));
-      res.on('end', () => resolve({ status: res.statusCode, text }));
+      res.on('end', () => resolve({ status: res.statusCode, text, headers: res.headers }));
     });
     req.on('error', reject);
     req.end(body);
@@ -43,6 +43,8 @@ test('the page is served with a token, on 127.0.0.1 only, and the overview is re
   const page = await request(url + '/');
   assert.strictEqual(page.status, 200);
   assert.ok(page.text.includes(token));
+  assert.strictEqual(page.headers['x-frame-options'], 'DENY');
+  assert.match(page.headers['content-security-policy'], /frame-ancestors 'none'/);
   assert.ok(!page.text.includes('__TOKEN__'));
   const overview = JSON.parse((await request(url + '/api/overview')).text);
   assert.strictEqual(overview.missions[0].questions[0].id, 'q-db');
