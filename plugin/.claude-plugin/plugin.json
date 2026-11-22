@@ -1,7 +1,7 @@
 {
   "name": "relaylead",
   "displayName": "Relaylead",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Slash commands for relaylead: launch and follow missions run by a team of Claude Code sessions",
   "author": {
     "name": "Lilia Digital"

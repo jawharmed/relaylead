@@ -1,6 +1,6 @@
 {
   "name": "relaylead",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Run a team of Claude Code sessions in the background on a mission, with a watcher, guardrails and questions only before the irreversible (macOS)",
   "license": "MIT",
   "author": {
