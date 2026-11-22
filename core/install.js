@@ -7,7 +7,7 @@ const { home } = require('./paths');
 const { readJson, writeJson } = require('./store');
 const { assertSupported } = require('./platform');
 const { installScheduler, uninstallScheduler, plistPath, LABEL } = require('./scheduler');
-const { installPlugin, uninstallPlugin, PLUGIN_ID, MARKETPLACE } = require('./plugin');
+const { installPlugin, uninstallPlugin, removePluginCache, PLUGIN_ID, MARKETPLACE } = require('./plugin');
 const { codedError } = require('./messages');
 const { watcherRunning, stopWatcher } = require('./watcher');
 
@@ -77,6 +77,7 @@ async function uninstall(say, { purge = false } = {}) {
   }
   fs.rmSync(installFile(), { force: true });
   if (purge) {
+    removePluginCache();
     fs.rmSync(home(), { recursive: true, force: true });
     say('purged', { dir: home() });
   }

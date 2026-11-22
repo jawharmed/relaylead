@@ -89,16 +89,28 @@ function listQuestions(mission, { state } = {}) {
     .filter((question) => !state || question.state === state);
 }
 
-// `choice` is an option number (1-based) or an option text; it is stored as the text.
-function answerQuestion(mission, id, choice) {
+// `choice` is an option number (1-based) or an option text; it is stored as the text. `other` is a
+// free text instead of an option ("Other"): only for the lead's questions, never those of the hooks,
+// whose answers are options only.
+function answerQuestion(mission, id, choice, { other } = {}) {
   const question = readJson(questionFile(mission, id), null);
   if (!question) throw codedError('question-unknown', { mission, id });
-  const text = String(choice).trim();
-  const byNumber = /^\d+$/.test(text) ? question.options[Number(text) - 1] : undefined;
-  const byText = question.options.find((option) => option.toLowerCase() === text.toLowerCase());
-  const chosen = byNumber || byText;
-  if (!chosen) throw codedError('bad-choice', { choice: text, options: question.options.join(', ') });
-  const written = writeJsonExclusive(answerFile(mission, id), { choice: chosen, answeredAt: new Date().toISOString() });
+  let chosen;
+  if (other !== undefined) {
+    chosen = String(other).trim();
+    if (!chosen || question.kind) throw codedError('bad-choice', { choice: chosen, options: question.options.join(', ') });
+  } else {
+    const text = String(choice).trim();
+    const byNumber = /^\d+$/.test(text) ? question.options[Number(text) - 1] : undefined;
+    const byText = question.options.find((option) => option.toLowerCase() === text.toLowerCase());
+    chosen = byNumber || byText;
+    if (!chosen) throw codedError('bad-choice', { choice: text, options: question.options.join(', ') });
+  }
+  const written = writeJsonExclusive(answerFile(mission, id), {
+    choice: chosen,
+    ...(other !== undefined ? { other: true } : {}),
+    answeredAt: new Date().toISOString(),
+  });
   if (!written) {
     const previous = readJson(answerFile(mission, id));
     throw codedError('question-answered', { id, choice: previous.choice });

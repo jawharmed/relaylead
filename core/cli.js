@@ -360,6 +360,8 @@ commands.question = async (args, io) => {
   if (action === 'ask') {
     const name = missionName(options, io);
     refuseReplacedLead(name, io);
+    // The questions of a merge are asked by Relaylead itself (core/merge.js), not by this command.
+    if (/^(done|stopped)/.test(getState(name))) throw codedError('mission-question-over', { mission: name });
     // The keys irr-… and perm-… belong to the hooks: only the user answers those questions.
     if (/^(irr|perm)[^a-z0-9]/i.test(String(options.key || ''))) {
       throw codedError('bad-question', { detail: 'the keys irr-… and perm-… are kept for Relaylead' });
@@ -387,11 +389,13 @@ commands.question = async (args, io) => {
 
 commands.answer = async (args, io) => {
   refuseInSession('answer', io);
-  const [mission, id, choice] = parseArgs(args).positional;
-  if (!mission || !id || choice === undefined) {
-    throw codedError('usage', { usage: 'relaylead answer <mission> <id> <choice>' });
+  const { positional, options } = parseArgs(args);
+  const [mission, id, choice] = positional;
+  // --other "<text>": a free answer in place of an option.
+  if (!mission || !id || (choice === undefined) === (options.other === undefined)) {
+    throw codedError('usage', { usage: 'relaylead answer <mission> <id> <choice> | relaylead answer <mission> <id> --other "<text>"' });
   }
-  const chosen = answerQuestion(mission, id, choice);
+  const chosen = answerQuestion(mission, id, choice, { other: options.other });
   await startTargetedPass(mission);
   io.out.write(t('questionAnswered', { id, choice: chosen }, language(io)));
   return 0;

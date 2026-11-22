@@ -1,5 +1,7 @@
 // The Claude Code plugin (plugin/): slash commands /relaylead:*. Installed and removed only through
-// `claude plugin ...`; nothing is written in ~/.claude directly.
+// `claude plugin ...`; nothing is written in ~/.claude directly (but see removePluginCache).
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { claudeCommand } = require('../adapters/claude');
@@ -56,4 +58,12 @@ function uninstallPlugin() {
   return failures;
 }
 
-module.exports = { PLUGIN_DIR, MARKETPLACE, PLUGIN_ID, installPlugin, uninstallPlugin, pluginInstalled, marketplaceKnown };
+// What Claude Code leaves of the plugin after `claude plugin uninstall`: its folder in the cache
+// (marked orphaned, not removed). The one place under ~/.claude that Relaylead deletes, and only
+// this exact folder, with `uninstall --purge`.
+function removePluginCache() {
+  const claudeHome = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+  fs.rmSync(path.join(claudeHome, 'plugins', 'cache', MARKETPLACE), { recursive: true, force: true });
+}
+
+module.exports = { removePluginCache, PLUGIN_DIR, MARKETPLACE, PLUGIN_ID, installPlugin, uninstallPlugin, pluginInstalled, marketplaceKnown };

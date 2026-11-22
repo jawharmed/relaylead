@@ -11,6 +11,7 @@ const { readMission, getState, stopSessionsAndWait, launchWhileOpen, currentLead
 const { recordSession, listSessions } = require('./sessions');
 const { loadProfile } = require('./profiles');
 const { listQuestions } = require('./questions');
+const { listTold } = require('./told');
 const { getAdapter } = require('../adapters');
 const { getDelivery } = require('../deliveries');
 const tasksDirSource = require('../sources/tasks-dir');
@@ -121,6 +122,8 @@ function listTasks(name) {
       session: record ? record.session : null,
       attempt: record ? currentAttempt(record) : 0,
       summary: (result || record || {}).summary || null,
+      // The ids of the messages told to the mission that its crew member got with its task.
+      told: record && record.told ? record.told : [],
     };
   });
   tasks.forEach((task) => checkTaskId(mission, task));
@@ -158,11 +161,13 @@ function answeredQuestion(name, task) {
   return question;
 }
 
-function crewPrompt(task, cwd, branch, question, attempt, previousSummary) {
+function crewPrompt(task, cwd, branch, question, attempt, previousSummary, told) {
   // The crew member cannot read the questions: the answer it needs comes with its task.
   const asked = question
     ? [`Question asked before this task: ${question.text}`, `Answer from the user: ${question.answer.choice}`, '']
     : [];
+  // What the user told the mission with `relaylead tell`, from the first message.
+  const hints = told.length > 0 ? ['Messages from the user for this mission:', ...told.map((message) => `- ${message.text}`), ''] : [];
   const retried =
     attempt > 1
       ? [
@@ -177,6 +182,7 @@ function crewPrompt(task, cwd, branch, question, attempt, previousSummary) {
     task.body.trim(),
     '',
     ...asked,
+    ...hints,
     ...retried,
     `Working folder: ${cwd}`,
     `Branch: ${branch || 'none'}`,
@@ -274,6 +280,8 @@ async function launchOnPlace(mission, task, profile, crewProfile, question, { at
   const id = task.id;
   const delivery = getDelivery(mission.config.delivery.type);
   const { cwd, branch } = await withRepoLock(mission.dir, `task start ${id}`, () => delivery.prepareTask(mission, task));
+  // The messages of the user come with the task, but for a merge resolution, which has its own hints (core/merge.js).
+  const told = merge ? [] : listTold(name);
   const number = listSessions(name).filter((s) => s.name.startsWith(`${name}/${profile}/`)).length + 1;
   const adapter = getAdapter(mission.agent);
   const sessionName = `${name}/${profile}/${number}`;
@@ -283,7 +291,7 @@ async function launchOnPlace(mission, task, profile, crewProfile, question, { at
       name: sessionName,
       role: 'crew',
       profile: crewProfile,
-      prompt: crewPrompt(task, cwd, branch, question, attempt, previousSummary),
+      prompt: crewPrompt(task, cwd, branch, question, attempt, previousSummary, told),
       cwd,
       env: {
         RELAYLEAD_MISSION: name,
@@ -306,7 +314,7 @@ async function launchOnPlace(mission, task, profile, crewProfile, question, { at
   // The state is read again once the session is recorded: a stop either finds it in the registry or
   // is seen there.
   const session = await launchWhileOpen(name, launch, (launched) => adapter.stop(launched), { allowDone: merge });
-  const record = { id, profile, state: 'running', session: session.shortId, cwd, branch, startedAt: now(), attempt };
+  const record = { id, profile, state: 'running', session: session.shortId, cwd, branch, startedAt: now(), attempt, told: told.map((message) => message.id) };
   try {
     writeJson(taskFile(name, id), record);
   } catch (err) {

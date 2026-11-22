@@ -187,16 +187,18 @@ function render(data) {
   T = TEXT[data.language] || TEXT.en;
   document.documentElement.lang = data.language === 'fr' ? 'fr' : 'en';
   const active = data.missions.filter((mission) => mission.active);
-  const finished = data.missions.filter((mission) => !mission.active);
+  // A finished mission with a question still open (a merge conflict) stays among the active cards.
+  const shown = data.missions.filter((mission) => mission.active || mission.questions.length > 0);
+  const finished = data.missions.filter((mission) => !shown.includes(mission));
   $('summary').replaceChildren(el('b', {}, String(active.length)), ' ' + T.missions + ' · ', el('b', {}, String(data.openQuestions)), ' ' + T.questions);
   $('quota').replaceChildren(...[data.usage && meter(T.fiveHour, data.usage.fiveHour), data.usage && meter(T.sevenDay, data.usage.sevenDay)].filter(Boolean));
   const main = [];
   // Missions with a question come first: they wait for the person.
-  active.sort((a, b) => b.questions.length - a.questions.length);
+  shown.sort((a, b) => b.questions.length - a.questions.length);
   if (data.missions.length === 0) {
     main.push(el('div', { class: 'empty' }, el('p', {}, T.none), el('p', {}, T.start + ' ', el('code', { class: 'mono' }, 'relaylead launch'))));
   } else {
-    main.push(el('div', { class: 'grid' }, ...active.map(missionCard)));
+    main.push(el('div', { class: 'grid' }, ...shown.map(missionCard)));
   }
   if (finished.length) main.push(el('details', { class: 'finished' }, el('summary', {}, T.finished + ' (' + finished.length + ')'), el('div', { class: 'grid' }, ...finished.map(missionCard))));
   const open = document.querySelector('details.finished[open]');

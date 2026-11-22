@@ -20,6 +20,7 @@ const missions = require('./missions');
 const { stopSessionsAndWait, launchLead, launchWhileOpen, writeState } = missions;
 const { listTasks, markFailed, startQueued } = require('./tasks');
 const { unseenChanges } = require('./wait');
+const { listTold } = require('./told');
 const { unreadCount, sendMail } = require('./mailbox');
 const { writeJournal } = require('./guard');
 const { listQuestions, answerQuestion } = require('./questions');
@@ -194,6 +195,7 @@ async function observe(name) {
     readings,
     failures: readFailures(name),
     unseen,
+    told: listToldOrEmpty(name),
     mail,
     // The usage limits are those of Claude Code alone in this version, which the fake agent plays too.
     usage: readUsage('claude', now),
@@ -203,6 +205,15 @@ async function observe(name) {
     questions,
     lastActivityAt: lastActivity(name),
   };
+}
+
+// The messages told to the mission; none when they cannot be read (rule 19b waits).
+function listToldOrEmpty(name) {
+  try {
+    return listTold(name);
+  } catch {
+    return [];
+  }
 }
 
 // One action. `watch` is the object the decision returned, written once every action has run: an

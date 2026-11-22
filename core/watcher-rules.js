@@ -10,6 +10,7 @@
 // by short id), usage (the account's usage, usage.js readUsage: null when stale or missing), pause
 // (usage-pause.json, null when the mission is not paused), config, watch (watch.json)}.
 //
+// obs.told: the messages told to the mission (told.js listTold).
 // obs.questions: the open questions (questions.js listQuestions), null when they could not be read.
 // obs.lastActivityAt: when a file of the mission folder last changed, in ms (abandon.js lastActivity).
 //
@@ -78,6 +79,7 @@ function emptyWatch() {
     unlistedNoticeFor: null,
     handoverNoticeFor: null,
     contextFullNotices: [],
+    toldToCrew: {},
     baseAlerts: [],
     silentNoticeFor: null,
     failuresSeen: {},
@@ -197,6 +199,7 @@ function decide(obs) {
   judgeWakes(obs, watch);
   judgeRelaunches(obs, watch);
   if (obs.tasks) notifyFullCrew(obs, watch, actions); // rule 19
+  if (obs.tasks) passOnTold(obs, watch, actions); // rule 19b
   // Rules 8 to 16: one action on the lead at most; 17 and 18 only when none of them acted.
   const before = actions.length;
   if (status === 'absent') tendAbsentLead(obs, watch, actions, log);
@@ -263,6 +266,26 @@ function notifyFullCrew(obs, watch, actions) {
       shortId: session.shortId,
       text: `Your context holds ${context.tokens} tokens and is full. Commit what you have done on your branch, then run \`relaylead task fail ${task.id} --summary "context full: <what is done, what remains>"\` and end your turn: the lead starts a fresh session on your branch.`,
       log: `notify-context-full ${session.shortId} task ${task.id}`,
+    });
+  }
+}
+
+// Rule 19b: what the user told the mission after a crew member started (the earlier messages came
+// with its task) is mailed to it once, while its task runs. The mail reaches it at its next tool call.
+function passOnTold(obs, watch, actions) {
+  for (const task of obs.tasks) {
+    if (task.state !== 'running' || !task.session || task.id.startsWith('merge-into-')) continue;
+    const session = obs.registry.find((candidate) => candidate.shortId === task.session);
+    if (!session || !hasProcess(obs, session)) continue;
+    const given = [...(task.told || []), ...(watch.toldToCrew[task.session] || [])];
+    const news = (obs.told || []).filter((message) => !given.includes(message.id));
+    if (news.length === 0) continue;
+    watch.toldToCrew[task.session] = [...given, ...news.map((message) => message.id)];
+    actions.push({
+      type: 'mail',
+      shortId: task.session,
+      text: `The user told the mission: ${news.map((message) => message.text).join(' / ')}. Take it into account for task ${task.id}.`,
+      log: `told-to-crew ${task.session} ${news.map((message) => message.id).join(',')}`,
     });
   }
 }

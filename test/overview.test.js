@@ -41,7 +41,7 @@ test('overview --json gathers missions, tasks, open questions, usage and display
   assert.deepStrictEqual(view.display, { pane: null, statusLine: true, dashboardPort: 4317 });
 });
 
-test('overview shows a pause, a finished mission without questions, and drops a stale usage', async (t) => {
+test('overview shows a pause, a finished mission, and drops a stale usage', async (t) => {
   const dir = setupProject(t, 'demo');
   writeMission('demo', dir);
   writePause('demo', { reason: 'limit', resumeAt: Date.now() + 3600 * 1000 });
@@ -53,11 +53,13 @@ test('overview shows a pause, a finished mission without questions, and drops a 
   askQuestion('demo', { key: 'x', text: 'Still open?', options: ['a', 'b'] });
   writeJson(path.join(home(), 'missions', 'demo', 'state.json'), { state: 'done', updatedAt: new Date().toISOString() });
   view = await overview();
+  // Its open question stays visible and counted: a merge conflict is asked once the mission is done.
   assert.deepStrictEqual(
-    { active: view.missions[0].active, questions: view.missions[0].questions, pausedUntil: view.missions[0].pausedUntil },
-    { active: false, questions: [], pausedUntil: null },
+    { active: view.missions[0].active, questions: view.missions[0].questions.map((q) => q.id), pausedUntil: view.missions[0].pausedUntil },
+    { active: false, questions: ['q-x'], pausedUntil: null },
   );
   assert.strictEqual(view.activeMissions, 0);
+  assert.strictEqual(view.openQuestions, 1);
 });
 
 test('config set writes a display setting and refuses the others', async (t) => {

@@ -18,6 +18,8 @@ function installEnv(t, extra = {}) {
     RELAYLEAD_CLAUDE: path.join(__dirname, 'claude', 'fake-claude.js'),
     FAKE_CLAUDE_STATE: claudeState,
     RELAYLEAD_PLATFORM: 'darwin',
+    // Claude's own folder: never the real ~/.claude (uninstall --purge deletes the plugin cache there).
+    CLAUDE_CONFIG_DIR: tmpDir('relaylead-claude-config-'),
     ...extra,
   };
   delete env.ANTHROPIC_API_KEY;

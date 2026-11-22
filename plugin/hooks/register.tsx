@@ -188,8 +188,9 @@ export const register: Register = on => {
       )
     }
 
-    const active = data.missions.filter(mission => mission.active).sort((a, b) => b.questions.length - a.questions.length)
-    const finished = data.missions.filter(mission => !mission.active)
+    // A finished mission with a question still open (a merge conflict) stays among the cards.
+    const active = data.missions.filter(mission => mission.active || mission.questions.length > 0).sort((a, b) => b.questions.length - a.questions.length)
+    const finished = data.missions.filter(mission => !active.includes(mission))
     const busiest = busiestWindow(data, w)
 
     return (

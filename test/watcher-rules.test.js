@@ -862,6 +862,26 @@ test('a crew member past the hard threshold gets one context-full mail, only wit
   assert.deepStrictEqual(decide(observation(fields(unmeasured))).actions, []);
 });
 
+test('what the user told after a crew member started is mailed to it once', () => {
+  const crew = session(CREW, 'demo/developer/1', 'crew');
+  const told = [
+    { id: 'm-000001', text: 'before', at: iso(T0 - MINUTE) },
+    { id: 'm-000002', text: 'the text wanted is X', at: iso(T0) },
+  ];
+  const fields = (watch) => ({
+    registry: [leadRecord, crew],
+    rows: [row(leadRecord), row(crew)],
+    tasks: [{ id: 'a', state: 'running', session: CREW, told: ['m-000001'] }],
+    told,
+    watch,
+  });
+  const first = decide(observation(fields(emptyWatch())));
+  assert.deepStrictEqual(first.actions.map((action) => [action.type, action.shortId]), [['mail', CREW]]);
+  assert.match(first.actions[0].text, /the text wanted is X/);
+  assert.doesNotMatch(first.actions[0].text, /before/);
+  assert.deepStrictEqual(decide(observation(fields(first.watch))).actions, []);
+});
+
 test('a hard handover and a wake never come in the same pass', () => {
   const { actions } = decide(observation({ readings: context(230000), mail: { [LEAD]: 1 } }));
   assert.deepStrictEqual(actions.map((action) => action.type), ['hand-over']);

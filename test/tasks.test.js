@@ -10,6 +10,7 @@ const { getState, setState, stopMission, readMission } = require('../core/missio
 const { withMissionLock } = require('../core/mission-lock');
 const { sleep } = require('../core/timing');
 const { askQuestion, answerQuestion } = require('../core/questions');
+const { tellMission } = require('../core/told');
 const { writeJson } = require('../core/store');
 const { loadProfile } = require('../core/profiles');
 const { listSessions } = require('../core/sessions');
@@ -52,6 +53,7 @@ test('startTask launches a crew member and records the task', async (t) => {
     branch: null,
     startedAt: record.startedAt,
     attempt: 1,
+    told: [],
   });
   assert.ok(!Number.isNaN(Date.parse(record.startedAt)));
   assert.deepStrictEqual(readJson(path.join(missionDir('demo'), 'tasks', 'a.json')), record);
@@ -103,6 +105,19 @@ test('a task that asks first starts once answered, and its crew member gets the 
   await startTask('demo', { id: 'c' });
   assert.ok(specs[0].prompt.includes('Question asked before this task: Blue or green theme?'), specs[0].prompt);
   assert.ok(specs[0].prompt.includes('Answer from the user: Green'), specs[0].prompt);
+});
+
+test('what the user told the mission comes with the task of a crew member', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  const specs = spyLaunches(t);
+  const id = tellMission('demo', 'the text wanted is X');
+
+  const record = await startTask('demo', { id: 'a' });
+
+  assert.ok(specs[0].prompt.includes('Messages from the user for this mission:\n- the text wanted is X'), specs[0].prompt);
+  assert.deepStrictEqual(record.told, [id]);
+  assert.deepStrictEqual(listTasks('demo').find((task) => task.id === 'a').told, [id]);
 });
 
 test('a task whose dependencies are not delivered is refused, naming them', async (t) => {

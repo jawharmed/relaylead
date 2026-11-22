@@ -56,16 +56,15 @@ function missionView(listed) {
     // Tasks waiting for a free place on the machine (core/places.js).
     queued: finished ? 0 : attempt(() => queuedCount(name), 0),
     tasks: attempt(() => tasksOf(name, mission), []),
-    questions: finished
-      ? []
-      : attempt(() => listQuestions(name, { state: 'open' }), []).map((question) => ({
-          id: question.id,
-          text: question.text,
-          context: question.context,
-          options: question.options,
-          recommended: question.recommended,
-          askedAt: question.askedAt,
-        })),
+    // Also for a finished mission: the question of a merge conflict is asked once the mission is done.
+    questions: attempt(() => listQuestions(name, { state: 'open' }), []).map((question) => ({
+      id: question.id,
+      text: question.text,
+      context: question.context,
+      options: question.options,
+      recommended: question.recommended,
+      askedAt: question.askedAt,
+    })),
   };
 }
 
