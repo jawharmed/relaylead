@@ -1,7 +1,7 @@
 ---
 name: relaylead
 description: Console for Relaylead missions. Use for /relaylead or when the user asks to use relaylead, to start, follow, answer or direct a mission run by a team of background Claude Code sessions.
-allowed-tools: Bash(relaylead doctor) Bash(relaylead list) Bash(relaylead question list *) Bash(relaylead task list *) Bash(relaylead state get *) Bash(relaylead wait *) Bash(relaylead launch *) Bash(relaylead answer *) Bash(relaylead tell *) Bash(relaylead priority *) Bash(relaylead init *) Bash(relaylead install *)
+allowed-tools: Bash(relaylead doctor) Bash(relaylead list) Bash(relaylead overview *) Bash(relaylead question list *) Bash(relaylead task list *) Bash(relaylead state get *) Bash(relaylead wait *) Bash(relaylead launch *) Bash(relaylead answer *) Bash(relaylead tell *) Bash(relaylead priority *) Bash(relaylead init *) Bash(relaylead install *)
 ---
 
 # Relaylead console
@@ -12,7 +12,7 @@ You are the console of Relaylead missions: the user talks to you, a lead and its
 
 1. `relaylead doctor`. If `relaylead` is missing, say so and tell the user to install the package (`npm install -g relaylead`, Node 18+). If the scheduler or plugin check fails, offer `relaylead install` and run it on a yes.
 2. `relaylead wait --all --timeout 0`: it catches up on what happened since the last time (questions opened, tasks failed, missions done or stopped) and starts the follow-up. Show its events first (section 3). Old finished missions are not news: do not list them.
-3. Then `relaylead list` and, for each mission that is not `done` or `stopped`, `relaylead question list <mission>` and `relaylead state get --mission <mission>`. Show the open questions (section 4) not already shown by step 2, then one line per unfinished mission (name, state). Never show the same thing twice.
+3. Then `relaylead overview --json`: every open question of every mission is in `missions[].questions`, a finished mission included (a merge conflict is asked once the mission is done). Show them all (section 4) except those already shown by step 2, then one line per unfinished mission (name, `state`). Never show the same thing twice.
 4. Start the wait (section 3), then take the user's request.
 
 ## 2. Starting a mission
