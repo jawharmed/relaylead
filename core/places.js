@@ -35,8 +35,9 @@ function readQuietly(file) {
   }
 }
 
-// The missions whose tasks may hold or wait for a place: neither finished nor paused for the usage
-// limit; a finished one only while a crew member resolves the conflict of its merge (core/merge.js).
+// The missions whose tasks may hold or wait for a place: not finished, or finished while a crew member
+// resolves the conflict of its merge (core/merge.js). A mission paused for the usage limit is one of
+// them: its crew members may still be finishing their tasks.
 function missionsWithPlaces() {
   let names;
   try {
@@ -53,7 +54,7 @@ function missionsWithPlaces() {
     const merge = readQuietly(path.join(missionDir(name), 'merge.json'));
     const open = !FINISHED.includes(record.state) && !record.stopping;
     const merging = record.state === 'done' && !record.stopping && Boolean(merge) && merge.state === 'resolving';
-    if ((open || merging) && !readPause(name)) missions.push(mission);
+    if (open || merging) missions.push(mission);
   }
   return missions;
 }
@@ -96,10 +97,12 @@ function placesTaken(except = null) {
   return taken;
 }
 
-// The queued tasks, the first to start first: [{mission, id, priority, queuedAt}].
+// The queued tasks, the first to start first: [{mission, id, priority, queuedAt}]. Those of a mission
+// paused for the usage limit wait for its end.
 function queue() {
   const entries = [];
   for (const mission of missionsWithPlaces()) {
+    if (readPause(mission.name)) continue;
     for (const { record } of taskRecords(mission.name)) {
       if (record.state !== 'queued') continue;
       entries.push({ mission: mission.name, id: record.id, priority: mission.priority || 'normal', queuedAt: record.queuedAt || '' });

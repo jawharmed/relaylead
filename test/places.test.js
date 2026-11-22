@@ -203,3 +203,14 @@ test('the lead knows places-busy as a busy machine, not a failure to report', ()
     assert.ok(profile.includes(phrase), lang);
   }
 });
+
+test('the crew of a mission paused for the usage limit still takes its places; its queued tasks wait', async (t) => {
+  const { mission } = machine(t, 1);
+  mission('paused', 'low', ['paused-x', 'paused-y']);
+  await startTask('paused', { id: 'paused-x' });
+  await startTask('paused', { id: 'paused-y' });
+  writeJson(path.join(missionDir('paused'), 'usage-pause.json'), { at: new Date().toISOString(), reason: 'test', resumeAt: new Date(Date.now() + 3600000).toISOString() });
+
+  assert.strictEqual(placesTaken(), 1);
+  assert.deepStrictEqual(queue(), []);
+});
