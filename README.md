@@ -27,6 +27,8 @@ relaylead answer <mission> <question id> <choice>
 relaylead show <mission>     # open the lead's session
 ```
 
+See everything at once: a panel and a status line inside Claude Code, or `relaylead dashboard` for a local web page (see the guide, "Displays").
+
 `launch` prints the mission's name. The work lands on the branch `relaylead/integration`; your own checkout is never changed.
 
 By default the tasks are the Markdown files of the `tasks/` folder, one per task, with a small header (`title`, and optionally `depends` and `ask`). They can also be GitHub issues delivered as pull requests: see the guide.
