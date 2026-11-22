@@ -502,7 +502,11 @@ function wakeMotives(obs, watch, unseen) {
   const motives = [];
   // Rule 14: changes the lead has not seen, once per view.
   if (unseen && unseen.changes.length > 0 && unseen.viewKey !== watch.lastWakeView) {
-    const reasons = unseen.changes.map((change) => `${change.kind} ${change.id} is now ${change.to || 'gone'}`);
+    const reasons = unseen.changes.map((change) =>
+      change.kind === 'message'
+        ? `the user told you something (${change.id}): run \`relaylead wait --timeout 0\` to read it`
+        : `${change.kind} ${change.id} is now ${change.to || 'gone'}`,
+    );
     motives.push({ reasons, log: reasons.join('; '), remember: { lastWakeView: unseen.viewKey } });
   }
   // Rule 15: mail for the lead.

@@ -86,7 +86,7 @@ test('lead tools only allow its relaylead commands and read-only git', () => {
   const { tools } = loadProfile('lead', { dir: tmpDir('relaylead-project-') });
 
   const shell = [
-    'Bash(relaylead task *)', 'Bash(relaylead wait*)', 'Bash(relaylead question *)', 'Bash(relaylead state *)',
+    'Bash(relaylead task *)', 'Bash(relaylead wait*)', 'Bash(relaylead question *)', 'Bash(relaylead state *)', 'Bash(relaylead decision *)',
     'Bash(git status)', 'Bash(git log *)',
   ];
   assert.deepStrictEqual(tools, [...shell, 'Read', 'Glob', 'Grep']);

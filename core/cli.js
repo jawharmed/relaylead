@@ -16,6 +16,9 @@ const {
 } = require('./missions');
 const { listTasks, startTask, retryTask, deliverTask, finishTask } = require('./tasks');
 const { waitForChanges } = require('./wait');
+const { waitForEvents } = require('./console-wait');
+const { tellMission } = require('./told');
+const { addDecision, readDecisions } = require('./decisions');
 const { askQuestion, answerQuestion, listQuestions } = require('./questions');
 const { runPass, tendMission, stopPresent, loop, watcherRunning, startWatcher, stopWatcher } = require('./watcher');
 const { watchLogSize, watchLogSince } = require('./watch-log');
@@ -30,7 +33,7 @@ const { startDashboard } = require('./dashboard');
 const pkg = require('../package.json');
 
 // Options that take no value.
-const FLAGS = ['all', 'force', 'json', 'no-hooks', 'no-open', 'purge', 'yes'];
+const FLAGS = ['all', 'force', 'json', 'list', 'no-hooks', 'no-open', 'purge', 'yes'];
 
 // Splits arguments into positional values and `--name value` (or `--name=value`) options.
 // A repeated option (--option a --option b) is also kept in full in `lists`.
@@ -279,7 +282,13 @@ commands.wait = async (args, io) => {
   const { options } = parseArgs(args);
   const timeout = options.timeout === undefined ? undefined : Number(options.timeout);
   if (timeout !== undefined && !(timeout >= 0)) {
-    throw codedError('usage', { usage: 'relaylead wait [--timeout seconds] [--mission name]' });
+    throw codedError('usage', { usage: 'relaylead wait [--timeout seconds] [--mission name] | wait --all [--timeout seconds]' });
+  }
+  // The console's wait: every mission of the machine, events named by mission (core/console-wait.js).
+  if (options.all) {
+    refuseInSession('wait --all', io);
+    await waitForEvents(timeout, (events) => io.out.write(JSON.stringify({ events }, null, 2) + '\n'));
+    return 0;
   }
   const mission = missionName(options, io);
   refuseReplacedLead(mission, io);
@@ -334,6 +343,32 @@ commands.answer = async (args, io) => {
   const chosen = answerQuestion(mission, id, choice);
   await startTargetedPass(mission);
   io.out.write(t('questionAnswered', { id, choice: chosen }, language(io)));
+  return 0;
+};
+
+// What the user tells a lead: kept in the mission, and the lead is woken like by an answer.
+commands.tell = async (args, io) => {
+  refuseInSession('tell', io);
+  const [mission, ...words] = parseArgs(args).positional;
+  if (!mission || words.length === 0) throw codedError('usage', { usage: 'relaylead tell <mission> <text>' });
+  const id = tellMission(mission, words.join(' '));
+  await startTargetedPass(mission);
+  io.out.write(t('toldMessage', { id, mission }, language(io)));
+  return 0;
+};
+
+// The lead notes a decision taken with the user in decisions.md of its mission.
+commands.decision = async (args, io) => {
+  const { positional, options } = parseArgs(args);
+  if (positional.length === 0 && !options.list) throw codedError('usage', { usage: 'relaylead decision <text> | decision --list' });
+  const mission = missionName(options, io);
+  if (options.list) {
+    io.out.write(readDecisions(mission));
+    return 0;
+  }
+  refuseReplacedLead(mission, io);
+  addDecision(mission, positional.join(' '));
+  io.out.write(t('decisionNoted', {}, language(io)));
   return 0;
 };
 
