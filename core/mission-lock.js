@@ -1,14 +1,25 @@
-// The mission lock: one start, delivery, end or stop at a time per mission (missions/<name>/start.lock).
+// The mission lock: one launch, start, delivery, end or stop at a time per mission
+// (missions/<name>/start.lock). The git lock: one change at a time to the shared parts of a git
+// repository, whatever the mission (~/.relaylead/locks/git-<hash>.lock).
+//
+// Lock order, so that no two commands ever wait for each other: the mission lock first, then the git
+// lock, never the other way. The action run under the git lock waits for no other lock: it runs git
+// commands, and nothing else. A holder of the git lock therefore waits for nobody, and no cycle of
+// waits can form.
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
-const { missionDir } = require('./paths');
+const { home, missionDir } = require('./paths');
 const { codedError } = require('./messages');
 const { isAlive } = require('./sessions');
-const { gitTimeoutMs } = require('./run-file');
+const { runFileSync, gitTimeoutMs } = require('./run-file');
 const { sleep } = require('./timing');
 
 // Long enough for a slow agent launch held by another start. Read at each call.
 const lockWaitMs = () => Number(process.env.RELAYLEAD_START_LOCK_WAIT_MS) || 60 * 1000;
+// How long a wait for the git lock may last: a delivery whose git hooks run the project's tests may
+// hold it for minutes. Read at each call; tests shorten it.
+const repoLockWaitMs = () => Number(process.env.RELAYLEAD_REPO_LOCK_WAIT_MS) || 10 * 60 * 1000;
 // An empty or partly written lock file this old was left by a holder that crashed.
 const EMPTY_LOCK_STALE_MS = 10 * 1000;
 // A live holder this old is stuck: a delivery runs a few git commands, each stopped after
@@ -106,7 +117,8 @@ async function takeOverStaleLock(file, isStale = isStaleLock) {
 
 // One start, delivery, end or stop at a time per mission: the lead may start tasks in parallel, and
 // each start must see the sessions and task records written by the previous one. Deliveries take it
-// too, so two git commands never change the same repository at the same time. The end of a mission
+// too, so two git commands of the mission never run at the same time in its integration worktree;
+// between missions of one repository, the git lock (withRepoLock) takes over. The end of a mission
 // and `relaylead stop` take it for their whole work, so a removal or a new launch cannot cross them. `command` names the holder
 // ("task start a") in the lock file and in the errors of those who wait for it.
 // A waiter gives up after a minute, even when it cannot read who holds it; at once if the live
@@ -139,4 +151,61 @@ async function withMissionLock(name, command, action) {
   }
 }
 
-module.exports = { withMissionLock, takeOverStaleLock, tryCreateLock, isStaleLock, removeQuietly, EMPTY_LOCK_STALE_MS };
+// The git lock of the repository holding `dir`, keyed by the real path of its common git folder: every
+// worktree of one repository shares it. Null when `dir` is in no git repository (the files delivery):
+// there is nothing shared to protect.
+function repoLockFile(dir) {
+  let commonDir;
+  try {
+    // Without background maintenance, like every git call of relaylead (deliveries/local-merge.js).
+    const args = ['-c', 'gc.auto=0', '-c', 'maintenance.auto=false', 'rev-parse', '--git-common-dir'];
+    const output = runFileSync('git', args, {
+      cwd: dir,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+      timeout: gitTimeoutMs(),
+    });
+    commonDir = fs.realpathSync.native(path.resolve(dir, output.trim()));
+  } catch {
+    return null;
+  }
+  const hash = crypto.createHash('sha1').update(commonDir).digest('hex').slice(0, 16);
+  return path.join(home(), 'locks', `git-${hash}.lock`);
+}
+
+// One change at a time to what the worktrees of a repository share: creating and removing worktrees,
+// creating and deleting branches, merging into an integration branch. Two missions of one repository
+// each hold their own mission lock: this one makes their deliveries pass one after the other.
+// The caller holds its mission lock, and `action` runs git commands only (lock order, at the top).
+// A waiter gives up after repoLockWaitMs() (repo-busy); the lock of a holder that died is taken over.
+async function withRepoLock(dir, command, action) {
+  const file = repoLockFile(dir);
+  if (!file) return action();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const giveUpAt = Date.now() + repoLockWaitMs();
+  while (!tryCreateLock(file, command)) {
+    if (isStaleLock(file) && (await takeOverStaleLock(file))) continue;
+    if (Date.now() > giveUpAt) {
+      const lock = readLock(file) || {};
+      throw codedError('repo-busy', { dir, command: lock.command || '?', pid: lock.pid || '?', since: lock.since || '?' });
+    }
+    await sleep(50);
+  }
+  try {
+    return await action();
+  } finally {
+    await removeQuietly(file);
+  }
+}
+
+module.exports = {
+  withMissionLock,
+  withRepoLock,
+  repoLockFile,
+  takeOverStaleLock,
+  tryCreateLock,
+  isStaleLock,
+  removeQuietly,
+  EMPTY_LOCK_STALE_MS,
+};

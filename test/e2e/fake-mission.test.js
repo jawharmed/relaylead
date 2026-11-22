@@ -199,3 +199,26 @@ test('a second mission runs in the same folder after remove', { timeout: 3 * MIS
   const listed = (await relaylead(['list'], dir)).out.trim().split('\n');
   assert.strictEqual(listed.length, 1, listed.join('\n'));
 });
+
+// Since 0.2, each mission has its own lock, integration branch and worktrees: two of them run side by
+// side in one repository, and their merges take turns under the git lock.
+test('two missions launched in the same repository each deliver into their own branch', { timeout: 3 * MISSION_MS }, async (t) => {
+  process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
+  const dir = gitRepo(readFiles(TOY_REPO));
+  const before = checkoutState(dir);
+
+  const runs = await Promise.all(['one', 'two'].map((name) => runMission(t, dir, name)));
+
+  for (const { mission, report } of runs) {
+    const integration = `relaylead/${mission}/integration`;
+    const merges = git(dir, 'log', '--merges', '--format=%s', integration);
+    for (const id of ['a', 'b']) {
+      assert.match(merges, new RegExp(`Merge branch 'relaylead/${mission}/${id}'`), report());
+      assert.match(git(dir, 'show', `${integration}:tasks/${id}.md`), /^state: done\r?$/m);
+    }
+    // Only the work of its own tasks: no merge of the other mission's branches.
+    const other = mission === 'one' ? 'two' : 'one';
+    assert.doesNotMatch(merges, new RegExp(`relaylead/${other}/`), report());
+  }
+  assert.deepStrictEqual(checkoutState(dir), before);
+});

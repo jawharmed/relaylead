@@ -59,6 +59,8 @@ const messages = {
     deliveryCommit: 'chore(relaylead): deliver {id}',
     // Errors: the key is the error code (see codedError).
     usage: 'usage: {usage}',
+    'repo-busy':
+      'the git repository of {dir} has been busy for too long with "relaylead {command}" (process {pid}, since {since}); try again once it is over',
     'old-mission-running':
       'mission "{mission}" was launched by relaylead 0.1 and still runs in {dir} ({state}); a new mission can start in this folder once it is over; if its lead is gone, stop it with: relaylead stop {mission}',
     'mission-exists':
@@ -303,6 +305,8 @@ const messages = {
       'relaylead launch : le veilleur n\'a pas pu être lancé ({detail}) ; lancez-le avec : relaylead watcher start\n',
     deliveryCommit: 'chore(relaylead): {id} livrée',
     usage: 'usage : {usage}',
+    'repo-busy':
+      'le dépôt git de {dir} est occupé depuis trop longtemps par « relaylead {command} » (processus {pid}, depuis {since}) ; réessayez une fois qu\'il a fini',
     'old-mission-running':
       'la mission « {mission} » a été lancée par relaylead 0.1 et tourne encore dans {dir} ({state}) ; une nouvelle mission pourra démarrer dans ce dossier une fois celle-ci finie ; si son lead a disparu, arrêtez-la avec : relaylead stop {mission}',
     'mission-exists':

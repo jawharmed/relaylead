@@ -15,7 +15,7 @@ const { getAdapter } = require('../adapters');
 const { getDelivery } = require('../deliveries');
 const { sleep } = require('./timing');
 const { spawnDetached } = require('./detached');
-const { withMissionLock, takeOverStaleLock } = require('./mission-lock');
+const { withMissionLock, withRepoLock, takeOverStaleLock } = require('./mission-lock');
 const { watchLog } = require('./watch-log');
 const layout = require('./layout');
 
@@ -131,7 +131,7 @@ async function createMission({ name, dir, request, team, priority, agent, params
     // Under the mission lock until mission.json is written: a removal of the folder waits for it.
     await withMissionLock(missionName, 'launch', async () => {
       // Before the lead starts: the integration worktree is where the lead reads the tasks.
-      delivery.prepareMission(mission);
+      await withRepoLock(realDir, 'launch', () => delivery.prepareMission(mission));
       writeJson(missionFile(missionName, 'mission.json'), mission);
     });
     await launchLead(mission);
@@ -451,10 +451,17 @@ function sessionDirs(mission, sessions) {
     .filter(Boolean);
 }
 
-// Removes the task worktrees the delivery can remove, except those where a session may still run.
-// Never throws: each warning is also written to the mission's journal, which outlives the command.
-function cleanMission(mission, keepDirs) {
-  const warnings = getDelivery(mission.config.delivery.type).cleanMission(mission, { keepDirs });
+// Removes the task worktrees the delivery can remove, except those where a session may still run,
+// under the git lock. Never throws: each warning is also written to the mission's journal, which
+// outlives the command. The caller holds the mission lock.
+async function cleanMission(mission, keepDirs) {
+  let warnings;
+  try {
+    const delivery = getDelivery(mission.config.delivery.type);
+    warnings = await withRepoLock(mission.dir, 'clean', () => delivery.cleanMission(mission, { keepDirs }));
+  } catch (err) {
+    warnings = [codedError('mission-cleanup-failed', { mission: mission.name, detail: err.message })];
+  }
   for (const warning of warnings) writeJournal(mission.name, 'relaylead', warning.message);
   return warnings;
 }
@@ -605,7 +612,7 @@ async function stopAndFree(mission, record, stopAll) {
     ({ failed, alive, error } = await stopAll());
     mayRun = [...failed, ...alive];
   }
-  const warnings = cleanMission(mission, sessionDirs(mission, mayRun));
+  const warnings = await cleanMission(mission, sessionDirs(mission, mayRun));
   let firstError = error;
   if (!firstError && alive.length > 0) {
     firstError = codedError('session-still-alive', { mission: mission.name, shortId: alive[0].shortId });
@@ -630,7 +637,7 @@ async function stopMission(name, { note } = {}) {
   const mission = readMission(name);
   const current = readStateRecord(name);
   if (!needsStop(mission, current)) {
-    return withMissionLock(name, 'stop', () => ({ outcome: 'nothing', warnings: cleanMission(mission, []) }));
+    return withMissionLock(name, 'stop', async () => ({ outcome: 'nothing', warnings: await cleanMission(mission, []) }));
   }
   // A replay keeps the state as it is, with its date: that date tells how old the pids are.
   const replay = FINISHED.includes(current.state);
@@ -693,8 +700,9 @@ async function removeMission(name, { force = false, onBranchDeleted } = {}) {
       for (const session of listSessions(name)) await adapter.forget(session).catch(() => {});
     }
     // A project folder deleted since has no worktree or branch left to remove.
+    const delivery = getDelivery(mission.config.delivery.type);
     const branches = fs.existsSync(mission.dir)
-      ? getDelivery(mission.config.delivery.type).removeMission(mission, { force, onBranchDeleted })
+      ? await withRepoLock(mission.dir, 'remove', () => delivery.removeMission(mission, { force, onBranchDeleted }))
       : [];
     await releaseLock(mission.dir, mission);
     return branches;

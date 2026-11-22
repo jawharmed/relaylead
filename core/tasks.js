@@ -15,7 +15,7 @@ const { getAdapter } = require('../adapters');
 const { getDelivery } = require('../deliveries');
 const tasksDirSource = require('../sources/tasks-dir');
 const githubIssuesSource = require('../sources/github-issues');
-const { withMissionLock } = require('./mission-lock');
+const { withMissionLock, withRepoLock } = require('./mission-lock');
 const layout = require('./layout');
 
 // The option the lead adds to the question of a task that asks first (catalog/profiles/lead.md).
@@ -209,7 +209,8 @@ async function launchCrew(mission, id, profile, { attempt = 1, previousSummary =
   const question = answeredQuestion(name, task);
   const crewProfile = loadProfile(profile, { dir: mission.dir });
 
-  const { cwd, branch } = getDelivery(mission.config.delivery.type).prepareTask(mission, task);
+  const delivery = getDelivery(mission.config.delivery.type);
+  const { cwd, branch } = await withRepoLock(mission.dir, `task start ${id}`, () => delivery.prepareTask(mission, task));
   const number = listSessions(name).filter((s) => s.name.startsWith(`${name}/${profile}/`)).length + 1;
   const adapter = getAdapter(mission.agent);
   const sessionName = `${name}/${profile}/${number}`;
@@ -319,14 +320,16 @@ function archiveAttempt(name, id, attempt, record) {
 async function deliverTask(name, id, { runHooks, env } = {}) {
   const mission = readMission(name); // before the lock, which lives in the mission folder
   const delivery = getDelivery(mission.config.delivery.type);
-  return withMissionLock(name, `task deliver ${id}`, () => {
+  // The merge and the removals change the repository: under the git lock, inside the mission lock.
+  const underRepoLock = (action) => withRepoLock(mission.dir, `task deliver ${id}`, action);
+  return withMissionLock(name, `task deliver ${id}`, async () => {
     checkCurrentLead(name, env);
     const task = findTask(name, id);
     if (task.state === 'delivered') {
-      return { outcome: 'already-delivered', warnings: delivery.finish(mission, task, { runHooks }) };
+      return { outcome: 'already-delivered', warnings: await underRepoLock(() => delivery.finish(mission, task, { runHooks })) };
     }
     if (task.state !== 'done') throw codedError('task-not-deliverable', { id, state: task.state });
-    return { outcome: 'delivered', warnings: delivery.deliver(mission, task, { runHooks }) };
+    return { outcome: 'delivered', warnings: await underRepoLock(() => delivery.deliver(mission, task, { runHooks })) };
   });
 }
 
