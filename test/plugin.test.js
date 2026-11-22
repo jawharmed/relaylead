@@ -17,6 +17,14 @@ test('plugin.json names the plugin and has the version of the package', () => {
   assert.strictEqual(market.name, 'relaylead-local');
 });
 
+test('the plugin card names the author, declares an icon that exists, and has a README', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(PLUGIN_DIR, '.claude-plugin', 'plugin.json'), 'utf8'));
+  assert.deepStrictEqual(manifest.author, { name: 'Lilia Digital' });
+  assert.deepStrictEqual(pkg.author, { name: 'Lilia Digital' });
+  assert.ok(fs.existsSync(path.join(PLUGIN_DIR, manifest.icon)));
+  assert.ok(fs.readFileSync(path.join(PLUGIN_DIR, 'README.md'), 'utf8').includes('npm install -g relaylead'));
+});
+
 test('each command only allows the relaylead command it runs; the plugin has one mod and no agent', () => {
   assert.deepStrictEqual(fs.readdirSync(path.join(PLUGIN_DIR, 'commands')).sort(), COMMANDS.map((name) => `${name}.md`).sort());
   for (const name of COMMANDS) {
@@ -24,7 +32,7 @@ test('each command only allows the relaylead command it runs; the plugin has one
     assert.match(text, /^description: .+$/m);
     assert.match(text, new RegExp(`^allowed-tools: Bash\\(relaylead ${name} \\*\\)$`, 'm'));
   }
-  assert.deepStrictEqual(fs.readdirSync(PLUGIN_DIR).sort(), ['.claude-plugin', 'commands', 'hooks', 'skills', 'types']);
+  assert.deepStrictEqual(fs.readdirSync(PLUGIN_DIR).sort(), ['.claude-plugin', 'README.md', 'commands', 'hooks', 'icon.svg', 'skills', 'types']);
   // The mod (status line entry, pane, /panneau) is checked by `claude plugin validate plugin`, which CI has no claude to run.
   const hooks = JSON.parse(fs.readFileSync(path.join(PLUGIN_DIR, 'hooks', 'hooks.json'), 'utf8'));
   assert.deepStrictEqual(hooks, { modules: ['./register.tsx'] });
