@@ -63,12 +63,18 @@ function readMemoryText(dir) {
   }
 }
 
+// What `memory show` gives the lead to pass back to `memory write --base`: write refuses when the file
+// is no longer the one that was read.
+function fingerprint(text) {
+  return crypto.createHash('sha1').update(text).digest('hex').slice(0, 12);
+}
+
 // { text, lines, maxLines, tooLong } of a project; used by `memory show` and by doctor.
 function readMemory(dir) {
   const { maxLines } = memorySettings(dir);
   const text = readMemoryText(dir);
   const lines = countLines(text);
-  return { text, lines, maxLines, tooLong: lines > maxLines };
+  return { text, lines, maxLines, tooLong: lines > maxLines, fingerprint: fingerprint(text) };
 }
 
 // Keeps .git/info/exclude right for the memory, the .gitignore never touched. Not versioned: the memory
@@ -120,8 +126,8 @@ async function withMemoryLock(dir, action) {
 }
 
 // Replaces the memory of the project of `mission` by `text`. Refused when the memory is off, when the text is
-// empty or longer than the ceiling. The previous version goes to the archive. Returns the number of lines.
-async function writeMemory(mission, text) {
+// empty or longer than the ceiling, or when the file is not the one `base` (its fingerprint) was taken from. The previous version goes to the archive. Returns the number of lines.
+async function writeMemory(mission, text, base) {
   const dir = projectRoot(require('./missions').readMission(mission).dir); // lazy: missions.js needs the delivery, which needs this file
   const { enabled, maxLines, versioned } = memorySettings(dir);
   if (!enabled) throw codedError('memory-disabled', {});
@@ -131,6 +137,8 @@ async function writeMemory(mission, text) {
   if (lines > maxLines) throw codedError('memory-too-long', { lines, max: maxLines });
   await withMemoryLock(dir, async () => {
     const before = readMemoryText(dir);
+    // Another mission may have written since the lead read: its compaction would be lost.
+    if (fingerprint(before) !== base) throw codedError('memory-changed', {});
     if (before.trim() && before !== body + '\n') {
       // A name that cannot clash: the date, then the pid.
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');

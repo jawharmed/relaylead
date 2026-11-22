@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { run } = require('../core/cli');
 const { home } = require('../core/paths');
-const { writeMemory, memoryFile, archiveDir, projectRoot } = require('../core/memory');
+const { writeMemory: write, readMemory, memoryFile, archiveDir, projectRoot } = require('../core/memory');
 const { writeJson } = require('../core/store');
 const { gitRepo } = require('../fixtures/git');
 const { installEnv, runRelaylead } = require('../fixtures/install-env');
@@ -29,27 +29,45 @@ function project(t, config) {
   return dir;
 }
 
+// Writes like a lead that has just read the memory: with its fingerprint.
+const writeMemory = (mission, text, dir) => write(mission, text, readMemory(dir).fingerprint);
+const base = (dir) => ['--base', readMemory(dir).fingerprint];
 const exclude = (dir) => fs.readFileSync(path.join(dir, '.git', 'info', 'exclude'), 'utf8');
 
 test('memory write replaces the memory, memory show reads it back, "\\n" is a line break', async (t) => {
   const dir = project(t);
   assert.match((await relaylead(['memory', 'show'])).out, /empty/);
-  const written = await relaylead(['memory', 'write', '--text', '# Memory\\n- use tabs']);
+  const written = await relaylead(['memory', 'write', ...base(dir), '--text', '# Memory\\n- use tabs']);
   assert.strictEqual(written.code, 0, written.err);
   assert.strictEqual(fs.readFileSync(memoryFile(dir), 'utf8'), '# Memory\n- use tabs\n');
-  assert.strictEqual((await relaylead(['memory', 'show'])).out, '# Memory\n- use tabs\n');
+  const shown = (await relaylead(['memory', 'show'])).out;
+  assert.strictEqual(shown, `Memory fingerprint (give it to \`relaylead memory write\` as --base): ${readMemory(dir).fingerprint}\n# Memory\n- use tabs\n`);
   const file = path.join(dir, 'next.md');
   fs.writeFileSync(file, 'from a file\n');
-  assert.strictEqual((await relaylead(['memory', 'write', '--file', file])).code, 0);
+  assert.strictEqual((await relaylead(['memory', 'write', ...base(dir), '--file', file])).code, 0);
   assert.strictEqual(fs.readFileSync(memoryFile(dir), 'utf8'), 'from a file\n');
   assert.strictEqual((await relaylead(['memory', 'write'])).code, 1);
-  assert.strictEqual((await relaylead(['memory', 'write', '--text', '  '])).code, 1);
+  assert.strictEqual((await relaylead(['memory', 'write', '--text', 'no base'])).code, 1);
+  assert.strictEqual((await relaylead(['memory', 'write', ...base(dir), '--text', '  '])).code, 1);
+});
+
+test('a write based on an older reading is refused, whatever was written in between', async (t) => {
+  const dir = project(t);
+  const mine = await relaylead(['memory', 'show']);
+  const fingerprint = /: (\w+)\n/.exec(mine.out)[1];
+  await writeMemory('demo', 'the other mission', dir);
+  const refused = await relaylead(['memory', 'write', '--base', fingerprint, '--text', 'mine']);
+  assert.strictEqual(refused.code, 1);
+  assert.match(refused.err, /changed since you read it/);
+  assert.strictEqual(fs.readFileSync(memoryFile(dir), 'utf8'), 'the other mission\n');
+  const again = await relaylead(['memory', 'write', ...base(dir), '--text', 'the other mission\\nmine']);
+  assert.strictEqual(again.code, 0, again.err);
 });
 
 test('the old version goes to the archive, and the memory stays in the project folder', async (t) => {
   const dir = project(t);
-  await writeMemory('demo', 'first');
-  await writeMemory('demo', 'second');
+  await writeMemory('demo', 'first', dir);
+  await writeMemory('demo', 'second', dir);
   const archived = fs.readdirSync(archiveDir(dir));
   assert.strictEqual(archived.length, 1);
   assert.strictEqual(fs.readFileSync(path.join(archiveDir(dir), archived[0]), 'utf8'), 'first\n');
@@ -59,39 +77,42 @@ test('the old version goes to the archive, and the memory stays in the project f
 test('writes at the same time under the lock all land, none is lost or torn', async (t) => {
   const dir = project(t);
   const texts = Array.from({ length: 6 }, (_, i) => `entry ${i}`);
-  await Promise.all(texts.map((text) => writeMemory('demo', text)));
+  const read = readMemory(dir).fingerprint; // every lead has read the memory before the first write
+  const results = await Promise.allSettled(texts.map((text) => write('demo', text, read)));
+  // All read the empty memory: one write lands, the others are refused as changed, none is torn.
+  assert.strictEqual(results.filter((r) => r.status === 'fulfilled').length, 1);
+  for (const r of results.filter((r) => r.status === 'rejected')) assert.strictEqual(r.reason.code, 'memory-changed');
   assert.ok(texts.map((text) => text + '\n').includes(fs.readFileSync(memoryFile(dir), 'utf8')));
-  assert.strictEqual(fs.readdirSync(archiveDir(dir)).length, 5);
   assert.deepStrictEqual(fs.readdirSync(path.join(home(), 'locks')).filter((name) => name.startsWith('memory-')), []);
 });
 
 test('the memory is excluded from git, without touching .gitignore, unless it is versioned', async (t) => {
   const dir = project(t);
-  await writeMemory('demo', 'one');
-  await writeMemory('demo', 'two');
+  await writeMemory('demo', 'one', dir);
+  await writeMemory('demo', 'two', dir);
   assert.strictEqual(exclude(dir).split('\n').filter((line) => line === '.relaylead/memoire.md').length, 1);
   assert.match(exclude(dir), /^\.relaylead\/memoire-archive\/$/m);
   assert.ok(!fs.existsSync(path.join(dir, '.gitignore')));
 
   const versioned = project(t, { memory: { versioned: true } });
-  await writeMemory('demo', 'one');
+  await writeMemory('demo', 'one', versioned);
   assert.match(exclude(versioned), /^\.relaylead\/\*\n!\.relaylead\/memoire\.md$/m);
   assert.doesNotMatch(exclude(versioned), /^\.relaylead\/memoire\.md$/m);
 });
 
 test('a text over the ceiling is refused, and a memory over it is flagged by show', async (t) => {
   const dir = project(t, { memory: { maxLines: 3 } });
-  const refused = await relaylead(['memory', 'write', '--text', 'a\\nb\\nc\\nd']);
+  const refused = await relaylead(['memory', 'write', ...base(dir), '--text', 'a\\nb\\nc\\nd']);
   assert.strictEqual(refused.code, 1);
   assert.match(refused.err, /4 lines, over the ceiling of 3/);
   assert.ok(!fs.existsSync(memoryFile(dir)));
   fs.mkdirSync(path.dirname(memoryFile(dir)), { recursive: true });
   fs.writeFileSync(memoryFile(dir), '1\n2\n3\n4\n5\n');
   const shown = await relaylead(['memory', 'show']);
-  assert.match(shown.out, /^WARNING: this memory has 5 lines, over the ceiling of 3\. Compact it before you start/);
+  assert.match(shown.out, /\nWARNING: this memory has 5 lines, over the ceiling of 3\. Compact it before you start/);
   assert.ok(shown.out.endsWith('1\n2\n3\n4\n5\n'));
   writeJson(path.join(home(), 'config.json'), { language: 'fr', delivery: { type: 'files' } });
-  assert.match((await relaylead(['memory', 'show'])).out, /^ATTENTION : cette mémoire fait 5 lignes/);
+  assert.match((await relaylead(['memory', 'show'])).out, /\nATTENTION : cette mémoire fait 5 lignes/);
 });
 
 test('the ceiling is 200 lines by default, and enabled false turns the memory off', async (t) => {
@@ -104,7 +125,7 @@ test('the ceiling is 200 lines by default, and enabled false turns the memory of
 
   const off = project(t, { memory: { enabled: false } });
   assert.match((await relaylead(['memory', 'show'])).out, /turned off/);
-  const refused = await relaylead(['memory', 'write', '--text', 'x']);
+  const refused = await relaylead(['memory', 'write', ...base(off), '--text', 'x']);
   assert.strictEqual(refused.code, 1);
   assert.match(refused.err, /turned off/);
   assert.ok(!fs.existsSync(memoryFile(off)));
@@ -156,7 +177,7 @@ test('the memory of a mission started in a worktree or a sub-folder is the main 
   assert.strictEqual(projectRoot(linked), main);
   assert.strictEqual(projectRoot(path.join(main, 'sub')), main);
   writeMission('demo', linked);
-  await writeMemory('demo', 'shared');
+  await writeMemory('demo', 'shared', main);
   assert.strictEqual(fs.readFileSync(memoryFile(main), 'utf8'), 'shared\n');
   assert.ok(!fs.existsSync(path.join(linked, '.relaylead', 'memoire.md')));
   assert.match(exclude(main), /^\.relaylead\/memoire\.md$/m);
@@ -166,8 +187,8 @@ test('a versioned memory stays visible to git after the delivery excluded .relay
   const dir = project(t, { memory: { versioned: true } });
   excludeRelaylead(dir); // what the first delivery does: before, it excluded the whole folder
   fs.writeFileSync(path.join(dir, '.git', 'info', 'exclude'), '.relaylead/\n.relaylead/memoire.md\n');
-  await writeMemory('demo', 'one');
-  await writeMemory('demo', 'two'); // archives the first
+  await writeMemory('demo', 'one', dir);
+  await writeMemory('demo', 'two', dir); // archives the first
   excludeRelaylead(dir);
   const ignored = (file) => {
     try {

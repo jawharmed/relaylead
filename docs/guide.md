@@ -250,9 +250,9 @@ Tells the lead of a mission something (a change of plan, a constraint). The mess
 
 For the lead: notes a decision taken with the user as a line of `decisions.md` in the mission's folder. `decision --list` prints them, then every message told with `tell`: a new lead (after a relaunch or a handover) reads it before going on.
 
-### `relaylead memory show` and `memory write --file <file> | --text <text>`
+### `relaylead memory show` and `memory write --base <fingerprint> --file <file> | --text <text>`
 
-For the lead: `show` prints the project memory (and a warning when it is over its ceiling); `write` replaces it with the text of a file or with `--text`, where `\n` stands for a line break, after archiving the previous version. A text over `memory.maxLines` is refused.
+For the lead: `show` prints a fingerprint of the memory, then the memory (and a warning when it is over its ceiling); `write` replaces it, if the memory is still the one `--base` names (otherwise the error says to read it again and merge: another mission wrote it meanwhile), with the text of a file or with `--text`, where `\n` stands for a line break, after archiving the previous version. A text over `memory.maxLines` is refused.
 
 ### `relaylead question ask|list`
 

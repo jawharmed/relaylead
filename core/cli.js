@@ -381,7 +381,7 @@ commands.decision = async (args, io) => {
 commands.memory = async (args, io) => {
   const { positional, options } = parseArgs(args);
   const [action] = positional;
-  const usage = 'relaylead memory show | memory write --file <file> | memory write --text "<text>"';
+  const usage = 'relaylead memory show | memory write --base <fingerprint> --file <file> | memory write --base <fingerprint> --text "<text>"';
   if (positional.length !== 1 || !['show', 'write'].includes(action)) throw codedError('usage', { usage });
   const mission = missionName(options, io);
   const lang = language(io);
@@ -390,6 +390,7 @@ commands.memory = async (args, io) => {
     if (!memorySettings(dir).enabled) io.out.write(t('memoryDisabled', {}, lang));
     else {
       const memory = readMemory(dir);
+      io.out.write(t('memoryFingerprint', { fingerprint: memory.fingerprint }, lang));
       if (memory.text === '') io.out.write(t('memoryEmpty', {}, lang));
       else {
         if (memory.tooLong) io.out.write(t('memoryTooLong', { lines: memory.lines, max: memory.maxLines }, lang));
@@ -398,7 +399,7 @@ commands.memory = async (args, io) => {
     }
     return 0;
   }
-  if ((options.file === undefined) === (options.text === undefined)) throw codedError('usage', { usage });
+  if ((options.file === undefined) === (options.text === undefined) || !options.base) throw codedError('usage', { usage });
   refuseReplacedLead(mission, io);
   let text = options.text === undefined ? '' : options.text.replace(/\\n/g, '\n');
   if (options.file !== undefined) {
@@ -408,7 +409,7 @@ commands.memory = async (args, io) => {
       throw codedError('memory-file-unreadable', { file: options.file, detail: err.message });
     }
   }
-  const lines = await writeMemory(mission, text);
+  const lines = await writeMemory(mission, text, options.base);
   io.out.write(t('memoryWritten', { lines }, lang));
   return 0;
 };
