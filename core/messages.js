@@ -61,6 +61,8 @@ const messages = {
     usage: 'usage: {usage}',
     'repo-busy':
       'the git repository of {dir} has been busy for too long with "relaylead {command}" (process {pid}, since {since}); try again once it is over',
+    'worktrees-dir-taken':
+      'the folder {dir}, where mission "{mission}" keeps its worktrees, is itself a git worktree, left by an earlier mission; save what it holds, remove it with: git worktree remove "{dir}", then launch again, or launch this mission under another name with --name',
     'old-integration-unmerged':
       'the branch {branch} of relaylead 0.1 has {count} commit(s) that your current branch does not have; this mission starts from your current branch, without that work, and may do its tasks again. To keep it, stop this mission, merge {branch} into your branch (or delete {branch} if that work is not wanted), then launch again',
     'source-taken':
@@ -312,6 +314,8 @@ const messages = {
     usage: 'usage : {usage}',
     'repo-busy':
       'le dépôt git de {dir} est occupé depuis trop longtemps par « relaylead {command} » (processus {pid}, depuis {since}) ; réessayez une fois qu\'il a fini',
+    'worktrees-dir-taken':
+      'le dossier {dir}, où la mission « {mission} » range ses worktrees, est lui-même un worktree git laissé par une mission précédente ; sauvegardez ce qu\'il contient, supprimez-le avec : git worktree remove "{dir}", puis relancez, ou lancez cette mission sous un autre nom avec --name',
     'old-integration-unmerged':
       'la branche {branch} de relaylead 0.1 a {count} commit(s) absent(s) de votre branche courante ; cette mission part de votre branche courante, sans ce travail, et risque de refaire ses tâches. Pour le garder, arrêtez cette mission, fusionnez {branch} dans votre branche (ou supprimez {branch} si ce travail n\'est pas voulu), puis relancez',
     'source-taken':

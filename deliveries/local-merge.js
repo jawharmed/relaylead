@@ -152,6 +152,12 @@ function prepareMission(mission) {
   if (tasksInRepo && git(mission.dir, ['status', '--porcelain', '--', sourceDir(mission)]) !== '') {
     throw codedError('tasks-not-committed', { dir: sourceDir(mission), branch });
   }
+  // A worktree of 0.1 left in .relaylead/worktrees/<id>, where <id> is this mission's name: this
+  // mission's worktrees would go inside it, and removing it would remove them too.
+  const ownFolder = layout.worktreesDir(mission);
+  if (layout.isPerMission(mission) && fs.existsSync(path.join(ownFolder, '.git'))) {
+    throw codedError('worktrees-dir-taken', { dir: ownFolder, mission: mission.name });
+  }
   const integration = integrationDir(mission);
   if (fs.existsSync(integration)) {
     const actual = gitInIntegration(mission, ['rev-parse', '--abbrev-ref', 'HEAD']);

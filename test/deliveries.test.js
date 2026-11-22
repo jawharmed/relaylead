@@ -247,6 +247,24 @@ test('a launch warns when relaylead/integration of 0.1 holds work the current br
   assert.deepStrictEqual(localMerge.prepareMission(readMission('later')), []);
 });
 
+// Task demo of a 0.1 mission left its worktree at .relaylead/worktrees/demo: mission demo would put
+// its own worktrees inside it.
+test('a launch refuses a worktree of 0.1 in the folder of its worktrees', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const left = path.join(dir, '.relaylead', 'worktrees', 'demo');
+  git(dir, 'worktree', 'add', '-q', '-b', 'relaylead/old/demo', left);
+
+  writeMission('demo', dir);
+  assert.throws(() => localMerge.prepareMission(readMission('demo')), (err) => {
+    assert.strictEqual(err.code, 'worktrees-dir-taken');
+    assert.ok(err.message.includes(`git worktree remove "${left}"`), err.message);
+    return true;
+  });
+  assert.strictEqual(fs.existsSync(integrationDir(dir)), false);
+  assert.strictEqual(git(dir, 'branch', '--list', INTEGRATION), '');
+});
+
 // A mission launched by relaylead 0.1 keeps the names of then until it ends (core/layout.js).
 test('a 0.1 mission delivers into relaylead/integration, with its worktrees of then', async (t) => {
   freshHome(t);
