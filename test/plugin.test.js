@@ -17,14 +17,18 @@ test('plugin.json names the plugin and has the version of the package', () => {
   assert.strictEqual(market.name, 'relaylead-local');
 });
 
-test('each command only allows the relaylead command it runs; the plugin has no hook nor agent', () => {
+test('each command only allows the relaylead command it runs; the plugin has one mod and no agent', () => {
   assert.deepStrictEqual(fs.readdirSync(path.join(PLUGIN_DIR, 'commands')).sort(), COMMANDS.map((name) => `${name}.md`).sort());
   for (const name of COMMANDS) {
     const text = fs.readFileSync(path.join(PLUGIN_DIR, 'commands', `${name}.md`), 'utf8');
     assert.match(text, /^description: .+$/m);
     assert.match(text, new RegExp(`^allowed-tools: Bash\\(relaylead ${name} \\*\\)$`, 'm'));
   }
-  assert.deepStrictEqual(fs.readdirSync(PLUGIN_DIR).sort(), ['.claude-plugin', 'commands']);
+  assert.deepStrictEqual(fs.readdirSync(PLUGIN_DIR).sort(), ['.claude-plugin', 'commands', 'hooks', 'types']);
+  // The mod (status line entry, pane, /panneau) is checked by `claude plugin validate plugin`, which CI has no claude to run.
+  const hooks = JSON.parse(fs.readFileSync(path.join(PLUGIN_DIR, 'hooks', 'hooks.json'), 'utf8'));
+  assert.deepStrictEqual(hooks, { modules: ['./register.tsx'] });
+  assert.ok(fs.existsSync(path.join(PLUGIN_DIR, 'hooks', 'register.tsx')));
 });
 
 test('installPlugin and uninstallPlugin call claude plugin with the right arguments, in order', (t) => {
