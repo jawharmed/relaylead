@@ -37,9 +37,13 @@ test('install twice leaves one plist; uninstall --purge deletes the home', async
   assert.deepStrictEqual(outsideSnapshot(env).agents, ['dev.relaylead.watcher.plist']);
   assert.deepStrictEqual(outsideSnapshot(env).plugins.plugins, ['relaylead@relaylead-local']);
 
+  const cache = path.join(env.CLAUDE_CONFIG_DIR, 'plugins', 'cache');
+  fs.mkdirSync(path.join(cache, 'relaylead-local', 'relaylead'), { recursive: true });
+  fs.mkdirSync(path.join(cache, 'other-market'), { recursive: true });
   const purged = await run(env, 'uninstall', '--purge');
   assert.strictEqual(purged.code, 0, purged.err);
   assert.ok(!fs.existsSync(env.RELAYLEAD_HOME));
+  assert.deepStrictEqual(fs.readdirSync(cache), ['other-market'], 'only the plugin cache of relaylead-local goes');
 });
 
 test('uninstall without install.json does not fail', async (t) => {
