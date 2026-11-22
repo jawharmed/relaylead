@@ -18,6 +18,7 @@ const { spawnDetached } = require('./detached');
 const { withMissionLock, withRepoLock, takeOverStaleLock } = require('./mission-lock');
 const { watchLog } = require('./watch-log');
 const layout = require('./layout');
+const { PRIORITIES } = require('./places');
 
 // States the lead may declare. 'stopped' is written by the core only.
 const STATES = ['starting', 'working', 'waiting', 'handover', 'done'];
@@ -122,12 +123,27 @@ function tasksFolder(realDir, folder) {
   return relative;
 }
 
+function checkPriority(priority) {
+  if (!PRIORITIES.includes(priority)) throw codedError('bad-priority', { priority, priorities: PRIORITIES.join(', ') });
+}
+
+// `relaylead priority`: the priority of a mission, changed at any time. It sets the usage thresholds
+// of the mission (core/watcher-rules.js) and its rank in the queue of the machine (core/places.js).
+async function setPriority(name, priority) {
+  checkPriority(priority);
+  readMission(name); // mission-unknown
+  await withMissionLock(name, 'priority', () => {
+    writeJson(missionFile(name, 'mission.json'), { ...readMission(name), priority });
+  });
+}
+
 // `tasks`: the task folder of this mission (`--tasks`), in place of source.dir. `onWarning(err)` gets
 // each warning of the delivery's preparation (a coded error that does not stop the launch).
 async function createMission({ name, dir, request, team, priority, agent, tasks, params, onWarning = () => {} }) {
   // The native version also gives the real letter case (macOS, Windows): CaseProj and caseproj are one folder.
   const realDir = fs.realpathSync.native(dir);
   const missionName = slug(name || path.basename(realDir));
+  if (priority !== undefined) checkPriority(priority);
   const config = loadConfig({ dir: realDir, params });
   if (tasks !== undefined) config.source.dir = tasksFolder(realDir, tasks);
   // Its own integration branch: several missions may share the repository (core/layout.js).
@@ -745,6 +761,7 @@ async function removeMission(name, { force = false, onBranchDeleted } = {}) {
 
 module.exports = {
   createMission,
+  setPriority,
   launchLead,
   launchWhileOpen,
   currentLeadError,

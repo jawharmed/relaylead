@@ -4,6 +4,7 @@ const { t, codedError } = require('./messages');
 const { loadConfig, watcherSettings, setConfigValue } = require('./config');
 const {
   createMission,
+  setPriority,
   listMissions,
   stopMission,
   removeMission,
@@ -217,6 +218,18 @@ commands.remove = async (args, io) => {
   const onBranchDeleted = (branch) => io.out.write(t('branchDeleted', { branch }, language(io)));
   await removeMission(name, { force: options.force === true, onBranchDeleted });
   io.out.write(t('missionRemoved', { mission: name }, language(io)));
+  return 0;
+};
+
+// The priority of a mission, changed while it runs: its usage thresholds and its rank in the queue.
+// A targeted pass follows, so a queue that has a free place takes it at once.
+commands.priority = async (args, io) => {
+  refuseInSession('priority', io);
+  const [name, priority] = parseArgs(args).positional;
+  if (!name || !priority) throw codedError('usage', { usage: 'relaylead priority <mission> <high|normal|low>' });
+  await setPriority(name, priority);
+  io.out.write(t('prioritySet', { mission: name, priority }, language(io)));
+  await startTargetedPass(name);
   return 0;
 };
 

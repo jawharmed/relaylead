@@ -124,3 +124,32 @@ test('list and overview show the tasks waiting for a place', async (t) => {
   assert.strictEqual(waiting.queued, 2);
   assert.deepStrictEqual(waiting.tasks.map((task) => task.state), ['queued', 'queued']);
 });
+
+test('relaylead priority changes the rank of a mission in the queue; a wrong value is refused', async (t) => {
+  const { mission, open } = machine(t, 1);
+  mission('busy', 'normal', ['busy-x']);
+  mission('first', 'normal', ['first-x']);
+  mission('second', 'normal', ['second-x']);
+  await startTask('busy', { id: 'busy-x' });
+  await startTask('first', { id: 'first-x' });
+  await startTask('second', { id: 'second-x' });
+  assert.deepStrictEqual(queue().map((entry) => entry.id), ['first-x', 'second-x']);
+
+  const io = makeIo();
+  assert.strictEqual(await run(['priority', 'second', 'high'], io), 0, io.err.text);
+  assert.strictEqual(io.out.text, 'priority of second: high\n');
+  assert.strictEqual(readJson(path.join(missionDir('second'), 'mission.json')).priority, 'high');
+  assert.deepStrictEqual(queue().map((entry) => entry.id), ['second-x', 'first-x']);
+
+  open('busy-x');
+  await waitFor(() => stateOf('busy', 'busy-x') === 'done', 30000, 'busy-x to be done');
+  await startQueuedTasks();
+  assert.strictEqual(stateOf('second', 'second-x'), 'running');
+  assert.strictEqual(stateOf('first', 'first-x'), 'queued');
+
+  const wrong = makeIo();
+  assert.strictEqual(await run(['priority', 'first', 'urgent'], wrong), 1);
+  assert.match(wrong.err.text, /unknown priority "urgent"; use one of: high, normal, low/);
+  const fromSession = makeIo({ env: { RELAYLEAD_MISSION: 'first' } });
+  assert.strictEqual(await run(['priority', 'first', 'low'], fromSession), 1);
+});

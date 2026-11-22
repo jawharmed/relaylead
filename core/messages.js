@@ -9,6 +9,7 @@ const messages = {
       '  show      open the lead session of a mission',
       '  stop      stop a mission',
       '  remove    remove a finished mission',
+      '  priority  change the priority of a mission (high, normal, low)',
       '  task      manage the tasks of a mission',
       '  state     read or set the state declared by the lead',
       '  wait      wait for a mission to change (--all: for the console, every mission)',
@@ -37,6 +38,7 @@ const messages = {
     dashboardRunning: 'dashboard on {url}\nanswering and stopping are allowed from this link only; Ctrl-C to stop the server\n',
     missionStopped: 'mission {mission} stopped\n',
     missionRemoved: 'mission {mission} removed\n',
+    prioritySet: 'priority of {mission}: {priority}\n',
     branchDeleted: 'deleted branch {branch}\n',
     missionNothingToStop: 'mission {mission} is already {state}; nothing to do\n',
     missionDoneSessionsStopped: 'mission {mission} is done; its remaining sessions were stopped\n',
@@ -59,6 +61,7 @@ const messages = {
     deliveryCommit: 'chore(relaylead): deliver {id}',
     // Errors: the key is the error code (see codedError).
     usage: 'usage: {usage}',
+    'bad-priority': 'unknown priority "{priority}"; use one of: {priorities}',
     'places-busy': 'another crew start has held the places of the machine for too long ("relaylead {command}", process {pid}, since {since}); try again once it is over',
     'repo-busy':
       'the git repository of {dir} has been busy for too long with "relaylead {command}" (process {pid}, since {since}); try again once it is over',
@@ -269,6 +272,7 @@ const messages = {
       '  show      ouvrir la session du lead d\'une mission',
       '  stop      arrêter une mission',
       '  remove    supprimer une mission finie',
+      '  priority  changer la priorité d\'une mission (high, normal, low)',
       '  task      gérer les tâches d\'une mission',
       '  state     lire ou écrire l\'état déclaré par le lead',
       '  wait      attendre qu\'une mission change (--all : pour la console, toutes les missions)',
@@ -293,6 +297,7 @@ const messages = {
     dashboardRunning: 'tableau de bord sur {url}\nrépondre et arrêter ne sont permis que depuis ce lien ; Ctrl-C pour arrêter le serveur\n',
     missionStopped: 'mission {mission} arrêtée\n',
     missionRemoved: 'mission {mission} supprimée\n',
+    prioritySet: 'priorité de {mission} : {priority}\n',
     branchDeleted: 'branche supprimée {branch}\n',
     missionNothingToStop: 'la mission {mission} est déjà {state} ; rien à faire\n',
     missionDoneSessionsStopped: 'la mission {mission} est terminée ; ses sessions restantes ont été arrêtées\n',
@@ -314,6 +319,7 @@ const messages = {
       'relaylead launch : le veilleur n\'a pas pu être lancé ({detail}) ; lancez-le avec : relaylead watcher start\n',
     deliveryCommit: 'chore(relaylead): {id} livrée',
     usage: 'usage : {usage}',
+    'bad-priority': 'priorité « {priority} » inconnue ; utilisez : {priorities}',
     'places-busy': 'un autre lancement d\'équipier occupe les places de la machine depuis trop longtemps (« relaylead {command} », processus {pid}, depuis {since}) ; réessayez une fois qu\'il a fini',
     'repo-busy':
       'le dépôt git de {dir} est occupé depuis trop longtemps par « relaylead {command} » (processus {pid}, depuis {since}) ; réessayez une fois qu\'il a fini',
