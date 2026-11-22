@@ -29,6 +29,7 @@ const { sleep } = require('./timing');
 const { watchLog, watchLogFile } = require('./watch-log');
 const { decide, emptyWatch, wakeWithoutEffect } = require('./watcher-rules');
 const { lastActivity } = require('./abandon');
+const { tendMerge, mergeOngoing } = require('./merge');
 const { getAdapter } = require('../adapters');
 
 const FINISHED = ['done', 'stopped'];
@@ -483,11 +484,13 @@ function missionNames() {
 }
 
 // Whether a mission is to be watched: neither finished nor being stopped, unless the stop is that of
-// its breaker, to be replayed. Throws when its mission.json cannot be read.
+// its breaker, to be replayed; or done with a merge conflict being resolved (core/merge.js). Throws
+// when its mission.json cannot be read.
 function needsWatching(name) {
   if (!readJson(missionFile(name, 'mission.json'), null)) return false;
   const record = readState(name);
   if (record.stopping) return readWatch(name).tripped; // the stop of its breaker is to be replayed
+  if (record.state === 'done' && mergeOngoing(name)) return true;
   return !FINISHED.includes(record.state);
 }
 
@@ -590,11 +593,22 @@ async function runPass() {
       } catch (err) {
         watchLog(name, 'error', `observe ${name}: ${err.message}`);
       }
+      await tendMergeOf(name);
     }
     await startQueuedTasks();
     return { outcome: 'done', missions };
   } finally {
     await releasePassLock(lock);
+  }
+}
+
+// The merge of a finished mission whose conflict is being resolved (core/merge.js). A wait for a lock
+// that gives up leaves it to the next pass; any other error goes to the log.
+async function tendMergeOf(name) {
+  try {
+    await tendMerge(name);
+  } catch (err) {
+    if (!LOCK_GAVE_UP.includes(err.code)) watchLog(name, 'error', `merge: ${err.message}`);
   }
 }
 
@@ -792,4 +806,4 @@ async function stopWatcher({ waitMs = STOP_WAIT_MS } = {}) {
   return 'stopped';
 }
 
-module.exports = { observe, act, tendMission, startQueuedTasks, runPass, stopPresent, loop, watcherRunning, startWatcher, stopWatcher };
+module.exports = { observe, act, tendMission, tendMergeOf, startQueuedTasks, runPass, stopPresent, loop, watcherRunning, startWatcher, stopWatcher };

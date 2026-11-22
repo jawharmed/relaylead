@@ -11,6 +11,7 @@ const { writeJson, readJson } = require('./store');
 const { listMissions } = require('./missions');
 const { listTasks } = require('./tasks');
 const { listQuestions } = require('./questions');
+const { readMerge } = require('./merge');
 const { sleep } = require('./timing');
 
 const POLL_MS = 1000;
@@ -33,6 +34,10 @@ function viewOfMission(mission) {
       events[`question:${question.id}`] = { kind: 'question', id: question.id, state: 'open', question: { text, context, options, recommended } };
     }
   }
+  // The merge into the main branch, once a conflict made it go on without the console (core/merge.js).
+  const merge = readMerge(mission.name);
+  view.merge = merge ? merge.state : null;
+  events.merge = merge && merge.state === 'merged' ? { kind: 'merge', id: mission.name, state: 'merged', target: merge.target } : null;
   for (const task of listTasks(mission.name)) {
     view[`task:${task.id}`] = `${task.state}#${task.attempt}`;
     if (task.state === 'failed') {
@@ -59,7 +64,7 @@ function look(before) {
     for (const [key, event] of Object.entries(seen.events)) {
       if (!event) continue;
       if (known && known[key] === seen.view[key]) continue;
-      if (!before && key === 'mission') continue;
+      if (!before && (key === 'mission' || key === 'merge')) continue;
       events.push({ mission: mission.name, ...event });
     }
   }

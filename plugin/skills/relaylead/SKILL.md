@@ -1,12 +1,12 @@
 ---
 name: relaylead
 description: Console for Relaylead missions. Use for /relaylead or when the user asks to use relaylead, to start, follow, answer or direct a mission run by a team of background Claude Code sessions.
-allowed-tools: Bash(relaylead doctor) Bash(relaylead list) Bash(relaylead question list *) Bash(relaylead task list *) Bash(relaylead state get *) Bash(relaylead wait *) Bash(relaylead launch *) Bash(relaylead answer *) Bash(relaylead tell *) Bash(relaylead init *) Bash(relaylead install *)
+allowed-tools: Bash(relaylead doctor) Bash(relaylead list) Bash(relaylead question list *) Bash(relaylead task list *) Bash(relaylead state get *) Bash(relaylead wait *) Bash(relaylead launch *) Bash(relaylead answer *) Bash(relaylead tell *) Bash(relaylead priority *) Bash(relaylead init *) Bash(relaylead install *)
 ---
 
 # Relaylead console
 
-You are the console of Relaylead missions: the user talks to you, a lead and its crew work in the background. Reply in the user's language. Run one `relaylead` command per call. Never run `relaylead merge` or talk about merging into main (not in this version).
+You are the console of Relaylead missions: the user talks to you, a lead and its crew work in the background. Reply in the user's language. Run one `relaylead` command per call. Never merge a mission without the user's yes.
 
 ## 1. When this conversation opens (always first)
 
@@ -21,7 +21,7 @@ You are the console of Relaylead missions: the user talks to you, a lead and its
 - Write the mission with the user: ask what is wanted, then write one file per task in `tasks/<id>.md`:
   `---\ntitle: ...\ndepends: [other-id]\nask: question to settle first (optional)\n---\n` then the instructions. Show the plan, wait for approval, then `git add tasks` and `git commit -m "tasks: <mission>"` (the crew works from commits).
 - Other mission already active on this machine (state not `done`/`stopped` in `relaylead list`)? Before launching:
-  - Priority: list the running missions with their priority (`"priority"` in `~/.relaylead/missions/<m>/mission.json`, shown as high, normal, low) and ask the priority of the new one (normal by default). Changing the priority of a running mission is not available yet: say so if the user asks. Skip the question if the user gave a priority or is not there to answer.
+  - Priority: list the running missions with their priority (`"priority"` in `~/.relaylead/missions/<m>/mission.json`, shown as high, normal, low) and ask the priority of the new one (normal by default); to change a running one: `relaylead priority <m> high|normal|low`. Skip the question if the user gave a priority or is not there to answer.
   - Overlap: the folder of a running mission is the 4th column of `relaylead list`; compare what the new tasks touch with its `tasks/` files and `relaylead task list --mission <m>`. If they share files or folders, warn: "X and Y both touch `src/api/`: chain them or run in parallel?". To chain: do not launch the second one until the `mission ... done` event of the first, then launch it. In parallel: launch now.
 - Launch: `relaylead launch --name <slug> --request "<one line>" [--priority p] [--tasks <folder>]`. A second mission in the same project needs tasks of its own: its own task folder with `--tasks` (for instance `tasks/backend` and `tasks/frontend`); launch refuses a task folder that a mission of the project not over already uses. Then start the wait (section 3) if it is not running.
 
@@ -32,7 +32,8 @@ Run `relaylead wait --all` with the Bash tool's `run_in_background: true` (once;
 Each event names its mission: `{mission, kind, id, state, ...}`.
 - `question`: show it (section 4).
 - `task` failed: tell the user which task of which mission failed, with its `summary`; the lead is already handling it, say so.
-- `mission` done or stopped: tell the user, with the final state (`relaylead list`).
+- `mission` done or stopped: tell the user, with the final state (`relaylead list`). Done: ask "Merge it into main?" (into the branch it was launched from); on a yes, `relaylead merge <mission>` (not pre-approved: Claude Code asks too) and show its output. On a conflict a crew member resolves it and Relaylead merges again by itself.
+- `merge` merged: tell the user the mission is now in its branch.
 Wake the user only for these (not for each task).
 
 ## 4. Questions and answers
@@ -43,10 +44,13 @@ Show each question as it is, never reworded, with its mission name:
 
 Ask the user to choose. Send the answer with `relaylead answer <mission> <id> <number>`. If the choice affects the work, the lead notes it as a decision itself.
 
+A merge conflict question (its id starts with `q-merge-`): "Resolve it here with me": answer it, then do what its context says with the user, step by step, and end with `relaylead merge <mission>`. "Relaunch a crew member with hints": ask for the hints, `relaylead tell <mission> "<hints>"`, then answer it. "Pause the mission": answer it.
+
 ## 5. Directing and following
 
 - "Tell the lead of X to ...": `relaylead tell <mission> "<text>"`. It is recorded in the mission and wakes the lead.
 - "Where is X?": `relaylead list`, `relaylead task list --mission X`, and `relaylead state get --mission X` (never `relaylead show`: it opens the lead's session). Answer in a few lines.
+- "Make X urgent": `relaylead priority X high` (`normal`, `low`); it orders the queue of tasks waiting for a free place.
 - "Stop X": ask once to confirm, then `relaylead stop X` (it is not pre-approved: Claude Code will ask too).
 - A mission asks you something you cannot do for the user (permission, irreversible action): show it like any question.
 

@@ -344,6 +344,13 @@ function failContextFull(id) {
   process.exit(0);
 }
 
+// The task resolving the conflict of `relaylead merge` (core/merge.js): merges the target into its
+// branch, the conflicts resolved on the side of the mission (-X ours), then commits.
+function resolveMerge() {
+  const merge = readJson(path.join(missionDir(process.env.RELAYLEAD_MISSION), 'merge.json'));
+  git('merge', '-X', 'ours', '--no-edit', merge.target);
+}
+
 function work(id) {
   const failFirst = (process.env.RELAYLEAD_FAKE_FAIL_FIRST || '').split(',').includes(id);
   const command = JSON.parse(process.env.RELAYLEAD_FAKE_TRY || '{}')[id];
@@ -355,6 +362,11 @@ function work(id) {
     const refusal = command ? tryCommand(command) : null;
     if (refusal) {
       relaylead('task', 'fail', id, '--summary', refusal);
+      return;
+    }
+    if (id.startsWith('merge-into-')) {
+      resolveMerge();
+      relaylead('task', 'done', id, '--summary', 'fake resolution');
       return;
     }
     fs.writeFileSync(`${id}.txt`, `fake work on ${id}\n`);

@@ -176,7 +176,12 @@ async function createMission({ name, dir, request, team, priority, agent, tasks,
     // Under the mission lock until mission.json is written: a removal of the folder waits for it.
     await withMissionLock(missionName, 'launch', async () => {
       // Before the lead starts: the integration worktree is where the lead reads the tasks.
-      const warnings = await withRepoLock(realDir, 'launch', () => delivery.prepareMission(mission));
+      const warnings = await withRepoLock(realDir, 'launch', () => {
+        const prepared = delivery.prepareMission(mission);
+        // Where `relaylead merge` brings the work back, and the commit the integration branch starts from.
+        if (delivery.launchInfo) Object.assign(mission, delivery.launchInfo(mission));
+        return prepared;
+      });
       (warnings || []).forEach(onWarning);
       writeJson(missionFile(missionName, 'mission.json'), mission);
     });

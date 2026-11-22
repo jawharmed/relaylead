@@ -72,8 +72,23 @@ function git(cwd, args) {
 
 // show-ref exits with 1 when the branch does not exist. Unlike `git branch --list`, it reads no pattern.
 function branchExists(dir, branch) {
+  return refExists(dir, `refs/heads/${branch}`);
+}
+
+function refExists(dir, ref) {
   try {
-    runGit(dir, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], 'ignore');
+    runGit(dir, ['show-ref', '--verify', '--quiet', ref], 'ignore');
+    return true;
+  } catch (err) {
+    if (err.status === 1) return false;
+    throw err;
+  }
+}
+
+// Whether the commit `ancestor` is in `ref` (merge-base exits with 1 when it is not).
+function isAncestor(dir, ancestor, ref) {
+  try {
+    runGit(dir, ['merge-base', '--is-ancestor', ancestor, ref], 'ignore');
     return true;
   } catch (err) {
     if (err.status === 1) return false;
@@ -294,10 +309,16 @@ function mergeInProgress(cwd) {
 // delivery holds the mission's start.lock), and the killed git has ended, so
 // that index.lock is stale: it is removed and the merge cancelled before the error is thrown.
 function gitInIntegration(mission, args) {
+  return gitAt(integrationDir(mission), args);
+}
+
+// The same in any worktree where relaylead merges (the integration worktree, or the one of the
+// branch a finished mission is merged into), under the mission lock and the git lock.
+function gitAt(cwd, args) {
   try {
-    return git(integrationDir(mission), args);
+    return git(cwd, args);
   } catch (err) {
-    if (err.timedOut) throw cleanUpKilledGit(integrationDir(mission), err);
+    if (err.timedOut) throw cleanUpKilledGit(cwd, err);
     throw err;
   }
 }
@@ -336,39 +357,43 @@ function shownOutput(text) {
 // changes of its own before the merge, the worktree goes back to its last commit: that drops only
 // what the merge and the hook wrote (files the hook created stay). Changes made before the merge, such
 // as a state line not committed yet, would be lost too: the worktree is then left to the user.
-function cancelMerge(mission, changedBefore) {
+function cancelMerge(cwd, changedBefore) {
   try {
-    gitInIntegration(mission, ['merge', '--abort']);
+    gitAt(cwd, ['merge', '--abort']);
   } catch (err) {
     if (err.timedOut) throw err;
     if (changedBefore) {
-      throw codedError('integration-stuck', { dir: integrationDir(mission), output: shownOutput(err.output || err.message) });
+      throw codedError('integration-stuck', { dir: cwd, output: shownOutput(err.output || err.message) });
     }
-    gitInIntegration(mission, ['reset', '--hard', 'HEAD']);
+    gitAt(cwd, ['reset', '--hard', 'HEAD']);
   }
 }
 
-// Merges in the integration worktree; on a conflict, cancels the merge and returns false. Runs the
-// project's hooks unless runHooks is false (--no-verify).
+// Merges in the integration worktree; on a conflict, cancels the merge and returns false.
+function mergeOrAbort(mission, args, options) {
+  return mergeIn(integrationDir(mission), args, options) === null;
+}
+
+// Merges in the worktree `cwd`: null once merged; on a conflict, cancels the merge and returns the
+// files in conflict. Runs the project's hooks unless runHooks is false (--no-verify).
 // Any other failure is cancelled too. A held lock ("Unable to write index", with no conflicted file)
 // is tried again, LOCK_ATTEMPTS times at most. Otherwise, when the hooks run, a hook may be the cause:
 // throws refusal.code with refusal.vars and git's output; without hooks, throws git's own error.
 // git() is not used for the merge: its own retries would meet the merge left going.
-function mergeOrAbort(mission, args, { runHooks: hooks, refusal }) {
-  const integration = integrationDir(mission);
+function mergeIn(cwd, args, { runHooks: hooks, refusal }) {
   const verify = hooks ? [] : ['--no-verify'];
-  const changedBefore = gitInIntegration(mission, ['status', '--porcelain', '--untracked-files=no']) !== '';
+  const changedBefore = gitAt(cwd, ['status', '--porcelain', '--untracked-files=no']) !== '';
   for (let attempt = 1; ; attempt++) {
     try {
-      runGit(integration, ['merge', '--no-ff', '--no-edit', ...verify, ...args], ['ignore', 'pipe', 'pipe']);
-      return true;
+      runGit(cwd, ['merge', '--no-ff', '--no-edit', ...verify, ...args], ['ignore', 'pipe', 'pipe']);
+      return null;
     } catch (err) {
-      if (err.timedOut) throw cleanUpKilledGit(integration, err);
+      if (err.timedOut) throw cleanUpKilledGit(cwd, err);
       const output = `${err.stdout || ''}${err.stderr || ''}`.trim() || err.message;
-      if (mergeInProgress(integration)) {
-        const conflicted = gitInIntegration(mission, ['diff', '--name-only', '--diff-filter=U']) !== '';
-        cancelMerge(mission, changedBefore);
-        if (conflicted) return false;
+      if (mergeInProgress(cwd)) {
+        const conflicted = gitAt(cwd, ['diff', '--name-only', '--diff-filter=U']);
+        cancelMerge(cwd, changedBefore);
+        if (conflicted !== '') return conflicted.split(/\r?\n/);
       }
       if (isTransientGitError(output) && attempt < LOCK_ATTEMPTS) {
         sleepSync(100 * attempt);
@@ -419,6 +444,9 @@ function deliver(mission, task, { runHooks: hooks = runHooks(mission) } = {}) {
   if (work === 'new' && !mergeOrAbort(mission, [branch], { runHooks: hooks, refusal })) {
     throw codedError('merge-conflict', { id: task.id, branch });
   }
+  // The task resolving a merge conflict (core/merge.js) has no file in the task folder: its record
+  // says it is delivered.
+  if (task.merge) return finish(mission, task, { runHooks: hooks });
 
   // The branch is merged now: the next deliver finds it 'merged' and writes the line again.
   try {
@@ -599,8 +627,87 @@ function removeMission(mission, { force = false, onBranchDeleted = () => {} } = 
   return deleted;
 }
 
+// Noted in mission.json at the launch, once prepareMission is done: the branch the user is on, which
+// `relaylead merge` brings the work back into (null when detached), and the commit the integration
+// branch starts from (core/merge.js tells by it whether any work was delivered).
+function launchInfo(mission) {
+  const current = currentBranch(mission.dir);
+  return {
+    baseBranch: current === 'HEAD' ? null : current,
+    startCommit: git(mission.dir, ['rev-parse', `refs/heads/${mission.config.delivery.branch}`]),
+  };
+}
+
+// The branch a finished mission is merged into: the one it was launched from, else main, else
+// master; null when none of them exists.
+function mergeTarget(mission) {
+  return [mission.baseBranch, 'main', 'master'].filter(Boolean).find((branch) => branchExists(mission.dir, branch)) || null;
+}
+
+// The worktree where `branch` is checked out (the user's own checkout, most often), or null.
+function worktreeOn(dir, branch) {
+  let current = null;
+  for (const line of git(dir, ['worktree', 'list', '--porcelain']).split(/\r?\n/)) {
+    if (line.startsWith('worktree ')) current = path.resolve(line.slice('worktree '.length));
+    if (line === `branch refs/heads/${branch}` && current) return current;
+  }
+  return null;
+}
+
+// `relaylead merge` (core/merge.js), under the git lock: merges the integration branch into `target`,
+// where `target` is checked out (the user's checkout, which must have no change not committed), or
+// else in a worktree of its own (.relaylead/worktrees/<mission>/_merge), removed after. A conflict is
+// cancelled: nothing is left half done. Returns {outcome: 'merged' | 'already', sha} or
+// {outcome: 'conflict', conflicts}.
+function mergeIntoTarget(mission, target) {
+  const integration = mission.config.delivery.branch;
+  if (!branchExists(mission.dir, integration)) throw codedError('integration-missing', { mission: mission.name, branch: integration });
+  if (isAncestor(mission.dir, `refs/heads/${integration}`, `refs/heads/${target}`)) {
+    return { outcome: 'already', sha: git(mission.dir, ['rev-parse', `refs/heads/${target}`]) };
+  }
+  let cwd = worktreeOn(mission.dir, target);
+  const own = !cwd;
+  if (cwd && git(cwd, ['status', '--porcelain', '--untracked-files=no']) !== '') {
+    throw codedError('merge-target-dirty', { dir: cwd, branch: target });
+  }
+  if (own) {
+    cwd = path.join(layout.worktreesDir(mission), '_merge');
+    git(mission.dir, ['worktree', 'prune']);
+    if (fs.existsSync(cwd)) removeWorktree(mission, cwd);
+    git(mission.dir, ['worktree', 'add', cwd, target]);
+  }
+  try {
+    const refusal = { code: 'merge-hook-failed', vars: { mission: mission.name, branch: target } };
+    const message = `Merge ${integration} into ${target}`;
+    const conflicts = mergeIn(cwd, ['-m', message, `refs/heads/${integration}`], { runHooks: runHooks(mission), refusal });
+    if (conflicts) return { outcome: 'conflict', conflicts };
+    return { outcome: 'merged', sha: git(cwd, ['rev-parse', 'HEAD']) };
+  } finally {
+    if (own) removeWorktree(mission, cwd);
+  }
+}
+
+// Whether the integration branch is done with (core/merge.js, the cleanup of the watcher): 'deleted'
+// when it is gone; 'merged' when its tip, past the commit it started from, is in the branch it merges
+// into, locally or as last fetched from the remote; null otherwise, also when nothing was delivered.
+function integrationState(mission) {
+  const branch = mission.config.delivery.branch;
+  if (!branchExists(mission.dir, branch)) return 'deleted';
+  const tip = git(mission.dir, ['rev-parse', `refs/heads/${branch}`]);
+  if (!mission.startCommit || tip === mission.startCommit) return null;
+  const target = mergeTarget(mission);
+  if (!target) return null;
+  const remote = mission.config.delivery.remote || 'origin';
+  const refs = [`refs/heads/${target}`, `refs/remotes/${remote}/${target}`];
+  return refs.some((ref) => refExists(mission.dir, ref) && isAncestor(mission.dir, tip, ref)) ? 'merged' : null;
+}
+
 module.exports = {
   excludeRelaylead,
+  launchInfo,
+  mergeTarget,
+  mergeIntoTarget,
+  integrationState,
   prepareMission,
   prepareTask,
   checkDone,

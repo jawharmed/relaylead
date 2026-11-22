@@ -66,6 +66,26 @@ function readSource(mission) {
   throw new Error(`unknown task source "${source.type}": use tasks-dir or github-issues`);
 }
 
+// The task that resolves the conflict of `relaylead merge` (core/merge.js), described by merge.json;
+// null when there is none. Its record says when it is delivered: it has no file in the task folder.
+function mergeTaskOf(mission) {
+  let merge;
+  try {
+    merge = readJson(path.join(missionDir(mission.name), 'merge.json'), null);
+  } catch {
+    return null; // being written: the next read has it
+  }
+  if (!merge || !merge.task) return null;
+  return { id: merge.task, title: merge.title, body: merge.body, depends: [], ask: null, merge: true, file: 'merge.json' };
+}
+
+// The tasks of the source, then the task resolving a merge conflict.
+function allTasks(mission) {
+  const tasks = readSource(mission);
+  const merge = mergeTaskOf(mission);
+  return merge ? [...tasks, merge] : tasks;
+}
+
 // Delivered when the source says done (local-merge marks it there) or the record says delivered
 // (files delivery). Otherwise the crew's result of the current attempt, then the core's record.
 function taskState(sourceTask, record, result) {
@@ -78,10 +98,12 @@ function taskState(sourceTask, record, result) {
 
 // The id goes into a git branch name (relaylead/<mission>/<id>) and a worktree folder name;
 // _integration is the integration worktree's folder, and since 0.2 relaylead/<mission>/integration
-// is the integration branch.
+// is the integration branch; _merge is the worktree of `relaylead merge`, and merge-into-… the ids
+// of the tasks resolving its conflicts.
 function checkTaskId(mission, task) {
   const usable = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/.test(task.id) && !task.id.includes('..') && !task.id.endsWith('.') && !task.id.endsWith('.lock');
-  const reserved = task.id === '_integration' || (layout.isPerMission(mission) && task.id === 'integration');
+  const mergeId = !task.merge && (task.id === '_merge' || task.id.startsWith('merge-into-'));
+  const reserved = mergeId || task.id === '_integration' || (layout.isPerMission(mission) && task.id === 'integration');
   if (!usable || reserved) throw codedError('bad-task-id', { file: task.file });
 }
 
@@ -89,7 +111,7 @@ function checkTaskId(mission, task) {
 // is not in the integration branch yet, so a task built on it could not see its work.
 function listTasks(name) {
   const mission = readMission(name);
-  const tasks = readSource(mission).map((sourceTask) => {
+  const tasks = allTasks(mission).map((sourceTask) => {
     const record = readJson(taskFile(name, sourceTask.id), null);
     const result = resultOfAttempt(record, readJson(resultFile(name, sourceTask.id), null));
     return {
@@ -374,6 +396,41 @@ function finishTask(name, id, { state, summary, attempt }) {
   writeJson(resultFile(name, id), { id, state, summary: summary || null, attempt: own, finishedAt: now() });
 }
 
+// Starts the crew member of the task resolving a merge conflict (core/merge.js), as a new attempt when
+// an earlier one exists (failed, or delivered before the merge conflicted again). The caller holds the
+// mission lock. Returns the task's record: running, or queued without a free place.
+async function startMergeTask(mission, id) {
+  const name = mission.name;
+  const record = readJson(taskFile(name, id), null);
+  if (!record) return launchCrew(mission, id, 'developer', { merge: true });
+  // The state with the crew's result: a crew member that reported its task has left `running`.
+  const { state } = findTask(name, id);
+  if (state === 'queued' || (state === 'running' && record.session)) return record;
+  const profile = record.profile || 'developer';
+  await stopPreviousCrew(mission, id, record.session);
+  let attempt = currentAttempt(record);
+  archiveAttempt(name, id, attempt, record);
+  attempt++;
+  writeJson(taskFile(name, id), { id, profile, attempt, state: 'running', session: null });
+  const earlier = readJson(archivedResultFile(name, id, attempt - 1), null) || record;
+  try {
+    return await launchCrew(mission, id, profile, { attempt, previousSummary: earlier.summary || null, merge: true });
+  } catch (err) {
+    writeJson(taskFile(name, id), { id, profile, attempt, state: 'failed', session: null, summary: `launch failed: ${err.message}` });
+    throw err;
+  }
+}
+
+// Delivers the done task resolving a merge conflict into the integration branch (under the git lock),
+// then marks its record delivered. The caller holds the mission lock. Returns the delivery's warnings.
+async function deliverMergeTask(mission, task) {
+  const delivery = getDelivery(mission.config.delivery.type);
+  const warnings = await withRepoLock(mission.dir, `merge deliver ${task.id}`, () => delivery.deliver(mission, task, {}));
+  const record = readJson(taskFile(mission.name, task.id));
+  writeJson(taskFile(mission.name, task.id), { ...record, state: 'delivered', deliveredAt: now() });
+  return warnings;
+}
+
 // Starts the queued tasks while places are free, the first of the queue first (core/places.js). Run
 // by the watcher, after each pass. Each start takes the mission lock, then the places lock (in
 // launchCrew). Returns the tasks started, as {mission, id}; `onError(entry, err)` gets each failed start.
@@ -417,4 +474,4 @@ function markFailed(name, id, summary) {
   writeJson(taskFile(name, id), { ...record, state: 'failed', summary, failedAt: now() });
 }
 
-module.exports = { listTasks, startTask, retryTask, deliverTask, finishTask, markFailed, startQueued };
+module.exports = { listTasks, startTask, retryTask, deliverTask, finishTask, markFailed, startQueued, startMergeTask, deliverMergeTask };
