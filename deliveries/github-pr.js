@@ -3,7 +3,11 @@
 // to the integration branch is opened and merged on GitHub, the branch is deleted there, the local
 // integration branch follows the remote one. The task's issue is closed later, when `relaylead merge`
 // brings the work into the user's branch. Meant for the source github-issues.
+const fs = require('node:fs');
+const path = require('node:path');
 const localMerge = require('./local-merge');
+const { missionDir } = require('../core/paths');
+const { readJson } = require('../core/store');
 const { gh, checkGh } = require('../core/github');
 const githubIssues = require('../sources/github-issues');
 const { codedError } = require('../core/messages');
@@ -113,18 +117,33 @@ function deliver(mission, task, { runHooks } = {}) {
   return [codedError('pr-merged', { id: task.id, url: pr.url }), ...finish(mission, task, { runHooks })];
 }
 
-// Once the mission is merged: the issues of its delivered tasks are closed (their work is in the
-// user's branch now). Returns the numbers of the issues gh could not close, for the user to close.
+// Once the mission is merged: the issues of the tasks it delivered (their record, not the source: an
+// issue already closed before is left alone) are closed, as their work is in the user's branch now.
+// Returns the numbers of the issues gh could not close, for the user to close. Also called by the
+// cleanup of a mission merged by hand (core/merge.js).
 function closeIssues(mission) {
   if (mission.config.source.type !== 'github-issues') return [];
-  const { listTasks } = require('../core/tasks'); // lazy: tasks.js needs the deliveries
+  const folder = path.join(missionDir(mission.name), 'tasks');
+  let files = [];
+  try {
+    files = fs.readdirSync(folder);
+  } catch {
+    return [];
+  }
   const notClosed = [];
-  for (const task of listTasks(mission.name)) {
-    if (task.state !== 'delivered' || !/^issue-\d+$/.test(task.id)) continue;
+  for (const file of files.filter((name) => /^issue-\d+\.json$/.test(name)).sort()) {
+    let record = null;
     try {
-      githubIssues.markDone(mission.config.source, task.id, { cwd: mission.dir });
+      record = readJson(path.join(folder, file), null);
     } catch {
-      notClosed.push(githubIssues.issueNumber(task.id));
+      // unreadable: left to the user
+    }
+    if (!record || record.state !== 'delivered') continue;
+    const id = file.slice(0, -'.json'.length);
+    try {
+      githubIssues.markDone(mission.config.source, id, { cwd: mission.dir });
+    } catch {
+      notClosed.push(githubIssues.issueNumber(id));
     }
   }
   return notClosed;
@@ -187,6 +206,7 @@ module.exports = {
   launchInfo: localMerge.launchInfo,
   mergeTarget: localMerge.mergeTarget,
   mergeIntoTarget,
+  closeIssues,
   integrationState: localMerge.integrationState,
   prepareTask: localMerge.prepareTask,
   checkDone: localMerge.checkDone,

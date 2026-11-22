@@ -108,6 +108,7 @@ const TEXT = {
         states: { starting: 'démarrage', working: 'au travail', waiting: 'en attente', handover: 'relève', done: 'terminée', stopped: 'arrêtée' } },
 };
 let T = TEXT.en;
+const drafts = new Map(); // what is typed in the free-answer fields, by mission|question
 const fill = (text, vars) => text.replace(/\{(\w+)\}/g, (_, k) => vars[k]);
 const $ = (id) => document.getElementById(id);
 
@@ -131,14 +132,18 @@ function toast(text) {
 
 async function act(path, body, okText, button) {
   if (button) button.disabled = true;
+  let ok = false;
   try {
     const reply = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Relaylead-Token': TOKEN }, body: JSON.stringify(body) });
     const data = await reply.json();
     toast(reply.ok ? okText : data.message || data.error);
+    ok = reply.ok;
   } catch {
     toast(T.offline);
   }
+  if (button && !ok) button.disabled = false;
   refresh();
+  return ok;
 }
 
 function time(iso) {
@@ -160,15 +165,30 @@ function questionBlock(mission, question) {
     el('button', { class: index + 1 === question.recommended ? 'rec' : '', title: index + 1 === question.recommended ? T.recommended : '',
       onclick: (event) => act('/api/answer', { mission: mission.name, id: question.id, choice: index + 1 }, T.sent, event.target) }, option));
   // A free answer, except for the questions of the hooks (irreversible action, permission): options only.
+  // What is typed is kept per question, so a redraw (the page redraws when anything changes) never erases it.
   const canOther = !/^q-(irr|perm)-/.test(question.id);
-  const field = el('input', { type: 'text', placeholder: T.other, 'aria-label': T.other });
-  const sendOther = (event) => field.value.trim() && act('/api/answer', { mission: mission.name, id: question.id, other: field.value.trim() }, T.sent, event.target);
-  field.addEventListener('keydown', (event) => { if (event.key === 'Enter') sendOther({ target: null }); });
+  const key = mission.name + '|' + question.id;
+  const field = el('input', { type: 'text', placeholder: T.other, 'aria-label': T.other, 'data-key': key });
+  field.value = drafts.get(key) || '';
+  field.addEventListener('input', () => drafts.set(key, field.value));
+  const button = el('button', { onclick: () => sendOther() }, T.send);
+  let sending = false;
+  async function sendOther() {
+    const text = field.value.trim();
+    if (!text || sending) return;
+    sending = true;
+    button.disabled = true;
+    const sent = await act('/api/answer', { mission: mission.name, id: question.id, other: text }, T.sent);
+    if (sent) drafts.delete(key);
+    sending = false;
+    button.disabled = false;
+  }
+  field.addEventListener('keydown', (event) => { if (event.key === 'Enter' && !event.isComposing) sendOther(); });
   return el('div', { class: 'question' },
     el('div', { class: 'ask' }, question.text),
     question.context ? el('div', { class: 'why' }, question.context) : null,
     el('div', { class: 'options' }, ...options),
-    canOther ? el('div', { class: 'other' }, field, el('button', { onclick: sendOther }, T.send)) : null);
+    canOther ? el('div', { class: 'other' }, field, button) : null);
 }
 
 function missionCard(mission) {
@@ -211,7 +231,17 @@ function render(data) {
   }
   if (finished.length) main.push(el('details', { class: 'finished' }, el('summary', {}, T.finished + ' (' + finished.length + ')'), el('div', { class: 'grid' }, ...finished.map(missionCard))));
   const open = document.querySelector('details.finished[open]');
+  // The field being typed in keeps its focus and cursor through the redraw.
+  const typing = document.activeElement && document.activeElement.dataset ? document.activeElement : null;
+  const focused = typing && typing.dataset.key ? { key: typing.dataset.key, at: typing.selectionStart } : null;
   $('main').replaceChildren(...main);
+  if (focused) {
+    const again = [...document.querySelectorAll('input[data-key]')].find((input) => input.dataset.key === focused.key);
+    if (again) {
+      again.focus();
+      again.setSelectionRange(focused.at, focused.at);
+    }
+  }
   if (open) document.querySelector('details.finished').open = true;
   document.title = (data.openQuestions ? '(' + data.openQuestions + ') ' : '') + 'Relaylead';
 }

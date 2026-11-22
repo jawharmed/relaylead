@@ -77,7 +77,7 @@ test('deliver played again after a failure at the merge opens no second pull req
 });
 
 test('the merge into the base branch closes the issues, deletes the remote integration branch and says when the local branch is behind', (t) => {
-  const { dir, remote, github, mission } = setup(t, [issue(1, 'one'), issue(2, 'two')]);
+  const { dir, remote, github, mission } = setup(t, [issue(1, 'one'), issue(2, 'two'), issue(3, 'old', 'CLOSED')]);
   githubPr.deliver(mission, work(mission, 'issue-1', 'one.txt', 'one\n'));
   // The mission as the core keeps it: issue-1 delivered, issue-2 not.
   writeJson(path.join(missionDir('m'), 'mission.json'), { name: 'm', format: FORMAT, dir, agent: 'fake', createdAt: new Date().toISOString(), config: mission.config });
@@ -86,9 +86,12 @@ test('the merge into the base branch closes the issues, deletes the remote integ
 
   const result = githubPr.mergeIntoTarget(mission, 'main');
   assert.strictEqual(result.outcome, 'merged');
-  assert.deepStrictEqual(github.read().issues.map((i) => i.state), ['CLOSED', 'OPEN']);
+  assert.deepStrictEqual(github.read().issues.map((i) => i.state), ['CLOSED', 'OPEN', 'CLOSED']);
+  // An issue closed long before is not touched: no call, no comment.
+  assert.deepStrictEqual(commands(github, ['issue', 'close']).map((call) => call[2]), ['1']);
   assert.strictEqual(git(remote, 'branch', '--list', INTEGRATION), '');
   // The merge commit is on the remote main only: the local main is one merge and one task behind.
+  assert.strictEqual(result.behind, Number(git(dir, 'rev-list', '--count', 'main..origin/main')));
   assert.ok(result.behind >= 1);
   assert.deepStrictEqual(result.notClosed, []);
 });

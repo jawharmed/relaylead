@@ -97,6 +97,9 @@ const taskMark: Record<string, [string, string]> = {
   todo: ['○', 'inactive'],
 }
 
+// What is typed in the free-answer fields, by mission and question: a redraw (every 5 s) keeps it.
+const drafts = new Map<string, string>()
+
 // Once per session: the question of the first mission, and the automatic opening of the pane.
 let hasProposed = false
 let hasOpened = false
@@ -256,8 +259,11 @@ export const register: Register = on => {
                       key={`${mission.name}-${question.id}-other`}
                       placeholder={w.other}
                       submitLabel={w.send}
+                      value={drafts.get(`${mission.name}|${question.id}`) ?? ''}
+                      onInput={text => void drafts.set(`${mission.name}|${question.id}`, text)}
                       onSubmit={async text => {
                         if (!text.trim()) return
+                        drafts.delete(`${mission.name}|${question.id}`)
                         await $.process.run(['relaylead', 'answer', mission.name, question.id, '--other', text.trim()])
                         await refresh($)
                       }}

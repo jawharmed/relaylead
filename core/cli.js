@@ -252,6 +252,8 @@ commands.merge = async (args, io) => {
     io.out.write(t('mergeAlready', { mission: name, target: result.target }, lang));
   } else if (result.outcome === 'merged') {
     io.out.write(t('mergeDone', { mission: name, target: result.target, detail: result.url || result.sha }, lang));
+  }
+  if (result.outcome !== 'conflict') {
     // GitHub: the user's own branch is never pulled for them; they are told when it is behind.
     if (result.behind > 0) io.out.write(t('mergeBehind', { target: result.target, count: result.behind }, lang));
     if (result.notClosed && result.notClosed.length > 0) io.out.write(t('mergeIssuesOpen', { issues: result.notClosed.map((n) => '#' + n).join(', ') }, lang));

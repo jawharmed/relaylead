@@ -235,13 +235,14 @@ async function followAnswer(mission, merge) {
   const question = listQuestions(mission.name).find((candidate) => candidate.id === merge.question);
   if (!question || question.state !== 'answered') return;
   const choice = question.answer.choice;
-  if (choice !== OPTIONS[1]) {
+  // A free answer ("Other") is taken as hints for a new crew member.
+  if (!question.answer.other && choice !== OPTIONS[1]) {
     writeMerge(mission.name, { ...merge, state: 'paused', choice });
     watchLog(mission.name, 'merge-paused', choice);
     return;
   }
   const told = listTold(mission.name).filter((message) => message.at >= question.askedAt);
-  const hints = told.map((message) => message.text).join(' ') || null;
+  const hints = [question.answer.other ? choice : null, ...told.map((message) => message.text)].filter(Boolean).join(' ') || null;
   await startResolution(mission, { target: merge.target, conflicts: merge.conflicts || [], attempts: merge.attempts || 0, hints });
 }
 
@@ -269,6 +270,9 @@ async function removeIfMerged(name) {
     writeJson(path.join(missionDir(name), 'cleanup.json'), { refusedAt: now(), reason: err.message }, { createDir: false });
     watchLog(name, 'cleanup-refused', err.message);
   };
+  // Merged by hand, or by relaylead: the issues of the delivered tasks are closed before the records go.
+  const delivery = getDelivery(mission.config.delivery.type);
+  if (delivery.closeIssues && removable(name, mission) === 'merged') delivery.closeIssues({ ...mission, name });
   try {
     const check = (current) => Boolean((how = removable(name, current)));
     if ((await removeMission(name, { integrationWorktree: true, check, onRefused: refused })) === null) return null;
