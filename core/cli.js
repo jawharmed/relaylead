@@ -1,3 +1,4 @@
+const fs = require('node:fs');
 const path = require('node:path');
 const { t, codedError } = require('./messages');
 const { loadConfig, watcherSettings, setConfigValue } = require('./config');
@@ -19,6 +20,7 @@ const { waitForChanges } = require('./wait');
 const { waitForEvents } = require('./console-wait');
 const { tellMission, listTold } = require('./told');
 const { addDecision, readDecisions } = require('./decisions');
+const { readMemory, writeMemory, memorySettings, requireCompaction } = require('./memory');
 const { askQuestion, answerQuestion, listQuestions } = require('./questions');
 const { runPass, tendMission, stopPresent, loop, watcherRunning, startWatcher, stopWatcher } = require('./watcher');
 const { watchLogSize, watchLogSince } = require('./watch-log');
@@ -33,7 +35,7 @@ const { startDashboard } = require('./dashboard');
 const pkg = require('../package.json');
 
 // Options that take no value.
-const FLAGS = ['all', 'force', 'json', 'list', 'no-hooks', 'no-open', 'purge', 'yes'];
+const FLAGS = ['all', 'force', 'json', 'list', 'no-hooks', 'no-memory', 'no-open', 'purge', 'versioned-memory', 'yes'];
 
 // Splits arguments into positional values and `--name value` (or `--name=value`) options.
 // A repeated option (--option a --option b) is also kept in full in `lists`.
@@ -223,13 +225,16 @@ commands.state = async (args, io) => {
   const { positional, options } = parseArgs(args);
   const [action, state] = positional;
   if (action !== 'get' && !(action === 'set' && state)) {
-    throw codedError('usage', { usage: 'relaylead state get|set <state> [--note text] [--mission name]' });
+    throw codedError('usage', { usage: 'relaylead state get|set <state> [--note text] [--no-memory] [--mission name]' });
   }
   const mission = missionName(options, io);
   if (action === 'get') {
     io.out.write(getState(mission) + '\n');
   } else {
     refuseReplacedLead(mission, io);
+    // A lead compacts the project memory before it declares the mission done (--no-memory: a way out when
+    // the memory cannot be written); a replayed `done` has been through this already.
+    if (state === 'done' && io.env.RELAYLEAD_ROLE === 'lead' && !options['no-memory'] && getState(mission) !== 'done') requireCompaction(mission);
     const outcome = await setState(mission, state, options.note, { by: io.env.RELAYLEAD_SESSION || 'user' });
     if (outcome === 'skipped') io.out.write(t('missionStopSkipped', { mission }, language(io)));
     // The watcher stops the old lead and starts the next one at once.
@@ -374,6 +379,46 @@ commands.decision = async (args, io) => {
   return 0;
 };
 
+// The project memory of the mission's project: `memory show` reads it, `memory write` replaces it (the lead
+// does both; the text comes from --file, or from --text where "\n" stands for a line break).
+commands.memory = async (args, io) => {
+  const { positional, options } = parseArgs(args);
+  const [action] = positional;
+  const usage = 'relaylead memory show | memory write --base <fingerprint> --file <file> | memory write --base <fingerprint> --text "<text>"';
+  if (positional.length !== 1 || !['show', 'write'].includes(action)) throw codedError('usage', { usage });
+  const mission = missionName(options, io);
+  const lang = language(io);
+  const dir = readMission(mission).dir;
+  if (action === 'show') {
+    if (!memorySettings(dir).enabled) io.out.write(t('memoryDisabled', {}, lang));
+    else {
+      const memory = readMemory(dir);
+      io.out.write(t('memoryFingerprint', { fingerprint: memory.fingerprint }, lang));
+      if (memory.text === '') io.out.write(t('memoryEmpty', {}, lang));
+      else {
+        if (memory.tooBig) io.out.write(t('memoryTooBig', { bytes: memory.bytes, max: memory.maxBytes }, lang));
+        else if (memory.tooLong) io.out.write(t('memoryTooLong', { lines: memory.lines, max: memory.maxLines }, lang));
+        io.out.write(memory.shown);
+        if (memory.hidden > 0) io.out.write(t('memoryTruncated', { hidden: memory.hidden }, lang));
+      }
+    }
+    return 0;
+  }
+  if ((options.file === undefined) === (options.text === undefined) || !options.base) throw codedError('usage', { usage });
+  refuseReplacedLead(mission, io);
+  let text = options.text === undefined ? '' : options.text.replace(/\\n/g, '\n');
+  if (options.file !== undefined) {
+    try {
+      text = fs.readFileSync(path.resolve(io.cwd, options.file), 'utf8');
+    } catch (err) {
+      throw codedError('memory-file-unreadable', { file: options.file, detail: err.message });
+    }
+  }
+  const lines = await writeMemory(mission, text, options.base);
+  io.out.write(t('memoryWritten', { lines }, lang));
+  return 0;
+};
+
 // `relaylead watcher run`: one full pass over the missions, or with --mission a pass over that one
 // alone, without the pass lock. Prints the lines the pass added to watcher.log. `start`, `stop` and
 // `status` drive the loop; `loop` is the loop itself, started by `start` (internal, not in the help).
@@ -461,7 +506,7 @@ commands.doctor = async (args, io) => {
 
 // One line per check: "ok|warn|fail <name>: <detail>". Exit 1 when a check failed.
 async function printDoctor(io) {
-  const lines = await doctor();
+  const lines = await doctor(io.cwd);
   for (const line of lines) io.out.write(`${line.level} ${line.name}: ${line.detail}\n`);
   return lines.some((line) => line.level === 'fail') ? 1 : 0;
 }

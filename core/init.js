@@ -12,6 +12,7 @@ const { checkVersion } = require('../adapters/claude');
 const { runFileSync } = require('./run-file');
 const { codedError, t } = require('./messages');
 const { install } = require('./install');
+const { updateExclude } = require('./memory');
 
 const MIN_NODE = 18;
 
@@ -76,7 +77,10 @@ async function setUpMachine(options, asker, io, say) {
   return false;
 }
 
-function setUpProject(dir, say) {
+// yes / no answers: anything that starts with y (or o, for "oui") is a yes.
+const isYes = (answer) => /^(y|o)/i.test(answer);
+
+async function setUpProject(dir, options, asker, say) {
   try {
     const top = runFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
     if (fs.realpathSync.native(top) !== fs.realpathSync.native(dir)) throw new Error('not the root');
@@ -87,8 +91,12 @@ function setUpProject(dir, say) {
   if (fs.existsSync(file)) {
     say('init-project-kept', { file });
   } else {
-    writeJson(file, { team: 'code', method: DEFAULTS.method, source: DEFAULTS.source, delivery: DEFAULTS.delivery });
+    const enabled = options['no-memory'] ? false : isYes(await asker.ask('Keep a project memory for the leads (conventions, lessons)?', 'yes'));
+    // Versioned: committed with the code. Otherwise it stays out of git (.git/info/exclude).
+    const versioned = enabled && (options['versioned-memory'] || isYes(await asker.ask('Version the project memory with the code?', 'no')));
+    writeJson(file, { team: 'code', method: DEFAULTS.method, source: DEFAULTS.source, delivery: DEFAULTS.delivery, memory: { enabled, versioned } });
     say('init-project-written', { file });
+    if (enabled) updateExclude(dir, versioned);
   }
   say('init-trust-hint', { dir });
   say('init-advice', {});
@@ -99,7 +107,7 @@ async function init(options, io, lang) {
   const asker = makeAsker(options, io);
   try {
     const wantsInstall = await setUpMachine(options, asker, io, say);
-    setUpProject(io.cwd, say);
+    await setUpProject(io.cwd, options, asker, say);
     if (wantsInstall) install(say);
     else if (!fs.existsSync(path.join(home(), 'install.json'))) say('init-next', {});
   } finally {

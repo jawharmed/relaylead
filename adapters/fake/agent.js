@@ -161,6 +161,14 @@ function logged(command, action) {
   }
 }
 
+// Like the lead's instruction before it declares the mission done: writes the project memory (one line).
+function compactMemory() {
+  const shown = relaylead('memory', 'show');
+  if (/turned off/.test(shown)) return;
+  const fingerprint = /--base\): (\w+)/.exec(shown)[1];
+  relaylead('memory', 'write', '--base', fingerprint, '--text', '- fake mission: done');
+}
+
 // Stay alive until stopped, like a real session.
 function idle() {
   setInterval(() => {}, 60 * 1000);
@@ -254,6 +262,7 @@ function leadLoop() {
     }
     if (done.length > 0) tasks = listTasks(); // delivered tasks make their dependents ready
     if (tasks.every((task) => task.state === 'delivered' || (task.state === 'failed' && !retryable(task)))) {
+      compactMemory();
       relaylead('state', 'set', 'done');
       return;
     }

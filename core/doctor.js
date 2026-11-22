@@ -13,11 +13,13 @@ const { authSettings, apiKeyFileFound } = require('./auth');
 const API_KEY_CHECK = 'in a running session (relaylead show <mission>), /status must name apiKeyHelper, not your Claude account';
 const { watcherRunning } = require('./watcher');
 const { runFileSync } = require('./run-file');
+const { readMemory, memorySettings } = require('./memory');
 
 const MIN_NODE = 18;
 
 // Returns [{ level: 'ok' | 'warn' | 'fail', name, detail }].
-async function doctor() {
+// `dir` is the folder the command runs in: its project memory, when it has one, is checked too.
+async function doctor(dir) {
   const lines = [];
   const add = (level, name, detail) => lines.push({ level, name, detail });
 
@@ -79,6 +81,20 @@ async function doctor() {
     }
   } catch (err) {
     add('fail', 'config', err.message);
+  }
+
+  if (dir) {
+    try {
+      const memory = memorySettings(dir).enabled ? readMemory(dir) : null;
+      if (memory && memory.text !== '') {
+        const over = memory.tooBig
+          ? `${memory.bytes} bytes, over the ceiling of ${memory.maxBytes}; the next lead will compact it before starting`
+          : `${memory.lines} lines, over the ceiling of ${memory.maxLines}; the next lead will compact it before starting`;
+        add(memory.tooLong ? 'warn' : 'ok', 'memory', memory.tooLong ? over : `${memory.lines} lines (ceiling ${memory.maxLines})`);
+      }
+    } catch (err) {
+      add('warn', 'memory', `could not read the project memory (${err.message})`);
+    }
   }
 
   if (fs.existsSync(path.join(home(), 'STOP'))) add('warn', 'STOP', `present in ${home()}: the watcher does nothing until it is removed`);

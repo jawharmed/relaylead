@@ -141,4 +141,4 @@ async function withMissionLock(name, command, action) {
   }
 }
 
-module.exports = { withMissionLock, takeOverStaleLock, EMPTY_LOCK_STALE_MS };
+module.exports = { withMissionLock, takeOverStaleLock, tryCreateLock, isStaleLock, removeQuietly, EMPTY_LOCK_STALE_MS };

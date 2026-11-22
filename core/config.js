@@ -39,6 +39,9 @@ const DEFAULTS = {
   // What the user sees of the missions (core/overview.js): pane is 'always', 'never' or null (asked on the
   // first mission); statusLine turns off the Claude Code status line entry; dashboardPort is the port of
   // `relaylead dashboard`.
+  // The project memory (core/memory.js): enabled, its ceilings in lines (1 to 1000) and in bytes (1024 to 65536), and versioned (kept with the code;
+  // otherwise it is excluded from git through .git/info/exclude).
+  memory: { enabled: true, maxLines: 200, maxBytes: 16384, versioned: false },
   display: { pane: null, statusLine: true, dashboardPort: 4317 },
   usage: {
     thresholds: { low: { week: 70, fiveHour: 80 }, normal: { week: 90, fiveHour: 85 }, high: { week: 98, fiveHour: 85 } },
