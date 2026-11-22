@@ -56,13 +56,13 @@ Then launch:
 relaylead launch --request "Carry out the tasks"
 ```
 
-The command prints the mission's name and returns at once. Follow it with `relaylead list`. When the lead has a question, `relaylead question list <mission>` shows it and `relaylead answer <mission> <id> <choice>` answers it. When the mission is `done`, the work is on the branch `relaylead/integration`, in the worktree `.relaylead/worktrees/_integration` of your project. Your own checkout is never changed.
+The command prints the mission's name and returns at once. Follow it with `relaylead list`. When the lead has a question, `relaylead question list <mission>` shows it and `relaylead answer <mission> <id> <choice>` answers it. When the mission is `done`, the work is on the branch `relaylead/<mission>/integration`, in the worktree `.relaylead/worktrees/<mission>/_integration` of your project. Your own checkout is never changed.
 
 ## Concepts
 
 - **Mission.** One run of a team on a project, named after the project's folder unless you pass `--name`. A mission has a state (`starting`, `working`, `waiting`, `handover`, `done`, or `stopped`) and lives in `~/.relaylead/missions/<mission>/`.
 - **Lead.** One Claude Code session that drives the mission. It never edits code: it reads the task list, starts crew members, delivers their work, asks you questions, and says when the mission is done. It only uses `relaylead` commands.
-- **Crew (equipiers).** One short-lived developer session per task, in its own git worktree under `.relaylead/worktrees/` and on its own branch `relaylead/<mission>/<task>`. A crew member finishes with `relaylead task done` or `relaylead task fail`. At most `parallel` tasks run at a time (4 by default).
+- **Crew (equipiers).** One short-lived developer session per task, in its own git worktree `.relaylead/worktrees/<mission>/<task>` and on its own branch `relaylead/<mission>/<task>`. A crew member finishes with `relaylead task done` or `relaylead task fail`. At most `parallel` tasks run at a time (4 by default).
 - **Task.** A unit of work with an id, a title, a body, a state (`todo`, `running`, `done`, `failed`, `delivered`) and optionally dependencies (`depends`) and a question to settle first (`ask`). Delivering a task merges it (or opens a pull request); that makes the tasks that depend on it ready.
 - **Watcher.** A small loop with no AI. Every few minutes it looks at the unfinished missions: it restarts a lead that has stopped (the same session when its context is low, otherwise a fresh one that restarts from the files), wakes a lead that ended its turn when an answer or a finished task is waiting, stops a second lead or a crew session whose task no longer runs, and hands over to a fresh lead when the lead's context fills up. After 3 failed restarts in a row, or at once when a session reports a billing or authentication error, it stops the mission, says why and notifies you. It writes what it does to `~/.relaylead/watcher.log`. `relaylead launch` starts it, and `relaylead install` hands it to launchd so it survives a restart of the machine.
 - **Questions.** The lead asks you through `relaylead question`; you answer with `relaylead answer`. A question has a text, options and optionally a recommended option. The lead waits only for answers that change what happens next.
@@ -89,7 +89,7 @@ Main settings, with their defaults:
 | `permissionMode` | `allowlist` | `allowlist` lets sessions run only the commands of their profile; `all` blocks nothing except the guardrails. |
 | `language` | `en` | Language of the messages (`en` or `fr`). |
 | `source` | `{"type":"tasks-dir","dir":"tasks"}` | Where tasks come from. |
-| `delivery` | `{"type":"local-merge","branch":"relaylead/integration","runHooks":true}` | How tasks are delivered. |
+| `delivery` | `{"type":"local-merge","runHooks":true}` | How tasks are delivered. |
 | `guard` | see below | Guardrails. |
 | `context` | see the watcher section | Context thresholds. |
 | `watcher` | `{"autoStart":true,"helpers":true,"everySeconds":300}` | The watcher (machine file only). |
@@ -116,7 +116,7 @@ When a task is delivered, its `state:` line becomes `done` in the integration br
 
 ### Deliveries
 
-- **`local-merge`** (default): each finished task is merged into the integration branch (`relaylead/integration` by default, set with `delivery.branch`). Nothing leaves your machine.
+- **`local-merge`** (default): each finished task is merged into the mission's integration branch, `relaylead/<mission>/integration`. Nothing leaves your machine. (`delivery.branch` is no longer read: each mission has its own branch.)
 - **`github-pr`**: meant for the `github-issues` source. A finished task's branch is pushed to the remote (`origin`, or `delivery.remote`), a pull request to the integration branch is opened and merged on GitHub in the same step, the task's branch is deleted on the remote, the local integration branch follows the remote one, and the issue is closed. No review is waited for: the lead delivers a task it has found finished, so its pull request is opened, then merged at once. If you want to review the work, do it on the integration branch before you merge it into your own. The integration branch must be pushable to the remote.
 - **`files`**: no git needed; each task writes its output into `out/<task id>/` in the project folder.
 
@@ -196,7 +196,7 @@ Run them from the root of your project unless said otherwise. A mission name is 
 Starts a mission with a lead and its crew and prints its name.
 
 - `--request <text>`: what you want done.
-- `--name <name>`: the mission's name (the folder's name by default). One project folder runs one mission at a time.
+- `--name <name>`: the mission's name (the folder's name by default). Names are unique on the machine: to run a second mission in the same folder, give it another name. Several missions of one project run side by side, each with its own integration branch and worktrees; their git operations on the repository (worktrees, branches, merges) take turns. A mission launched by Relaylead 0.1 that is still running keeps its folder to itself: `launch` is refused there until it is over (or stopped).
 - `--dir <path>`: the project folder (the current folder by default).
 - `--team <name>` and `--agent <name>`: the team and the agent to use (the built-in team `code` and `claude`).
 - `--priority <value>`: recorded with the mission (`normal` by default).
