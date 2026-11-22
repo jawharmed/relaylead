@@ -30,3 +30,7 @@ Règles communes à tous les lots :
 - Aucune écriture dans la configuration de l'utilisateur hors `relaylead install`, réversible par `uninstall`.
 - Aucune mention de projets réels de l'auteur dans le dépôt.
 - Sessions d'essai nommées `rl-…`, isolées de la configuration de l'utilisateur, arrêtées et supprimées en fin d'essai.
+
+## Version 0.2.0
+
+Le 22 novembre 2026, la version porte le numéro 0.2.0 (`package.json`, `plugin/.claude-plugin/plugin.json`). Elle ajoute plusieurs missions en parallèle avec file d'attente, la console dans Claude Code (skill `relaylead`), la mémoire du projet et les affichages (ligne d'état, panneau, page web). Conception : [`2026-11-22-relaylead-console-design.md`](../specs/2026-11-22-relaylead-console-design.md). L'essai réel avec Claude Code 2.1.330 sous macOS est dans [`docs/manual-checks/v0-2-claude-macos.md`](../manual-checks/v0-2-claude-macos.md) ; ses défauts sont corrigés par la branche `fix/essai-0-2`.
