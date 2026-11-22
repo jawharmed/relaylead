@@ -1,4 +1,4 @@
-// `relaylead brief`, the opening of the console.
+// `relaylead brief`, the opening of the console, and the short outputs it reads (wait --all, task list --short).
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -73,7 +73,7 @@ test('brief shows the problems, each open question as it is, and one line per mi
   );
   // Same catch-up as wait --all: the question is no longer new, and the next wait does not give it again.
   assert.match(await relaylead(['brief']), /\[old\] q-merge: Conflict/);
-  assert.deepStrictEqual(JSON.parse(await relaylead(['wait', '--all', '--timeout', '0'])).events, []);
+  assert.strictEqual(await relaylead(['wait', '--all', '--timeout', '0']), 'Nothing new.\n');
 });
 
 test('brief gives a mission over and a failed task once, in French when the project says so', async (t) => {
@@ -92,4 +92,28 @@ test('brief gives a mission over and a failed task once, in French when the proj
     'Nouveau :\n  [demo] mission stopped\n  [demo] tâche a en échec (essai 1) : tests rouges\nAucune question ouverte.\nAucune mission en cours.\n',
   );
   assert.match(await relaylead(['brief'], { cwd: dir }), /^Rien de nouveau\.\n/);
+});
+
+test('wait --all prints its events as text, a question in full; --json keeps the JSON', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  setState('demo', 'waiting');
+  askQuestion('demo', { key: 'db', text: 'Which database?', options: ['SQLite', 'Postgres'], recommended: 2 });
+  assert.strictEqual(
+    await relaylead(['wait', '--all', '--timeout', '0']),
+    '[demo] q-db (new): Which database?\n  1. Postgres (recommended)\n  2. SQLite\n',
+  );
+  askQuestion('demo', { key: 'api', text: 'Which API?', options: ['v1', 'v2'] });
+  const { events } = JSON.parse(await relaylead(['wait', '--all', '--timeout', '0', '--json']));
+  assert.deepStrictEqual(events.map((event) => event.id), ['q-api']);
+});
+
+test('task list --short prints one line per task', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  writeJson(path.join(missionDir('demo'), 'tasks', 'a.json'), { id: 'a', profile: 'developer', attempt: 2, state: 'failed', session: null, summary: 'no tests' });
+  assert.strictEqual(
+    await relaylead(['task', 'list', '--short', '--mission', 'demo']),
+    'a  failed#2  First task — no tests\nb  todo#0  Second task\n',
+  );
 });

@@ -19,7 +19,7 @@ const {
 const { listTasks, startTask, retryTask, deliverTask, finishTask } = require('./tasks');
 const { waitForChanges } = require('./wait');
 const { waitForEvents } = require('./console-wait');
-const { brief } = require('./brief');
+const { brief, eventsText } = require('./brief');
 const { tellMission, listTold } = require('./told');
 const { addDecision, readDecisions } = require('./decisions');
 const { readMemory, writeMemory, memorySettings, requireCompaction } = require('./memory');
@@ -40,7 +40,7 @@ const { startDashboard } = require('./dashboard');
 const pkg = require('../package.json');
 
 // Options that take no value.
-const FLAGS = ['all', 'force', 'json', 'list', 'no-hooks', 'no-memory', 'no-open', 'purge', 'versioned-memory', 'yes'];
+const FLAGS = ['all', 'force', 'json', 'list', 'no-hooks', 'no-memory', 'no-open', 'purge', 'short', 'versioned-memory', 'yes'];
 
 // Splits arguments into positional values and `--name value` (or `--name=value`) options.
 // A repeated option (--option a --option b) is also kept in full in `lists`.
@@ -296,7 +296,7 @@ commands.task = async (args, io) => {
   if (!(action === 'list' || (['start', 'retry', 'deliver', 'done', 'fail'].includes(action) && id))) {
     throw codedError('usage', {
       usage:
-        'relaylead task list | start <id> [--profile p] | retry <id> [--profile p] | deliver <id> [--no-hooks] | done <id> | fail <id> [--summary text] [--mission name]',
+        'relaylead task list [--short] | start <id> [--profile p] | retry <id> [--profile p] | deliver <id> [--no-hooks] | done <id> | fail <id> [--summary text] [--mission name]',
     });
   }
   // A crew member runs with RELAYLEAD_TASK set: it finishes its own task and drives no other.
@@ -308,7 +308,13 @@ commands.task = async (args, io) => {
   const mission = missionName(options, io);
   if (['start', 'retry', 'deliver'].includes(action)) refuseReplacedLead(mission, io);
   if (['start', 'retry'].includes(action)) refuseWhilePaused(mission);
-  if (action === 'list') {
+  if (action === 'list' && options.short) {
+    // For the console: one line per task, which it reads at a glance.
+    for (const task of listTasks(mission)) {
+      const summary = task.summary ? ` — ${task.summary}` : '';
+      io.out.write(`${task.id}  ${task.state}#${task.attempt}  ${task.title}${summary}\n`);
+    }
+  } else if (action === 'list') {
     io.out.write(JSON.stringify(listTasks(mission), null, 2) + '\n');
   } else if (action === 'start') {
     const record = await startTask(mission, { id, profile: options.profile, env: io.env });
@@ -334,12 +340,14 @@ commands.wait = async (args, io) => {
   const { options } = parseArgs(args);
   const timeout = options.timeout === undefined ? undefined : Number(options.timeout);
   if (timeout !== undefined && !(timeout >= 0)) {
-    throw codedError('usage', { usage: 'relaylead wait [--timeout seconds] [--mission name] | wait --all [--timeout seconds]' });
+    throw codedError('usage', { usage: 'relaylead wait [--timeout seconds] [--mission name] | wait --all [--timeout seconds] [--json]' });
   }
-  // The console's wait: every mission of the machine, events named by mission (core/console-wait.js).
+  // The console's wait: every mission of the machine, events named by mission (core/console-wait.js),
+  // as the short text of `brief` (--json: as JSON).
   if (options.all) {
     refuseInSession('wait --all', io);
-    await waitForEvents(timeout, (events) => io.out.write(JSON.stringify({ events }, null, 2) + '\n'));
+    const lang = language(io);
+    await waitForEvents(timeout, (events) => io.out.write(options.json ? JSON.stringify({ events }, null, 2) + '\n' : eventsText(events, lang)));
     return 0;
   }
   const mission = missionName(options, io);
