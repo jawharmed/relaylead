@@ -19,6 +19,7 @@ const {
 const { listTasks, startTask, retryTask, deliverTask, finishTask } = require('./tasks');
 const { waitForChanges } = require('./wait');
 const { waitForEvents } = require('./console-wait');
+const { brief } = require('./brief');
 const { tellMission, listTold } = require('./told');
 const { addDecision, readDecisions } = require('./decisions');
 const { readMemory, writeMemory, memorySettings, requireCompaction } = require('./memory');
@@ -562,6 +563,13 @@ async function printDoctor(io) {
   for (const line of lines) io.out.write(`${line.level} ${line.name}: ${line.detail}\n`);
   return lines.some((line) => line.level === 'fail') ? 1 : 0;
 }
+
+// `relaylead brief`: what the console shows when a conversation opens (core/brief.js).
+commands.brief = async (args, io) => {
+  refuseInSession('brief', io);
+  await brief(io.cwd, language(io), (text) => io.out.write(text));
+  return 0;
+};
 
 commands.init = async (args, io) => {
   refuseInSession('init', io);
