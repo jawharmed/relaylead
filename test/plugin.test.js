@@ -69,13 +69,13 @@ test('installPlugin and uninstallPlugin call claude plugin with the right argume
   assert.strictEqual(pluginInstalled(), false);
 });
 
-test('the console skill stays short and keeps its rule on questions; /relaylead:etat only reads, on a light model', () => {
+test('the console skill stays short and keeps its rule on questions; no skill changes the model', () => {
   const consoleSkill = fs.readFileSync(path.join(PLUGIN_DIR, 'skills', 'relaylead', 'SKILL.md'), 'utf8');
   // Less than half of the 0.2 skill (7490 bytes).
   assert.ok(Buffer.byteLength(consoleSkill) < 3745, `${Buffer.byteLength(consoleSkill)} bytes`);
   assert.match(consoleSkill, /\*\*Always show every open question, as it is, before anything else.*never summarize it/);
   assert.match(consoleSkill, /^Run `relaylead brief`/m);
-  const etat = fs.readFileSync(path.join(PLUGIN_DIR, 'skills', 'etat', 'SKILL.md'), 'utf8');
-  assert.match(etat, /^model: haiku$/m);
-  assert.match(etat, /^allowed-tools: Bash\(relaylead brief\)$/m);
+  // A light model for the follow-up was measured and dropped (docs/manual-checks/v0-3-console-cout.md).
+  assert.deepStrictEqual(fs.readdirSync(path.join(PLUGIN_DIR, 'skills')), ['relaylead']);
+  assert.doesNotMatch(consoleSkill, /^model:/m);
 });
