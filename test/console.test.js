@@ -202,3 +202,15 @@ test('the errors of tell and decision are also in French', () => {
     assert.notStrictEqual(t(code, { mission: 'x' }, 'fr'), t(code, { mission: 'x' }, 'en'));
   }
 });
+
+test('wait --all returns at once in a one-shot session (claude -p), unless the timeout is short', async () => {
+  const env = { CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' };
+  const started = Date.now();
+  const long = await relaylead(['wait', '--all'], env);
+  assert.strictEqual(long.code, 0);
+  assert.match(long.out, /one-shot session: not waiting/);
+  assert.ok(Date.now() - started < 2000);
+  assert.match((await relaylead(['wait', '--all', '--timeout', '600'], env)).out, /not waiting/);
+  assert.doesNotMatch((await relaylead(['wait', '--all', '--timeout', '0'], env)).out, /not waiting/);
+  assert.doesNotMatch((await relaylead(['wait', '--all', '--timeout', '0'], { CLAUDE_CODE_ENTRYPOINT: 'cli' })).out, /not waiting/);
+});

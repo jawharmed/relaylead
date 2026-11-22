@@ -98,6 +98,13 @@ function refuseInSession(command, io) {
   if (io.env.RELAYLEAD_MISSION) throw codedError('not-from-a-session', { command });
 }
 
+// Claude Code sets CLAUDE_CODE_ENTRYPOINT in the environment of its tools: "sdk-cli" under `claude -p`
+// (observed, 2.1.330; the docs do not list this variable), "sdk-ts" or "sdk-py" under the Agent SDK.
+const ONE_SHOT_MAX_WAIT = 60;
+function isOneShotSession(env) {
+  return /^sdk/.test(env.CLAUDE_CODE_ENTRYPOINT || '');
+}
+
 // A lead replaced by a relaunch or a handover may still run commands: those that drive the mission
 // are refused to it (currentLeadError). A crew member or the user is not checked.
 function refuseReplacedLead(mission, io) {
@@ -352,6 +359,11 @@ commands.wait = async (args, io) => {
   if (options.all) {
     refuseInSession('wait --all', io);
     const lang = language(io);
+    // A one-shot session (`claude -p`) never gets a turn back: a long wait would keep it from ending.
+    if (isOneShotSession(io.env) && (timeout === undefined || timeout > ONE_SHOT_MAX_WAIT)) {
+      io.out.write(t('waitOneShot', {}, lang));
+      return 0;
+    }
     await waitForEvents(timeout, (events) => io.out.write(options.json ? JSON.stringify({ events }, null, 2) + '\n' : eventsText(events, lang)));
     return 0;
   }

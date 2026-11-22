@@ -21,7 +21,7 @@ Run `relaylead brief` and show what it prints (questions as section 4). `relayle
 
 ## 3. Waiting
 
-In a one-shot session (`claude -p`) never start it. Otherwise run `relaylead wait --all` once with `run_in_background: true`; its output comes back as a new turn: handle it, start it again. No output or an error: start it once more; failing again, tell the user following is off.
+In a one-shot session (`claude -p`) do not start it (the command itself returns at once there). Otherwise run `relaylead wait --all` once with `run_in_background: true`; its output comes back as a new turn: handle it, start it again. No output or an error: start it once more; failing again, tell the user following is off.
 
 - A question: section 4.
 - `task … failed`: say it with its summary; the lead handles it.
