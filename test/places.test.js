@@ -14,6 +14,11 @@ const { missionDir } = require('../core/paths');
 const fake = require('../adapters/fake');
 const { tmpDir, makeIo, waitFor } = require('../fixtures/helpers');
 const { writeMission } = require('../fixtures/missions');
+const { gitRepo } = require('../fixtures/git');
+const { repoLockFile } = require('../core/mission-lock');
+const { sleep } = require('../core/timing');
+const localMerge = require('../deliveries/local-merge');
+const { t: msg } = require('../core/messages');
 
 // A fresh home whose machine config sets maxSessions, missions delivering files. The crew members wait
 // behind a gate folder until the test opens their task (RELAYLEAD_FAKE_CREW_GATE). Every session is
@@ -152,4 +157,49 @@ test('relaylead priority changes the rank of a mission in the queue; a wrong val
   assert.match(wrong.err.text, /unknown priority "urgent"; use one of: high, normal, low/);
   const fromSession = makeIo({ env: { RELAYLEAD_MISSION: 'first' } });
   assert.strictEqual(await run(['priority', 'first', 'low'], fromSession), 1);
+});
+
+test('a repository whose git lock is held does not hold up the crew starts of other projects', async (t) => {
+  const { mission } = machine(t, 4);
+  mission('other', 'normal', ['other-x']);
+  const dir = gitRepo({
+    'README.md': 'A test project.\n',
+    'tasks/busy-x.md': '---\ntitle: Task busy-x\n---\n\nDo busy-x.\n',
+    '.relaylead.json': JSON.stringify({ delivery: { type: 'local-merge' } }),
+  });
+  writeMission('busy', dir);
+  localMerge.prepareMission(readJson(path.join(missionDir('busy'), 'mission.json')));
+  // Another command holds the git lock of that repository for longer than a start waits for it.
+  const lock = repoLockFile(dir);
+  fs.mkdirSync(path.dirname(lock), { recursive: true });
+  fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, command: 'task deliver z', since: new Date().toISOString() }));
+  const wait = process.env.RELAYLEAD_REPO_LOCK_WAIT_MS;
+  process.env.RELAYLEAD_REPO_LOCK_WAIT_MS = '3000';
+  t.after(() => {
+    fs.rmSync(lock, { force: true });
+    if (wait === undefined) delete process.env.RELAYLEAD_REPO_LOCK_WAIT_MS;
+    else process.env.RELAYLEAD_REPO_LOCK_WAIT_MS = wait;
+  });
+
+  const busy = startTask('busy', { id: 'busy-x' }).then(() => 'started', (err) => err.code);
+  await sleep(300);
+  const startedAt = Date.now();
+  const record = await startTask('other', { id: 'other-x' });
+
+  assert.strictEqual(record.state, 'running');
+  assert.ok(Date.now() - startedAt < 2000, `the start waited ${Date.now() - startedAt} ms`);
+  assert.strictEqual(await busy, 'repo-busy');
+  // The refused start leaves its task as it was.
+  assert.strictEqual(stateOf('busy', 'busy-x'), 'todo');
+  assert.strictEqual(placesTaken(), 1);
+});
+
+test('the lead knows places-busy as a busy machine, not a failure to report', () => {
+  const profile = fs.readFileSync(path.join(__dirname, '..', 'catalog', 'profiles', 'lead.md'), 'utf8');
+  const vars = { command: 'task start a', pid: 1, since: '-' };
+  const phrases = { en: 'has held the places of the machine for too long', fr: 'occupe les places de la machine depuis trop longtemps' };
+  for (const [lang, phrase] of Object.entries(phrases)) {
+    assert.ok(msg('places-busy', vars, lang).includes(phrase), lang);
+    assert.ok(profile.includes(phrase), lang);
+  }
 });

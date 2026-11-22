@@ -236,11 +236,25 @@ async function launchCrew(mission, id, profile, { attempt = 1, previousSummary =
   checkDependencies(tasks, task);
   const question = answeredQuestion(name, task);
   const crewProfile = loadProfile(profile, { dir: mission.dir });
-  // From the choice of the place to the task's record: two starts never take the last place together.
-  return withPlacesLock(`task start ${id}`, async () => {
+  // The place is chosen and reserved under the places lock, by a record `running` without a session
+  // (core/places.js counts it): two starts never take the last place together. The folder and the
+  // launch come after, out of that lock, so a busy repository never holds up the other projects.
+  const before = readJson(taskFile(name, id), null);
+  const queued = await withPlacesLock(`task start ${id}`, () => {
     if (!placeFree(mission, id, { fromQueue })) return queueTask(mission, id, { profile, attempt, previousSummary, merge });
-    return launchOnPlace(mission, task, profile, crewProfile, question, { attempt, previousSummary, merge });
+    writeJson(taskFile(name, id), { id, profile, state: 'running', session: null, attempt, reservedAt: now() });
+    return null;
   });
+  if (queued) return queued;
+  try {
+    return await launchOnPlace(mission, task, profile, crewProfile, question, { attempt, previousSummary, merge });
+  } catch (err) {
+    // The place is given back: the task is as it was before this start (a queued one stays queued,
+    // a retry's record is written failed by retryTask).
+    if (before) writeJson(taskFile(name, id), before);
+    else withWindowsRetry(() => fs.rmSync(taskFile(name, id), { force: true }));
+    throw err;
+  }
 }
 
 // The record of a task waiting for a place. Queued again (a place taken meanwhile), it keeps its time.

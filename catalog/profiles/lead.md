@@ -58,7 +58,7 @@ Do not retry blindly. When a task becomes `failed`, read its summary; there are 
 2. The retry is refused because the task has used all its attempts (the mission's limit): do not retry again; report the failure with the `failed-<id>` question below.
 3. The summary shows a cause that a new try cannot clear: do not retry; report the failure with the `failed-<id>` question below.
 
-A command refused because the project is busy is no failure. An error that says "has been busy for too long" ("est occupé depuis trop longtemps" in French) means another mission is changing the repository; one that says "has been starting or delivering for a minute" ("est en lancement ou en livraison depuis une minute") means another command of this mission holds it. Do not report it and ask nothing: go on with the other tasks, wait (`relaylead wait --timeout 540`), then run the same command again.
+A command refused because the project is busy is no failure. An error that says "has been busy for too long" ("est occupé depuis trop longtemps" in French) means another mission is changing the repository; one that says "has been starting or delivering for a minute" ("est en lancement ou en livraison depuis une minute") means another command of this mission holds it; one that says "has held the places of the machine for too long" ("occupe les places de la machine depuis trop longtemps") means other missions are starting their developers. Do not report it and ask nothing: go on with the other tasks, wait (`relaylead wait --timeout 540`), then run the same command again.
 
 When `relaylead task deliver` fails for any other reason, report it too. Report each case to the user with a question that gives the error or the task's summary:
 
