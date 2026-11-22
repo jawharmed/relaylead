@@ -252,6 +252,9 @@ commands.merge = async (args, io) => {
     io.out.write(t('mergeAlready', { mission: name, target: result.target }, lang));
   } else if (result.outcome === 'merged') {
     io.out.write(t('mergeDone', { mission: name, target: result.target, detail: result.url || result.sha }, lang));
+    // GitHub: the user's own branch is never pulled for them; they are told when it is behind.
+    if (result.behind > 0) io.out.write(t('mergeBehind', { target: result.target, count: result.behind }, lang));
+    if (result.notClosed && result.notClosed.length > 0) io.out.write(t('mergeIssuesOpen', { issues: result.notClosed.map((n) => '#' + n).join(', ') }, lang));
   } else {
     const files = result.conflicts.length > 0 ? result.conflicts.join(', ') : result.target;
     const queued = result.queued ? t('mergeQueued', {}, lang) : '';
@@ -279,9 +282,9 @@ commands.state = async (args, io) => {
     io.out.write(getState(mission) + '\n');
   } else {
     refuseReplacedLead(mission, io);
-    // A lead compacts the project memory before it declares the mission done (--no-memory: a way out when
-    // the memory cannot be written); a replayed `done` has been through this already.
-    if (state === 'done' && io.env.RELAYLEAD_ROLE === 'lead' && !options['no-memory'] && getState(mission) !== 'done') requireCompaction(mission);
+    // The project memory is compacted before the mission is declared done, by a lead or by a person
+    // (--no-memory: a way out when the memory cannot be written); a replayed `done` has been through this already.
+    if (state === 'done' && !options['no-memory'] && getState(mission) !== 'done') requireCompaction(mission);
     const outcome = await setState(mission, state, options.note, { by: io.env.RELAYLEAD_SESSION || 'user' });
     if (outcome === 'skipped') io.out.write(t('missionStopSkipped', { mission }, language(io)));
     // The watcher stops the old lead and starts the next one at once.
@@ -619,6 +622,7 @@ commands.dashboard = async (args, io) => {
     port,
     actions: {
       answer: (mission, id, choice) => runForDashboard(['answer', mission, id, String(choice)], io),
+      answerOther: (mission, id, text) => runForDashboard(['answer', mission, id, '--other', String(text)], io),
       stop: (mission) => runForDashboard(['stop', mission], io),
     },
   });
