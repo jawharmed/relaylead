@@ -35,7 +35,8 @@ After `relaylead install`, open Claude Code in your project and type `/relaylead
 - each question the lead asks is shown as it is, with the mission's name and numbered options; your choice goes back with `relaylead answer`;
 - "tell the lead of X to ..." becomes `relaylead tell`; "where is X?" reads the state of the missions;
 - it wakes you only for a question, a failed task, or a mission that is done or stopped;
-- when another mission is already active on the machine, it asks the new mission's priority (and may change the others') and warns when two missions touch the same files;
+- when another mission is already active on the machine, it asks the new mission's priority (and may change the others' with `relaylead priority`) and warns when two missions touch the same files;
+- when a mission is done, it asks "Merge it into main?" and, on a yes, runs `relaylead merge` (see [End of a mission](#end-of-a-mission));
 - a new conversation first lists every open question and the missions that are not finished, including what happened while no console was open. Questions asked while the console was closed are never lost: the watcher still sends the Mac notification, and the questions stay open until answered.
 
 The plugin's `/relaylead:*` commands remain.
@@ -57,17 +58,27 @@ Then launch:
 relaylead launch --request "Carry out the tasks"
 ```
 
-The command prints the mission's name and returns at once. Follow it with `relaylead list`. When the lead has a question, `relaylead question list <mission>` shows it and `relaylead answer <mission> <id> <choice>` answers it. When the mission is `done`, the work is on the branch `relaylead/<mission>/integration`, in the worktree `.relaylead/worktrees/<mission>/_integration` of your project. Your own checkout is never changed.
+The command prints the mission's name and returns at once. Follow it with `relaylead list`. When the lead has a question, `relaylead question list <mission>` shows it and `relaylead answer <mission> <id> <choice>` answers it. When the mission is `done`, the work is on the branch `relaylead/<mission>/integration`, in the worktree `.relaylead/worktrees/<mission>/_integration` of your project. Your own checkout is never changed. Merge it into your branch with `relaylead merge <mission>` when you are ready.
 
 ## Concepts
 
 - **Mission.** One run of a team on a project, named after the project's folder unless you pass `--name`. A mission has a state (`starting`, `working`, `waiting`, `handover`, `done`, or `stopped`) and lives in `~/.relaylead/missions/<mission>/`.
 - **Lead.** One Claude Code session that drives the mission. It never edits code: it reads the task list, starts crew members, delivers their work, asks you questions, and says when the mission is done. It only uses `relaylead` commands.
-- **Crew (equipiers).** One short-lived developer session per task, in its own git worktree `.relaylead/worktrees/<mission>/<task>` and on its own branch `relaylead/<mission>/<task>`. A crew member finishes with `relaylead task done` or `relaylead task fail`. At most `parallel` tasks run at a time (4 by default).
-- **Task.** A unit of work with an id, a title, a body, a state (`todo`, `running`, `done`, `failed`, `delivered`) and optionally dependencies (`depends`) and a question to settle first (`ask`). Delivering a task merges it (or opens a pull request); that makes the tasks that depend on it ready.
+- **Crew (equipiers).** One short-lived developer session per task, in its own git worktree `.relaylead/worktrees/<mission>/<task>` and on its own branch `relaylead/<mission>/<task>`. A crew member finishes with `relaylead task done` or `relaylead task fail`. At most `parallel` tasks of a mission run at a time (4 by default), and at most `maxSessions` crew members on the machine, every mission included (4 by default; the leads do not count).
+- **Queue.** A task started while the machine has no free place is `queued`: nothing runs for it, nothing else is stopped, and the watcher starts it as soon as a place frees up, the mission of highest priority first (`high`, `normal`, `low`), then the task queued first. `relaylead list` shows `(n queued)` next to the state.
+- **Task.** A unit of work with an id, a title, a body, a state (`todo`, `queued`, `running`, `done`, `failed`, `delivered`) and optionally dependencies (`depends`) and a question to settle first (`ask`). Delivering a task merges it (or opens a pull request); that makes the tasks that depend on it ready.
 - **Watcher.** A small loop with no AI. Every few minutes it looks at the unfinished missions: it restarts a lead that has stopped (the same session when its context is low, otherwise a fresh one that restarts from the files), wakes a lead that ended its turn when an answer or a finished task is waiting, stops a second lead or a crew session whose task no longer runs, and hands over to a fresh lead when the lead's context fills up. After 3 failed restarts in a row, or at once when a session reports a billing or authentication error, it stops the mission, says why and notifies you. It writes what it does to `~/.relaylead/watcher.log`. `relaylead launch` starts it, and `relaylead install` hands it to launchd so it survives a restart of the machine.
 - **Questions.** The lead asks you through `relaylead question`; you answer with `relaylead answer`. A question has a text, options and optionally a recommended option. The lead waits only for answers that change what happens next.
 - **Delivery.** How finished tasks reach your repository: `local-merge` (default), `files`, or `github-pr`.
+
+### End of a mission
+
+A mission ends when its lead declares it done (every task settled) or when you stop it. Its sessions are then stopped and taken out of the `claude agents` list. Its work stays on `relaylead/<mission>/integration` until you merge it:
+
+- **`relaylead merge <mission>`** merges the integration branch into the branch the mission was launched from (or `main`, or `master`). It works where that branch is checked out (your checkout, which must have no uncommitted change), or else in a worktree of its own, removed after. With `github-pr`, it opens a pull request from the integration branch and merges it on GitHub.
+- **On a conflict** the merge is cancelled, nothing is left half done, and a crew member gets the task `merge-into-<branch>`: on a branch of the integration branch, it merges your branch into it (so it sees both sides), resolves the conflicts, runs the tests and commits. The watcher then delivers it into the integration branch and merges again, by itself, with no lead. If the crew member fails, you get a question: *Resolve it here with me* (the console walks you through it in the integration worktree, then runs `relaylead merge` again), *Relaunch a crew member with hints* (send the hints with `relaylead tell` first), or *Pause the mission* (`relaylead merge` tries again whenever you want). With `github-pr`, the same task works on the branch of the pull request.
+- **Cleanup.** Once the integration branch is merged into its branch (by `relaylead merge`, or by you) or deleted, the watcher removes the mission as `relaylead remove` would: its state under `~/.relaylead/missions/<mission>/`, its task worktrees and branches, and its integration worktree when clean. The integration branch itself stays (delete it with `git branch -d`). A mission that delivered nothing is kept: remove it yourself.
+- **Abandoned missions.** A mission waiting for an answer while nothing has moved for `abandonDays` days (7) gets one notification, and `relaylead list` (`abandoned`) and `relaylead doctor` point to it. Nothing is stopped or deleted.
 
 ## Configuration
 
@@ -85,7 +96,10 @@ Main settings, with their defaults:
 | --- | --- | --- |
 | `agent` | `claude` | The agent that runs the sessions. |
 | `method` | `code` | The method the lead follows (`catalog/methods`). |
-| `parallel` | `4` | Tasks running at the same time. |
+| `parallel` | `4` | Tasks of a mission running at the same time. |
+| `maxSessions` | `4` | Crew members working at the same time on the machine, every mission included; the leads do not count (machine file only). |
+| `priority` | `normal` | The default priority of a mission (`high`, `normal`, `low`): its usage thresholds and its rank in the queue. |
+| `abandonDays` | `7` | Days without activity, a question open, after which a mission is reported abandoned. |
 | `maxAttempts` | `2` | Attempts per task; a failed task can be retried. |
 | `permissionMode` | `allowlist` | `allowlist` lets sessions run only the commands of their profile; `all` blocks nothing except the guardrails. |
 | `language` | `en` | Language of the messages (`en` or `fr`). |
@@ -210,13 +224,21 @@ relaylead launch --name frontend --tasks tasks/frontend --request "Build the pag
 A mission launched by Relaylead 0.1 that is still running keeps its folder to itself: `launch` is refused there until it is over (or stopped).
 - `--dir <path>`: the project folder (the current folder by default).
 - `--team <name>` and `--agent <name>`: the team and the agent to use (the built-in team `code` and `claude`).
-- `--priority <value>`: recorded with the mission (`normal` by default).
+- `--priority <value>`: `high`, `normal` (the default) or `low`; it sets the usage thresholds of the mission and its rank in the queue. Change it later with `relaylead priority`.
 
 It also starts the watcher's loop unless `watcher.autoStart` is `false`.
 
 ### `relaylead list`
 
-One line per mission: name, state, the lead's session, folder.
+One line per mission: name, state, the lead's session, folder. The state may say `(n queued)` (tasks waiting for a place on the machine) and `(abandoned)`.
+
+### `relaylead priority <mission> <high|normal|low>`
+
+Changes the priority of a mission, even while it runs: its usage thresholds, and its rank in the queue of the tasks waiting for a place.
+
+### `relaylead merge <mission>`
+
+Merges a done mission into the branch it was launched from (see [End of a mission](#end-of-a-mission)). Never run by Relaylead on its own. It prints the merge commit (or the pull request), or the conflict and the task that resolves it.
 
 ### `relaylead show <mission>`
 
@@ -308,7 +330,7 @@ Serves the local web page described in [Displays](#displays) until Ctrl-C.
 
 ### `relaylead doctor`
 
-Checks Node, Claude Code, git, the scheduler, the plugin, the watcher, the authentication and a possible `STOP` file. One line per check: `ok`, `warn` or `fail`, then its name and detail. It exits with 1 if a check failed. It starts no session.
+Checks Node, Claude Code, git, the scheduler, the plugin, the watcher, the authentication, abandoned missions and a possible `STOP` file. One line per check: `ok`, `warn` or `fail`, then its name and detail. It exits with 1 if a check failed. It starts no session.
 
 ## Troubleshooting
 
