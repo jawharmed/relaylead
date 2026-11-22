@@ -22,6 +22,8 @@ const TEXT = {
     tasks: 'tasks',
     waiting: 'waiting for you',
     recommended: 'recommended',
+    other: 'Other answer, then Enter',
+    send: 'send',
     ask: 'Show the Relaylead panel next to the conversation?',
     always: 'Always',
     once: 'This time',
@@ -42,6 +44,8 @@ const TEXT = {
     tasks: 'tâches',
     waiting: 'vous attend',
     recommended: 'recommandée',
+    other: 'Autre réponse, puis Entrée',
+    send: 'envoyer',
     ask: 'Afficher le panneau Relaylead à côté de la conversation ?',
     always: 'Toujours',
     once: 'Cette fois',
@@ -176,7 +180,7 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Button, Text } = $.ui.resolve(e)
+    const { Box, Button, Input, Text } = $.ui.resolve(e)
     const data = await read($, overview)
     const w = words(data?.language)
 
@@ -246,6 +250,19 @@ export const register: Register = on => {
                       />
                     ))}
                   </Box>
+                  {/* A free answer, except for the questions of the hooks (irreversible action, permission): options only. */}
+                  {!/^q-(irr|perm)-/.test(question.id) && (
+                    <Input
+                      key={`${mission.name}-${question.id}-other`}
+                      placeholder={w.other}
+                      submitLabel={w.send}
+                      onSubmit={async text => {
+                        if (!text.trim()) return
+                        await $.process.run(['relaylead', 'answer', mission.name, question.id, '--other', text.trim()])
+                        await refresh($)
+                      }}
+                    />
+                  )}
                 </Box>
               ))}
 

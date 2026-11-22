@@ -48,7 +48,7 @@ function readBody(req) {
   });
 }
 
-// `actions` is { answer(mission, id, choice), stop(mission) }, each resolving to { ok, message }.
+// `actions` is { answer(mission, id, choice), answerOther(mission, id, text), stop(mission) }, each resolving to { ok, message }.
 // `port` 0 takes any free port. Resolves to { server, url, token }.
 function startDashboard({ port, actions }) {
   const token = newToken();
@@ -74,10 +74,15 @@ function startDashboard({ port, actions }) {
     } catch {
       return sendJson(res, 400, { error: 'bad body' });
     }
-    if (!NAME.test(String(data.mission)) || (req.url === '/api/answer' && (!NAME.test(String(data.id)) || data.choice === undefined))) {
-      return sendJson(res, 400, { error: 'bad request' });
-    }
-    const result = req.url === '/api/answer' ? await actions.answer(data.mission, data.id, data.choice) : await actions.stop(data.mission);
+    // An answer is an option (`choice`) or a free text (`other`), never both.
+    const isOther = data.other !== undefined;
+    const bad = req.url === '/api/answer' && (!NAME.test(String(data.id)) || (data.choice === undefined) === !isOther || (isOther && (typeof data.other !== 'string' || !data.other.trim())));
+    if (!NAME.test(String(data.mission)) || bad) return sendJson(res, 400, { error: 'bad request' });
+    // The questions of the hooks (irreversible action, permission) take an option only.
+    if (isOther && /^q-(irr|perm)-/.test(data.id)) return sendJson(res, 400, { error: 'bad request' });
+    let result;
+    if (req.url === '/api/stop') result = await actions.stop(data.mission);
+    else result = isOther ? await actions.answerOther(data.mission, data.id, data.other) : await actions.answer(data.mission, data.id, data.choice);
     return sendJson(res, result.ok ? 200 : 409, result);
   }
 

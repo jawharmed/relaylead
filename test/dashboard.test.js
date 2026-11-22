@@ -30,6 +30,10 @@ async function start(t) {
       const code = await run(['answer', mission, id, String(choice)], makeIo());
       return { ok: code === 0, message: '' };
     },
+    answerOther: async (mission, id, text) => {
+      const code = await run(['answer', mission, id, '--other', text], makeIo());
+      return { ok: code === 0, message: '' };
+    },
     stop: async () => ({ ok: true, message: '' }),
   };
   const dashboard = await startDashboard({ port: 0, actions });
@@ -72,4 +76,19 @@ test('an answer without the token, or from another origin, is refused; with the 
   const accepted = await request(url + '/api/answer', { method: 'POST', headers: { ...json, 'X-Relaylead-Token': token, Origin: url }, body });
   assert.strictEqual(accepted.status, 200);
   assert.strictEqual(listQuestions('demo', { state: 'answered' })[0].answer.choice, 'postgres');
+});
+
+test('a free answer needs the token, is refused for the questions of the hooks, and is recorded otherwise', async (t) => {
+  const { url, token } = await start(t);
+  askQuestion('demo', { key: 'irr-x', text: 'Allow?', options: ['yes', 'no'], kind: 'irreversible' });
+  const headers = { 'Content-Type': 'application/json', 'X-Relaylead-Token': token, Origin: url };
+  const post = (data, extra = {}) => request(url + '/api/answer', { method: 'POST', headers: { ...headers, ...extra }, body: JSON.stringify(data) });
+
+  assert.strictEqual((await post({ mission: 'demo', id: 'q-db', other: 'mysql' }, { 'X-Relaylead-Token': 'nope' })).status, 403);
+  assert.strictEqual((await post({ mission: 'demo', id: 'q-irr-x', other: 'sure' })).status, 400);
+  assert.strictEqual((await post({ mission: 'demo', id: 'q-db', other: '  ' })).status, 400);
+  assert.strictEqual((await post({ mission: 'demo', id: 'q-db', choice: 1, other: 'mysql' })).status, 400);
+  assert.strictEqual((await post({ mission: 'demo', id: 'q-db', other: 'mysql' })).status, 200);
+  const answer = listQuestions('demo', { state: 'answered' })[0].answer;
+  assert.deepStrictEqual([answer.choice, answer.other], ['mysql', true]);
 });
