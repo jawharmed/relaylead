@@ -11,6 +11,7 @@ const { writeJson } = require('../core/store');
 const { gitRepo } = require('../fixtures/git');
 const { installEnv, runRelaylead } = require('../fixtures/install-env');
 const { makeIo, tmpDir } = require('../fixtures/helpers');
+const { excludeRelaylead } = require('../deliveries/local-merge');
 const { runFileSync } = require('../core/run-file');
 const { freshHome, writeMission } = require('../fixtures/missions');
 
@@ -74,7 +75,8 @@ test('the memory is excluded from git, without touching .gitignore, unless it is
 
   const versioned = project(t, { memory: { versioned: true } });
   await writeMemory('demo', 'one');
-  assert.doesNotMatch(exclude(versioned), /memoire/);
+  assert.match(exclude(versioned), /^\.relaylead\/\*\n!\.relaylead\/memoire\.md$/m);
+  assert.doesNotMatch(exclude(versioned), /^\.relaylead\/memoire\.md$/m);
 });
 
 test('a text over the ceiling is refused, and a memory over it is flagged by show', async (t) => {
@@ -131,7 +133,7 @@ test('init --yes takes the defaults: memory on, out of git; the flags answer the
   const other = gitRepo({ 'README.md': 'toy\n' });
   await runRelaylead(['init', '--yes', '--versioned-memory'], { cwd: other, env });
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(other, '.relaylead.json'), 'utf8')).memory, { enabled: true, versioned: true });
-  assert.doesNotMatch(exclude(other), /memoire/);
+  assert.match(exclude(other), /^!\.relaylead\/memoire\.md$/m);
 
   const off = gitRepo({ 'README.md': 'toy\n' });
   await runRelaylead(['init', '--yes', '--no-memory'], { cwd: off, env });
@@ -158,4 +160,25 @@ test('the memory of a mission started in a worktree or a sub-folder is the main 
   assert.strictEqual(fs.readFileSync(memoryFile(main), 'utf8'), 'shared\n');
   assert.ok(!fs.existsSync(path.join(linked, '.relaylead', 'memoire.md')));
   assert.match(exclude(main), /^\.relaylead\/memoire\.md$/m);
+});
+
+test('a versioned memory stays visible to git after the delivery excluded .relaylead/', async (t) => {
+  const dir = project(t, { memory: { versioned: true } });
+  excludeRelaylead(dir); // what the first delivery does: before, it excluded the whole folder
+  fs.writeFileSync(path.join(dir, '.git', 'info', 'exclude'), '.relaylead/\n.relaylead/memoire.md\n');
+  await writeMemory('demo', 'one');
+  await writeMemory('demo', 'two'); // archives the first
+  excludeRelaylead(dir);
+  const ignored = (file) => {
+    try {
+      runFileSync('git', ['check-ignore', '-q', file], { cwd: dir, stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  assert.strictEqual(ignored('.relaylead/memoire.md'), false);
+  assert.strictEqual(ignored('.relaylead/worktrees/a/file'), true);
+  assert.strictEqual(ignored('.relaylead/memoire-archive/x.md'), true);
+  assert.match(runFileSync('git', ['status', '--porcelain', '-uall'], { cwd: dir, encoding: 'utf8' }), /\.relaylead\/memoire\.md/);
 });

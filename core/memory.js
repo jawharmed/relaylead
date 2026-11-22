@@ -15,6 +15,8 @@ const { sleep } = require('./timing');
 
 const MEMORY_PATH = '.relaylead/memoire.md';
 const ARCHIVE_PATH = '.relaylead/memoire-archive/';
+// Like the other git calls of relaylead: git starts no background maintenance that would hold a lock.
+const NO_MAINTENANCE = ['-c', 'gc.auto=0', '-c', 'maintenance.auto=false'];
 const LOCK_WAIT_MS = 10 * 1000;
 
 // The root of the main working tree of the repository `dir` belongs to, whether `dir` is that root, a
@@ -23,7 +25,7 @@ const LOCK_WAIT_MS = 10 * 1000;
 function projectRoot(dir) {
   const real = fs.realpathSync.native(dir);
   try {
-    const out = runFileSync('git', ['rev-parse', '--git-common-dir'], { cwd: real, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const out = runFileSync('git', [...NO_MAINTENANCE, 'rev-parse', '--git-common-dir'], { cwd: real, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     const common = path.resolve(real, out.trim());
     return path.basename(common) === '.git' ? fs.realpathSync.native(path.dirname(common)) : real;
   } catch {
@@ -69,13 +71,15 @@ function readMemory(dir) {
   return { text, lines, maxLines, tooLong: lines > maxLines };
 }
 
-// Adds the memory and its archive to .git/info/exclude of the repository, unless they are already there.
-// The .gitignore is never touched. Does nothing outside a git repository.
-function excludeFromGit(dir) {
+// Keeps .git/info/exclude right for the memory, the .gitignore never touched. Not versioned: the memory
+// and its archive are excluded. Versioned: everything under .relaylead/ is excluded except the memory
+// (`.relaylead/*` then `!.relaylead/memoire.md`: git cannot re-include a file of an excluded folder, hence
+// the `/*`), and the archive stays excluded. Does nothing outside a git repository.
+function updateExclude(dir, versioned) {
   dir = projectRoot(dir);
   let file;
   try {
-    const out = runFileSync('git', ['rev-parse', '--git-path', 'info/exclude'], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const out = runFileSync('git', [...NO_MAINTENANCE, 'rev-parse', '--git-path', 'info/exclude'], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     file = path.resolve(dir, out.trim());
   } catch {
     return;
@@ -86,10 +90,14 @@ function excludeFromGit(dir) {
   } catch (err) {
     if (err.code !== 'ENOENT') throw err;
   }
-  const known = text.split('\n').map((line) => line.trim());
-  const missing = [MEMORY_PATH, ARCHIVE_PATH].filter((line) => !known.includes(line));
-  if (missing.length === 0) return;
-  writeText(file, text + (text === '' || text.endsWith('\n') ? '' : '\n') + missing.join('\n') + '\n');
+  const before = text.split('\n').map((line) => line.trim()).filter((line) => line !== '');
+  // The lines of an earlier choice go; the ones that stay in either mode are kept as they are.
+  const dropped = versioned ? ['.relaylead/', MEMORY_PATH] : ['!' + MEMORY_PATH, '.relaylead/*'];
+  const wanted = versioned ? ['.relaylead/*', '!' + MEMORY_PATH] : [MEMORY_PATH, ARCHIVE_PATH];
+  const lines = before.filter((line) => !dropped.includes(line));
+  for (const line of wanted) if (!lines.includes(line)) lines.push(line);
+  if (lines.join('\n') === before.join('\n')) return;
+  writeText(file, lines.join('\n') + '\n');
 }
 
 // One writer at a time per repository: a lock file in ~/.relaylead/locks, named after the repository.
@@ -129,9 +137,9 @@ async function writeMemory(mission, text) {
       writeText(path.join(archiveDir(dir), `${stamp}-${process.pid}.md`), before);
     }
     writeText(memoryFile(dir), body + '\n');
-    if (!versioned) excludeFromGit(dir);
+    updateExclude(dir, versioned);
   });
   return lines;
 }
 
-module.exports = { projectRoot, memoryFile, archiveDir, memorySettings, readMemory, writeMemory, excludeFromGit, countLines };
+module.exports = { projectRoot, memoryFile, archiveDir, memorySettings, readMemory, writeMemory, updateExclude, countLines };

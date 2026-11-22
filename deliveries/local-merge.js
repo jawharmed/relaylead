@@ -123,6 +123,10 @@ function sourceFile(mission, task) {
 // So the worktrees under .relaylead/ never show in the user's `git status`. The common dir is the
 // main .git folder, even when `dir` is itself a worktree.
 function excludeRelaylead(dir) {
+  // A versioned memory must stay visible to git: memory.js writes the rules that leave it out of the exclusion.
+  const memory = require('../core/memory'); // lazy: memory.js and the missions need this file first
+  const settings = memory.memorySettings(dir);
+  if (settings.enabled && settings.versioned) return memory.updateExclude(dir, true);
   const commonDir = path.resolve(dir, git(dir, ['rev-parse', '--git-common-dir']));
   const file = path.join(commonDir, 'info', 'exclude');
   const text = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
@@ -584,6 +588,7 @@ function removeMission(mission, { force = false, onBranchDeleted = () => {} } = 
 }
 
 module.exports = {
+  excludeRelaylead,
   prepareMission,
   prepareTask,
   checkDone,

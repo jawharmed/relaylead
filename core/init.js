@@ -12,7 +12,7 @@ const { checkVersion } = require('../adapters/claude');
 const { runFileSync } = require('./run-file');
 const { codedError, t } = require('./messages');
 const { install } = require('./install');
-const { excludeFromGit } = require('./memory');
+const { updateExclude } = require('./memory');
 
 const MIN_NODE = 18;
 
@@ -96,7 +96,7 @@ async function setUpProject(dir, options, asker, say) {
     const versioned = enabled && (options['versioned-memory'] || isYes(await asker.ask('Version the project memory with the code?', 'no')));
     writeJson(file, { team: 'code', method: DEFAULTS.method, source: DEFAULTS.source, delivery: DEFAULTS.delivery, memory: { enabled, versioned } });
     say('init-project-written', { file });
-    if (enabled && !versioned) excludeFromGit(dir);
+    if (enabled) updateExclude(dir, versioned);
   }
   say('init-trust-hint', { dir });
   say('init-advice', {});
