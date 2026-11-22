@@ -285,10 +285,11 @@ function currentLeadError(name, env) {
 // Launches a session unless the mission is over, and stops it if a stop came during the launch.
 // `launch` records the session; `stop(session)` stops it. A stop is written before its sessions are
 // stopped, so a session recorded before this second read is stopped by the stop, and one recorded
-// after it is stopped here.
-async function launchWhileOpen(name, launch, stop) {
+// after it is stopped here. `allowDone`: a done mission takes the session all the same (the crew
+// member resolving a merge conflict, core/merge.js).
+async function launchWhileOpen(name, launch, stop, { allowDone = false } = {}) {
   const before = readStateRecord(name);
-  if (before.state === 'done') throw codedError('mission-done', { mission: name });
+  if (before.state === 'done' && !allowDone) throw codedError('mission-done', { mission: name });
   if (before.state === 'stopped' || before.stopping) throw codedError('mission-stopped', { mission: name });
   const session = await launch();
   const after = readStateRecord(name);

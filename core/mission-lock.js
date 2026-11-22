@@ -1,11 +1,13 @@
 // The mission lock: one launch, start, delivery, end or stop at a time per mission
-// (missions/<name>/start.lock). The git lock: one change at a time to the shared parts of a git
-// repository, whatever the mission (~/.relaylead/locks/git-<hash>.lock).
+// (missions/<name>/start.lock). The places lock: one crew start at a time on the machine, so that two
+// missions never take the last place together (~/.relaylead/locks/sessions.lock, core/places.js). The
+// git lock: one change at a time to the shared parts of a git repository, whatever the mission
+// (~/.relaylead/locks/git-<hash>.lock).
 //
-// Lock order, so that no two commands ever wait for each other: the mission lock first, then the git
-// lock, never the other way. The action run under the git lock waits for no other lock: it runs git
-// commands, and nothing else. A holder of the git lock therefore waits for nobody, and no cycle of
-// waits can form.
+// Lock order, so that no two commands ever wait for each other: the mission lock first, then the
+// places lock, then the git lock, never the other way. The action run under the git lock waits for no
+// other lock: it runs git commands, and nothing else. The holder of the places lock waits for the git
+// lock at most. So no cycle of waits can form.
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -209,8 +211,37 @@ async function withRepoLock(dir, command, action) {
   }
 }
 
+// The file of the places lock.
+function placesLockFile() {
+  return path.join(home(), 'locks', 'sessions.lock');
+}
+
+// One crew start at a time on the machine, from the choice of its place to the record of its task
+// (core/places.js, core/tasks.js launchCrew). The caller holds its mission lock; `action` may take the
+// git lock, nothing else (lock order, at the top). A waiter gives up after repoLockWaitMs()
+// (places-busy); the lock of a holder that died is taken over.
+async function withPlacesLock(command, action) {
+  const file = placesLockFile();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const giveUpAt = Date.now() + repoLockWaitMs();
+  while (!tryCreateLock(file, command)) {
+    if (isStaleLock(file) && (await takeOverStaleLock(file))) continue;
+    if (Date.now() > giveUpAt) {
+      const lock = readLock(file) || {};
+      throw codedError('places-busy', { command: lock.command || '?', pid: lock.pid || '?', since: lock.since || '?' });
+    }
+    await sleep(50);
+  }
+  try {
+    return await action();
+  } finally {
+    await removeQuietly(file);
+  }
+}
+
 module.exports = {
   withMissionLock,
+  withPlacesLock,
   withRepoLock,
   repoLockFile,
   takeOverStaleLock,

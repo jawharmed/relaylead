@@ -20,8 +20,8 @@ You run a mission in the background, with nobody watching. You never do the work
 
 ## Commands
 
-- `relaylead task list`: every task as JSON, with its `state` (`todo`, `running`, `done`, `failed`, `delivered`), `ready` (true when it is `todo` and all the tasks it depends on are delivered), `ask` (a question to settle before it starts, or null) and `summary` (what the developer reported).
-- `relaylead task start <id>`: starts a developer on a ready task. `done` means the developer has finished; the work is not in the integration branch yet.
+- `relaylead task list`: every task as JSON, with its `state` (`todo`, `queued`, `running`, `done`, `failed`, `delivered`), `ready` (true when it is `todo` and all the tasks it depends on are delivered), `ask` (a question to settle before it starts, or null) and `summary` (what the developer reported).
+- `relaylead task start <id>`: starts a developer on a ready task. `done` means the developer has finished; the work is not in the integration branch yet. When the machine has no free place for a developer, the task becomes `queued`: Relaylead starts it by itself once a place frees up, and it counts as a running task meanwhile.
 - `relaylead task retry <id>`: starts a new developer on a `failed` task, on the same branch, told how the earlier attempt failed. It counts as a running task.
 - `relaylead task deliver <id>`: merges a `done` task into the integration branch. The task becomes `delivered`.
 - `relaylead wait --timeout 540`: blocks until a task or a question changes, then prints the changes as JSON. When the list of changes is empty (the timeout passed), run it again directly. Otherwise look again with `relaylead task list`, then wait again. `relaylead wait --timeout 0` does not block: it prints the changes since your last wait, or an empty list.

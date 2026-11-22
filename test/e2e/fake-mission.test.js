@@ -80,12 +80,12 @@ async function leadWaitsIdle(mission) {
 // the question of task b once the lead has ended its turn waiting for it (the answer wakes it, by a
 // targeted pass of the watcher: RELAYLEAD_WATCHER is lifted for the test, and the machine config keeps
 // the loop off), and waits for the mission to be done. Its sessions are stopped after the test.
-// Returns the mission name and a report() for failure messages.
-async function runMission(t, dir, name, launchArgs = []) {
+// `machine`: more settings of the machine config. Returns the mission name and a report() for failure messages.
+async function runMission(t, dir, name, launchArgs = [], machine = {}) {
   let mission = null;
   const watcherVar = process.env.RELAYLEAD_WATCHER;
   delete process.env.RELAYLEAD_WATCHER;
-  writeJson(path.join(home(), 'config.json'), { watcher: { autoStart: false } });
+  writeJson(path.join(home(), 'config.json'), { watcher: { autoStart: false }, ...machine });
   t.after(async () => {
     if (watcherVar !== undefined) process.env.RELAYLEAD_WATCHER = watcherVar;
     if (mission) for (const session of listSessions(mission)) await fake.stop(session);
@@ -233,6 +233,30 @@ test('two missions of one repository, each on its own task folder, deliver only 
     }
   }
   assert.deepStrictEqual(checkoutState(dir), before);
+});
+
+test('two missions with one place on the machine take turns through the queue and both finish', { timeout: 3 * MISSION_MS }, async (t) => {
+  process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
+  const task = (title) => `---\ntitle: ${title}\n---\n\nDo it.\n`;
+  const dir = gitRepo({
+    'README.md': 'A test project.\n',
+    'tasks/backend/api.md': task('Write the API'),
+    'tasks/backend/db.md': task('Write the database layer'),
+    'tasks/frontend/page.md': task('Write the page'),
+  });
+
+  const runs = await Promise.all([
+    runMission(t, dir, 'backend', ['--tasks', 'tasks/backend'], { maxSessions: 1 }),
+    runMission(t, dir, 'frontend', ['--tasks', 'tasks/frontend'], { maxSessions: 1 }),
+  ]);
+
+  const own = { backend: ['api', 'db'], frontend: ['page'] };
+  for (const { mission, report } of runs) {
+    for (const id of own[mission]) assert.strictEqual(git(dir, 'show', `relaylead/${mission}/integration:${id}.txt`), `fake work on ${id}`, report());
+  }
+  // The queue was used: a start found the only place taken.
+  const log = fs.readFileSync(path.join(home(), 'watcher.log'), 'utf8');
+  assert.match(log, / queue-start /, runs[0].report());
 });
 
 test('a mission is refused on the task folder of a mission of the project that is not over', { timeout: MISSION_MS }, async (t) => {

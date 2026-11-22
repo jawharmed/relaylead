@@ -22,7 +22,7 @@ const { tellMission, listTold } = require('./told');
 const { addDecision, readDecisions } = require('./decisions');
 const { readMemory, writeMemory, memorySettings, requireCompaction } = require('./memory');
 const { askQuestion, answerQuestion, listQuestions } = require('./questions');
-const { runPass, tendMission, stopPresent, loop, watcherRunning, startWatcher, stopWatcher } = require('./watcher');
+const { runPass, tendMission, startQueuedTasks, stopPresent, loop, watcherRunning, startWatcher, stopWatcher } = require('./watcher');
 const { watchLogSize, watchLogSince } = require('./watch-log');
 const { home } = require('./paths');
 const { readPause, localTime, refuseWhilePaused } = require('./usage-pause');
@@ -31,6 +31,7 @@ const { install, uninstall } = require('./install');
 const { doctor } = require('./doctor');
 const { init } = require('./init');
 const { buildOverview } = require('./overview');
+const { queuedCount } = require('./places');
 const { startDashboard } = require('./dashboard');
 const pkg = require('../package.json');
 
@@ -159,11 +160,14 @@ commands.list = async (args, io) => {
   return 0;
 };
 
-// The state of a mission as the user sees it: that of its lead, or its pause for the usage limit
-// (left alone once the mission is done or stopped).
+// The state of a mission as the user sees it: that of its lead, or its pause for the usage limit,
+// then its tasks waiting for a place (left alone once the mission is done or stopped).
 function shownState(name, state, io) {
-  const pause = /^(done|stopped)/.test(state) ? null : readPause(name);
-  return pause ? t('usagePausedState', { resumeAt: localTime(pause.resumeAt) }, language(io)) : state;
+  if (/^(done|stopped)/.test(state)) return state;
+  const pause = readPause(name);
+  const shown = pause ? t('usagePausedState', { resumeAt: localTime(pause.resumeAt) }, language(io)) : state;
+  const queued = queuedCount(name);
+  return queued > 0 ? shown + t('queuedMark', { n: queued }, language(io)) : shown;
 }
 
 // A mission paused for the usage limit says so before its lead's session is shown: that session is
@@ -471,6 +475,7 @@ commands.watcher = async (args, io) => {
       }
     }
     await tendMission(options.mission, { patient: true });
+    await startQueuedTasks();
   } else {
     const result = await runPass();
     if (result.outcome === 'stop') {

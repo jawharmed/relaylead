@@ -59,6 +59,7 @@ const messages = {
     deliveryCommit: 'chore(relaylead): deliver {id}',
     // Errors: the key is the error code (see codedError).
     usage: 'usage: {usage}',
+    'places-busy': 'another crew start has held the places of the machine for too long ("relaylead {command}", process {pid}, since {since}); try again once it is over',
     'repo-busy':
       'the git repository of {dir} has been busy for too long with "relaylead {command}" (process {pid}, since {since}); try again once it is over',
     'worktrees-dir-taken':
@@ -256,6 +257,7 @@ const messages = {
     'mission-usage-paused':
       'mission "{mission}" is paused by the usage limit until {resumeAt}; it resumes by itself then, and starts no session before',
     usagePausedState: 'usage-pause (resume {resumeAt})',
+    queuedMark: ' ({n} queued)',
   },
   fr: {
     help: [
@@ -312,6 +314,7 @@ const messages = {
       'relaylead launch : le veilleur n\'a pas pu être lancé ({detail}) ; lancez-le avec : relaylead watcher start\n',
     deliveryCommit: 'chore(relaylead): {id} livrée',
     usage: 'usage : {usage}',
+    'places-busy': 'un autre lancement d\'équipier occupe les places de la machine depuis trop longtemps (« relaylead {command} », processus {pid}, depuis {since}) ; réessayez une fois qu\'il a fini',
     'repo-busy':
       'le dépôt git de {dir} est occupé depuis trop longtemps par « relaylead {command} » (processus {pid}, depuis {since}) ; réessayez une fois qu\'il a fini',
     'worktrees-dir-taken':
@@ -474,6 +477,7 @@ const messages = {
     'mission-usage-paused':
       'la mission « {mission} » est en pause (limite d\'usage) jusqu\'à {resumeAt} ; elle reprendra seule à cette heure, et ne lance aucune session d\'ici là',
     usagePausedState: 'usage-pause (reprise {resumeAt})',
+    queuedMark: ' ({n} en file)',
   },
 };
 

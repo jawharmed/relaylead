@@ -19,6 +19,7 @@ export type RelayleadMission = {
   state: string;
   active: boolean;
   pausedUntil: string | null;
+  queued: number;
   tasks: RelayleadTask[];
   questions: RelayleadQuestion[];
 };
@@ -27,6 +28,7 @@ export type RelayleadOverview = {
   language: string;
   display: { pane: string | null; statusLine: boolean; dashboardPort: number };
   usage: { at: string; fiveHour: RelayleadWindow | null; sevenDay: RelayleadWindow | null } | null;
+  sessions: { running: number; max: number };
   missions: RelayleadMission[];
   activeMissions: number;
   openQuestions: number;

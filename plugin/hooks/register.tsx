@@ -86,6 +86,7 @@ const stateColor = (mission: RelayleadMission) =>
 
 const taskMark: Record<string, [string, string]> = {
   running: ['●', 'success'],
+  queued: ['◌', 'warning'],
   done: ['●', 'suggestion'],
   delivered: ['✓', 'suggestion'],
   failed: ['✗', 'error'],

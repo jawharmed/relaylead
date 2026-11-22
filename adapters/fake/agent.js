@@ -266,7 +266,8 @@ function leadLoop() {
       relaylead('state', 'set', 'done');
       return;
     }
-    let running = tasks.filter((task) => task.state === 'running').length;
+    // A queued task waits for a place on the machine: it counts as running.
+    let running = tasks.filter((task) => ['running', 'queued'].includes(task.state)).length;
     // A task refused by the guard waits for the user's answer to its question: the user retries it.
     for (const task of tasks.filter((candidate) => retryable(candidate) && !/\(question q-(perm|irr)-/.test(candidate.summary || ''))) {
       if (running >= mission.config.parallel) break;

@@ -18,7 +18,7 @@ const { readUsage } = require('./usage');
 const { readPause, writePause, removePause } = require('./usage-pause');
 const missions = require('./missions');
 const { stopSessionsAndWait, launchLead, launchWhileOpen, writeState } = missions;
-const { listTasks, markFailed } = require('./tasks');
+const { listTasks, markFailed, startQueued } = require('./tasks');
 const { unseenChanges } = require('./wait');
 const { unreadCount, sendMail } = require('./mailbox');
 const { writeJournal } = require('./guard');
@@ -586,10 +586,19 @@ async function runPass() {
         watchLog(name, 'error', `observe ${name}: ${err.message}`);
       }
     }
+    await startQueuedTasks();
     return { outcome: 'done', missions };
   } finally {
     await releasePassLock(lock);
   }
+}
+
+// After a pass, full or targeted: the queued tasks take the places freed meanwhile (core/places.js),
+// unless STOP is there. Each start, and each start that failed, goes to the log.
+async function startQueuedTasks() {
+  if (stopPresent()) return;
+  const onError = (entry, err) => watchLog(entry.mission, 'error', `queue-start ${entry.id}: ${err.message}`);
+  for (const entry of await startQueued({ onError })) watchLog(entry.mission, 'queue-start', entry.id);
 }
 
 // The missions to watch now, neither finished nor being stopped, being launched included. One whose
@@ -778,4 +787,4 @@ async function stopWatcher({ waitMs = STOP_WAIT_MS } = {}) {
   return 'stopped';
 }
 
-module.exports = { observe, act, tendMission, runPass, stopPresent, loop, watcherRunning, startWatcher, stopWatcher };
+module.exports = { observe, act, tendMission, startQueuedTasks, runPass, stopPresent, loop, watcherRunning, startWatcher, stopWatcher };
