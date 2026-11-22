@@ -2,13 +2,19 @@
   "name": "relaylead-local",
   "description": "Slash commands to launch and follow Relaylead missions",
   "owner": {
-    "name": "relaylead"
+    "name": "Lilia Digital"
   },
   "plugins": [
     {
       "name": "relaylead",
       "source": "./",
-      "description": "Slash commands for relaylead"
+      "description": "Slash commands for relaylead",
+      "author": {
+        "name": "Lilia Digital"
+      },
+      "homepage": "https://github.com/jawharmed/relaylead#readme",
+      "repository": "https://github.com/jawharmed/relaylead",
+      "keywords": ["claude-code", "agents", "missions", "automation", "github", "macos"]
     }
   ]
 }

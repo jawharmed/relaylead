@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Relaylead">
+  <rect width="128" height="128" rx="28" fill="#1f2a44"/>
+  <path d="M30 88 C30 60 50 44 64 44 C78 44 98 60 98 88" fill="none" stroke="#7fb3ff" stroke-width="6" stroke-linecap="round" stroke-dasharray="2 12"/>
+  <circle cx="30" cy="88" r="9" fill="#7fb3ff"/>
+  <circle cx="98" cy="88" r="9" fill="#7fb3ff"/>
+  <rect x="50" y="26" width="28" height="12" rx="6" fill="#ffffff" transform="rotate(-20 64 32)"/>
+</svg>
