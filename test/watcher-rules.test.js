@@ -1074,3 +1074,27 @@ test('an authentication failure of a crew session trips the breaker with its not
   const replay = decide(observation({ record: { state: 'stopped', stopping: true }, failures, watch: result.watch }));
   assert.deepStrictEqual(replay.actions, [stop]);
 });
+
+// Rule 31: a question open and nothing changed in the mission folder for abandonDays days.
+test('a mission silent past abandonDays with a question open is reported once per silence, and nothing else is done', () => {
+  const DAY = 24 * 60 * MINUTE;
+  const question = openQuestion('q-a', 30 * MINUTE);
+  const notices = (fields) => decide(observation({ questions: [question], ...fields })).actions.filter((action) => action.type === 'notify');
+
+  assert.deepStrictEqual(notices({ lastActivityAt: T0 - 6 * DAY }), []);
+  assert.deepStrictEqual(notices({ lastActivityAt: T0 - 8 * DAY, questions: [] }), []);
+  const silent = decide(observation({ questions: [question], lastActivityAt: T0 - 8 * DAY }));
+  assert.deepStrictEqual(silent.actions.filter((action) => action.type === 'notify'), [
+    {
+      type: 'notify',
+      text: 'Mission demo looks abandoned: question q-a is open and nothing has moved for 7 days. Answer it, or stop the mission.',
+      log: 'mission-abandoned q-a 7 days',
+    },
+  ]);
+  assert.ok(silent.actions.every((action) => ['notify', 'remind-question', 'log'].includes(action.type)));
+  // The same silence is not reported again; a new one, after some activity, is.
+  assert.deepStrictEqual(notices({ lastActivityAt: T0 - 8 * DAY, watch: silent.watch }), []);
+  assert.strictEqual(notices({ lastActivityAt: T0 - 7.5 * DAY, watch: silent.watch }).length, 1);
+  // abandonDays of the mission's configuration.
+  assert.deepStrictEqual(notices({ lastActivityAt: T0 - 8 * DAY, config: { abandonDays: 10 } }), []);
+});

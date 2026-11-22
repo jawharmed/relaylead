@@ -11,6 +11,7 @@ const { listTasks } = require('./tasks');
 const { listQuestions } = require('./questions');
 const { readPause } = require('./usage-pause');
 const { usageFile, isFresh } = require('./usage');
+const { placesTaken, maxSessions, queuedCount } = require('./places');
 
 const FINISHED = /^(done|stopped)/;
 
@@ -52,6 +53,8 @@ function missionView(listed) {
     state: listed.state,
     active: !finished,
     pausedUntil: pause ? pause.resumeAt : null,
+    // Tasks waiting for a free place on the machine (core/places.js).
+    queued: finished ? 0 : attempt(() => queuedCount(name), 0),
     tasks: attempt(() => tasksOf(name, mission), []),
     questions: finished
       ? []
@@ -82,6 +85,8 @@ function buildOverview() {
     language: config.language,
     display: config.display,
     usage: usageView(),
+    // The crew members working on the machine, and the ceiling (maxSessions).
+    sessions: { running: attempt(() => placesTaken(), 0), max: maxSessions() },
     missions,
     activeMissions: missions.filter((mission) => mission.active).length,
     openQuestions: missions.reduce((sum, mission) => sum + mission.questions.length, 0),

@@ -37,7 +37,9 @@ relaylead show <mission>     # open the lead's session
 
 See everything at once: a panel and a status line inside Claude Code, or `relaylead dashboard` for a local web page (see the guide, "Displays").
 
-`launch` prints the mission's name. The work lands on the mission's own branch, `relaylead/<mission>/integration`; your own checkout is never changed. Several missions can run in the same project at once, each with its own name and its own tasks: `relaylead launch --name backend --tasks tasks/backend`, then `relaylead launch --name frontend --tasks tasks/frontend`.
+`launch` prints the mission's name. The work lands on the mission's own branch, `relaylead/<mission>/integration`; your own checkout is never changed. Once the mission is done, `relaylead merge <mission>` merges it into your branch (the console asks you first; it is never automatic). On a conflict nothing is left half done: a crew member resolves it, and if it cannot, you are asked. Once merged, Relaylead removes the mission's state by itself.
+
+At most 4 crew members work at a time on the machine (`maxSessions`); past it, tasks wait in a queue, the most urgent mission first: `relaylead priority <mission> high|normal|low`. Several missions can run in the same project at once, each with its own name and its own tasks: `relaylead launch --name backend --tasks tasks/backend`, then `relaylead launch --name frontend --tasks tasks/frontend`.
 
 By default the tasks are the Markdown files of the `tasks/` folder, one per task, with a small header (`title`, and optionally `depends` and `ask`). They can also be GitHub issues delivered as pull requests: see the guide.
 
@@ -56,7 +58,7 @@ By default the tasks are the Markdown files of the `tasks/` folder, one per task
 - **Guardrails.** Sessions run with nobody watching, so some actions are refused whatever the permission mode: pushes to protected branches (`main` and `master` by default), forced pushes, commits on a protected branch, secret files (`.env` and friends) and the mission's own state folder. Crew sessions only get the commands their profile allows.
 - **Questions before the irreversible.** The lead never decides alone on what cannot be undone: a delivery that failed, a task set to ask first, a failed task. It asks you, with options, and waits for your answer.
 - **A project memory, kept short.** Leads read `.relaylead/memoire.md` at the start and compact it (200 lines at most) before finishing; it stays out of git unless you choose otherwise.
-- **Your checkout stays yours.** Work happens in separate worktrees and branches; nothing is merged into your branch.
+- **Your checkout stays yours.** Work happens in separate worktrees and branches; nothing is merged into your branch until you run `relaylead merge`.
 - **API key never shown.** With `relaylead init --api-key-env NAME`, the key is copied to a file readable by you alone; Relaylead never prints it, and it is not stored in the configuration, a log or a launchd file. The sessions get it through Claude Code's `apiKeyHelper` setting, and `relaylead doctor` checks that Claude Code picks it over your signed-in account.
 
 ## Documentation

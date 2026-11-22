@@ -32,13 +32,24 @@ function listTold(mission) {
 function tellMission(mission, text) {
   readMission(mission); // mission-unknown
   if (!String(text || '').trim()) throw codedError('bad-tell', {});
-  if (['done', 'stopped'].includes(getState(mission))) throw codedError('mission-over', { mission });
+  // A done mission still takes hints for the crew member resolving the conflict of its merge (core/merge.js).
+  if (['done', 'stopped'].includes(getState(mission)) && !mergeOngoing(mission)) throw codedError('mission-over', { mission });
   let n = messageNames(mission).length + 1;
   for (;;) {
     const id = `m-${String(n).padStart(6, '0')}`;
     const message = { id, text: String(text).trim(), at: new Date().toISOString() };
     if (writeJsonExclusive(path.join(toldDir(mission), `${String(n).padStart(6, '0')}.json`), message)) return id;
     n++;
+  }
+}
+
+// A merge being resolved, or asked about: merge.json read here, as core/merge.js loads this file.
+function mergeOngoing(mission) {
+  try {
+    const merge = readJson(path.join(missionDir(mission), 'merge.json'), null);
+    return Boolean(merge) && ['resolving', 'asked'].includes(merge.state);
+  } catch {
+    return false;
   }
 }
 

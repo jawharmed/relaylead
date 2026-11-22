@@ -4,6 +4,7 @@ const { t, codedError } = require('./messages');
 const { loadConfig, watcherSettings, setConfigValue } = require('./config');
 const {
   createMission,
+  setPriority,
   listMissions,
   stopMission,
   removeMission,
@@ -22,7 +23,8 @@ const { tellMission, listTold } = require('./told');
 const { addDecision, readDecisions } = require('./decisions');
 const { readMemory, writeMemory, memorySettings, requireCompaction } = require('./memory');
 const { askQuestion, answerQuestion, listQuestions } = require('./questions');
-const { runPass, tendMission, stopPresent, loop, watcherRunning, startWatcher, stopWatcher } = require('./watcher');
+const { mergeMission } = require('./merge');
+const { runPass, tendMission, tendMergeOf, startQueuedTasks, stopPresent, loop, watcherRunning, startWatcher, stopWatcher } = require('./watcher');
 const { watchLogSize, watchLogSince } = require('./watch-log');
 const { home } = require('./paths');
 const { readPause, localTime, refuseWhilePaused } = require('./usage-pause');
@@ -31,6 +33,8 @@ const { install, uninstall } = require('./install');
 const { doctor } = require('./doctor');
 const { init } = require('./init');
 const { buildOverview } = require('./overview');
+const { queuedCount } = require('./places');
+const { abandonment } = require('./abandon');
 const { startDashboard } = require('./dashboard');
 const pkg = require('../package.json');
 
@@ -159,11 +163,18 @@ commands.list = async (args, io) => {
   return 0;
 };
 
-// The state of a mission as the user sees it: that of its lead, or its pause for the usage limit
-// (left alone once the mission is done or stopped).
+// The state of a mission as the user sees it: that of its lead, or its pause for the usage limit,
+// then its tasks waiting for a place, and whether it looks abandoned (core/abandon.js). Left alone once
+// the mission is done or stopped.
 function shownState(name, state, io) {
-  const pause = /^(done|stopped)/.test(state) ? null : readPause(name);
-  return pause ? t('usagePausedState', { resumeAt: localTime(pause.resumeAt) }, language(io)) : state;
+  if (/^(done|stopped)/.test(state)) return state;
+  const lang = language(io);
+  const pause = readPause(name);
+  let shown = pause ? t('usagePausedState', { resumeAt: localTime(pause.resumeAt) }, lang) : state;
+  const queued = queuedCount(name);
+  if (queued > 0) shown += t('queuedMark', { n: queued }, lang);
+  if (abandonment(name)) shown += t('abandonedMark', {}, lang);
+  return shown;
 }
 
 // A mission paused for the usage limit says so before its lead's session is shown: that session is
@@ -213,6 +224,39 @@ commands.remove = async (args, io) => {
   const onBranchDeleted = (branch) => io.out.write(t('branchDeleted', { branch }, language(io)));
   await removeMission(name, { force: options.force === true, onBranchDeleted });
   io.out.write(t('missionRemoved', { mission: name }, language(io)));
+  return 0;
+};
+
+// The priority of a mission, changed while it runs: its usage thresholds and its rank in the queue.
+// A targeted pass follows, so a queue that has a free place takes it at once.
+commands.priority = async (args, io) => {
+  refuseInSession('priority', io);
+  const [name, priority] = parseArgs(args).positional;
+  if (!name || !priority) throw codedError('usage', { usage: 'relaylead priority <mission> <high|normal|low>' });
+  await setPriority(name, priority);
+  io.out.write(t('prioritySet', { mission: name, priority }, language(io)));
+  await startTargetedPass(name);
+  return 0;
+};
+
+// `relaylead merge <mission>`: the user merges a done mission into the main branch of its project.
+// On a conflict, a crew member resolves it and the watcher merges again: its loop is started then.
+commands.merge = async (args, io) => {
+  refuseInSession('merge', io);
+  const [name] = parseArgs(args).positional;
+  if (!name) throw codedError('usage', { usage: 'relaylead merge <mission>' });
+  const lang = language(io);
+  const result = await mergeMission(name);
+  if (result.outcome === 'already') {
+    io.out.write(t('mergeAlready', { mission: name, target: result.target }, lang));
+  } else if (result.outcome === 'merged') {
+    io.out.write(t('mergeDone', { mission: name, target: result.target, detail: result.url || result.sha }, lang));
+  } else {
+    const files = result.conflicts.length > 0 ? result.conflicts.join(', ') : result.target;
+    const queued = result.queued ? t('mergeQueued', {}, lang) : '';
+    io.out.write(t('mergeConflict', { mission: name, target: result.target, files, task: result.task, queued }, lang));
+    await startWatcherAfterLaunch(io);
+  }
   return 0;
 };
 
@@ -471,6 +515,8 @@ commands.watcher = async (args, io) => {
       }
     }
     await tendMission(options.mission, { patient: true });
+    await tendMergeOf(options.mission);
+    await startQueuedTasks();
   } else {
     const result = await runPass();
     if (result.outcome === 'stop') {

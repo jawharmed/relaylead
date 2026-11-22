@@ -10,6 +10,11 @@ const DEFAULTS = {
   method: 'code',
   permissionMode: 'allowlist',
   parallel: 4,
+  // The crew members working at a time on the machine, every mission included (machine file only; the
+  // leads do not count); past it, a task waits in the queue (core/places.js).
+  maxSessions: 4,
+  // A mission with an open question and no activity for this many days is reported as abandoned.
+  abandonDays: 7,
   maxAttempts: 2,
   priority: 'normal',
   // A question open for timeoutMinutes: 'wait' only reminds the user, 'recommended' applies its
