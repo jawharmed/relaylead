@@ -48,7 +48,7 @@ A task whose `ask` is not null cannot start before its question is answered: `re
 
 `relaylead question ask --key <id> --text "<the ask text>" --option "<choice>" --option "Skip this task" --recommended 1`
 
-Then go on with the other tasks. Once the answer is there, "Skip this task" means the task is set aside: leave it as it is. Any other answer means go ahead: start the task. Relaylead gives the question and its answer to the developer.
+Then go on with the other tasks. Once the answer is there, "Skip this task" means the task is set aside: leave it as it is. Any other answer means go ahead: start the task. Relaylead gives the question and its answer to the developer. The user may also answer with a free text of their own, which is not one of the options: it is then the instruction for the developer, never "Skip this task".
 
 ## When something fails
 

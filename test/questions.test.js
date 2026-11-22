@@ -43,6 +43,18 @@ test('ask then answer', (t) => {
   assert.strictEqual(listQuestions('demo')[0].answer.choice, 'postgres');
 });
 
+test('answer accepts a free text for a question of the lead, not for one of the hooks', async (t) => {
+  demoMission(t);
+  askQuestion('demo', QUESTION);
+  askQuestion('demo', { key: 'perm-x', text: 'Allow?', options: ['Allow once', 'Deny'], kind: 'permission' });
+  const io = makeIo();
+  assert.strictEqual(await run(['answer', 'demo', 'q-db', '--other', 'mysql, with a pool'], io), 0);
+  const [answered] = listQuestions('demo', { state: 'answered' });
+  assert.deepStrictEqual([answered.answer.choice, answered.answer.other], ['mysql, with a pool', true]);
+  assert.throws(() => answerQuestion('demo', 'q-perm-x', '', { other: 'sure' }), { code: 'bad-choice' });
+  assert.throws(() => answerQuestion('demo', 'q-db', 'sqlite'), { code: 'question-answered' });
+});
+
 test('asking twice with the same key returns the same question', (t) => {
   demoMission(t);
   const first = askQuestion('demo', QUESTION);

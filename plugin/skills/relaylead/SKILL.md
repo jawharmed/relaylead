@@ -42,7 +42,7 @@ Show each question as it is, never reworded, with its mission name:
 
 `[<mission>] <text>` (then `context` if any) and the options numbered `1. ...`, marking the recommended one (it is option 1 when `recommended` is 1).
 
-Ask the user to choose. Send the answer with `relaylead answer <mission> <id> <number>`. If the choice affects the work, the lead notes it as a decision itself.
+Ask the user to choose. Send the answer with `relaylead answer <mission> <id> <number>`. Except for the questions whose id starts with `q-irr-` or `q-perm-`, the user may also answer in their own words ("Other"): `relaylead answer <mission> <id> --other "<their text>"`; the crew member of a task that asked gets that text. If the choice affects the work, the lead notes it as a decision itself.
 
 A merge conflict question (its id starts with `q-merge-`): "Resolve it here with me": answer it, then do what its context says with the user, step by step, and end with `relaylead merge <mission>`. "Relaunch a crew member with hints": ask for the hints, `relaylead tell <mission> "<hints>"`, then answer it. "Pause the mission": answer it.
 
