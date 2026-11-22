@@ -293,7 +293,7 @@ const RESTART_TEXT = 'Relaylead restarted you after your session ended. Carry on
 
 // The section a new lead gets before the mission after a relaunch ("## Restart").
 function restartSection(old) {
-  return `## Restart\n\nThe previous lead session ${old} ended unexpectedly. You take its place: you remember nothing, the files hold everything. Start with \`relaylead task list\`.`;
+  return `## Restart\n\nThe previous lead session ${old} ended unexpectedly. You take its place: you remember nothing, the files hold everything. Start with \`relaylead task list\`, then \`relaylead memory show\`.`;
 }
 
 // What the watcher remembers of the wakes of a lead: forgotten when the lead changes.
@@ -354,7 +354,7 @@ function handoverSection(old, reason, note) {
     forced: 'which handed over when its context was full',
     idle: 'which was idle past its context threshold',
   }[reason];
-  return `## Handover\n\nYou take over from the lead session ${old}, ${how}. You remember nothing, the files hold everything. Start with \`relaylead task list\`.`;
+  return `## Handover\n\nYou take over from the lead session ${old}, ${how}. You remember nothing, the files hold everything. Start with \`relaylead task list\`, then \`relaylead memory show\`.`;
 }
 
 // Rules 9, 12 and 13: the old lead is stopped if it has a process, `starting` is written (before the

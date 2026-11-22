@@ -285,6 +285,7 @@ function leadPrompt(method, mission, section) {
     '',
     `Mission: ${mission.name}`,
     `Limit: at most ${mission.config.parallel} tasks running at a time.`,
+    'Project memory: run `relaylead memory show` before anything else, and follow what it says (it may ask you to compact the memory first).',
     '',
     'Request from the user:',
     mission.request || 'No request was given: carry out the tasks listed by `relaylead task list`.',
