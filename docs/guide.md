@@ -7,9 +7,10 @@ macOS only for now. This guide goes from a first mission to the settings you wil
 1. [Getting started](#getting-started)
 2. [Concepts](#concepts)
 3. [Configuration](#configuration)
-4. [Commands](#commands)
-5. [Troubleshooting](#troubleshooting)
-6. [Uninstalling](#uninstalling)
+4. [Displays](#displays)
+5. [Commands](#commands)
+6. [Troubleshooting](#troubleshooting)
+7. [Uninstalling](#uninstalling)
 
 ## Getting started
 
@@ -149,6 +150,16 @@ Sessions have a limited context. The `context` setting says when to hand over: `
 
 By default Claude signs in with your connected account (`auth.mode` `login`). To use an API key, run `relaylead init --api-key-env NAME` (copies the variable `NAME` to `~/.relaylead/api-key`, readable by you alone) or `relaylead init --api-key-file PATH`. The key is never printed, and never written to the configuration, a log or a launchd file. Each session gets it through Claude Code's `apiKeyHelper` setting, in the settings Relaylead passes to the session: a small command reads the key file when Claude Code asks for it, and nothing needs approving. Claude Code prefers this key to the account you are signed in with, and an `ANTHROPIC_API_KEY` of your shell is not passed to the sessions. `relaylead doctor` asks Claude Code which credential it would use (`ok api-key-use`). To check a running session, open it with `relaylead show <mission>` and run `/status`: it must name `apiKeyHelper`, not your Claude account.
 
+## Displays
+
+Three views show the same thing, read from the files of `~/.relaylead`: every mission of the machine with its state and priority, its tasks, the questions waiting for you (with their options) and the 5-hour and 7-day usage of your account.
+
+- **Status line entry.** Inside Claude Code, the plugin adds a line such as `relaylead · 2 missions · ❓1 · quota 5 h 62 %`. It shows only while a mission runs or a question waits, and disappears with the plugin. Your own `statusLine` setting is never touched. Turn it off with `relaylead config set display.statusLine false`.
+- **Panel.** The plugin also draws a panel next to the conversation: one card per mission (questions first, then the tasks), a button per option to answer, and the usage. It refreshes every 5 seconds. The first time a mission runs, Claude Code asks `Always / This time / Never`; the choice is kept as `display.pane` (`always` or `never`), or set it yourself with `relaylead config set display.pane always`. `/panneau` opens or closes the panel at any time. In a terminal, an automatic opening needs a window about 144 columns wide; the command opens it at any width.
+- **Local web page.** `relaylead dashboard` serves a page on `127.0.0.1` only (port `display.dashboardPort`, 4317 by default; `--port` for one launch, `--no-open` to keep the browser closed), opens it, and refreshes it on its own. It works with Claude Code closed. Answering and stopping a mission work from this page only: each launch makes a random token that only the page carries, and requests with another Host or Origin are refused, so no other site open in your browser can trigger them. Stop the server with Ctrl-C.
+
+The panel and the status line need a Claude Code that supports mods; without it, Relaylead works the same and these two are simply missing. `relaylead overview --json` prints what they read, for your own scripts.
+
 ## Commands
 
 Run them from the root of your project unless said otherwise. A mission name is the one `launch` printed (see `relaylead list`).
@@ -228,6 +239,18 @@ Registers the launchd agent that runs the watcher (`dev.relaylead.watcher`) and 
 ### `relaylead uninstall [--purge]`
 
 Stops the watcher's loop first and waits for its end, then removes what `install` added, and nothing else. `--purge` also deletes `~/.relaylead` (missions' state, logs, key file), after checking that the folder is Relaylead's.
+
+### `relaylead overview --json`
+
+Prints every mission of the machine as JSON: name, folder, priority, state, pause, tasks, open questions with their options, the usage of the account and the display settings. Writes nothing and calls no network.
+
+### `relaylead config set <key> <value>`
+
+Writes one display setting in `~/.relaylead/config.json`: `display.pane` (`always` or `never`), `display.statusLine` (`true` or `false`), `display.dashboardPort` (1 to 65535). Other settings are edited in the file.
+
+### `relaylead dashboard [--port n] [--no-open]`
+
+Serves the local web page described in [Displays](#displays) until Ctrl-C.
 
 ### `relaylead doctor`
 

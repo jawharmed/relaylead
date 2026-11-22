@@ -1,7 +1,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { home } = require('./paths');
-const { readJson } = require('./store');
+const { readJson, writeJson } = require('./store');
+const { codedError } = require('./messages');
 
 const DEFAULTS = {
   language: 'en',
@@ -35,6 +36,10 @@ const DEFAULTS = {
   // The usage limits of the account (core/usage.js): a mission pauses once the 5-hour or the 7-day
   // usage reaches the threshold of its priority, in percent; after a usage limit hit without a time
   // to resume at, it tries again after these minutes, then the next ones, then the last one again.
+  // What the user sees of the missions (core/overview.js): pane is 'always', 'never' or null (asked on the
+  // first mission); statusLine turns off the Claude Code status line entry; dashboardPort is the port of
+  // `relaylead dashboard`.
+  display: { pane: null, statusLine: true, dashboardPort: 4317 },
   usage: {
     thresholds: { low: { week: 70, fiveHour: 80 }, normal: { week: 90, fiveHour: 85 }, high: { week: 98, fiveHour: 85 } },
     retryMinutes: [15, 30, 60],
@@ -76,6 +81,27 @@ function watcherSettings() {
   };
 }
 
+// The settings `relaylead config set` may write, each with the check of its value (returns the value
+// to store, or undefined when it is not valid). Only display settings: the rest is edited by hand.
+const SETTABLE = {
+  'display.pane': (text) => (['always', 'never'].includes(text) ? text : undefined),
+  'display.statusLine': (text) => ({ true: true, false: false })[text],
+  'display.dashboardPort': (text) => (/^\d+$/.test(text) && Number(text) >= 1 && Number(text) <= 65535 ? Number(text) : undefined),
+};
+
+// Writes one setting in the machine file (~/.relaylead/config.json), the other settings kept.
+function setConfigValue(key, text) {
+  const check = SETTABLE[key];
+  if (!check) throw codedError('config-unknown-key', { key, keys: Object.keys(SETTABLE).join(', ') });
+  const value = check(text);
+  if (value === undefined) throw codedError('config-bad-value', { key, value: text });
+  const file = path.join(home(), 'config.json');
+  const machine = readJson(file, {});
+  const [section, name] = key.split('.');
+  writeJson(file, { ...machine, [section]: { ...machine[section], [name]: value } });
+  return value;
+}
+
 // Secrets are never stored in config: only "env:NAME" or "file:path" references.
 function resolveSecret(ref) {
   if (typeof ref === 'string' && ref.startsWith('env:')) {
@@ -89,4 +115,4 @@ function resolveSecret(ref) {
   throw new Error('secrets must be references: use env:NAME or file:path');
 }
 
-module.exports = { DEFAULTS, deepMerge, loadConfig, watcherSettings, resolveSecret };
+module.exports = { DEFAULTS, deepMerge, loadConfig, watcherSettings, setConfigValue, resolveSecret };
