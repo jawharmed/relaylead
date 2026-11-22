@@ -30,7 +30,7 @@ relaylead doctor        # everything should say ok
 
 After `relaylead install`, open Claude Code in your project and type `/relaylead`, or ask for it ("use relaylead to add a health check"). The `relaylead` skill of the plugin turns the conversation into a console:
 
-- it checks the installation and, without a `.relaylead.json`, asks the questions of `init` in the conversation and writes the files; later you can ask for changes in plain words ("limit to 2 developers here");
+- it opens with `relaylead brief` (installation problems, news, open questions, missions) and, without a `.relaylead.json`, asks the questions of `init` in the conversation and writes the files; later you can ask for changes in plain words ("limit to 2 developers here");
 - it writes the mission's tasks with you, launches it, then waits for events in the background (`relaylead wait --all` as a background command: Claude Code wakes the conversation when it ends, and nothing is spent in between);
 - each question the lead asks is shown as it is, with the mission's name and numbered options; your choice goes back with `relaylead answer`;
 - "tell the lead of X to ..." becomes `relaylead tell`; "where is X?" reads the state of the missions;
@@ -256,7 +256,7 @@ Removes a finished (done or stopped) mission: its task worktrees (ignored files 
 
 Manages the tasks of a mission. Outside a session, add `--mission <name>`.
 
-- `task list`: the tasks as JSON, with state, `ready`, `ask` and summary.
+- `task list [--short]`: the tasks as JSON, with state, `ready`, `ask` and summary; `--short` prints one line per task (id, state and attempt, title, summary), for the console.
 - `task start <id> [--profile p]`: starts a crew member on a ready task.
 - `task retry <id> [--profile p]`: starts a new crew member on a failed task, on the same branch, told how the earlier attempt failed. Limited by `maxAttempts`.
 - `task deliver <id> [--no-hooks]`: delivers a done task. `--no-hooks` skips your git hooks; only you can use it, not a session.
@@ -272,9 +272,9 @@ Reads or sets the state declared by the lead (`working`, `waiting`, `done`, `han
 
 Waits until a task or a question of the mission changes, then prints the changes as JSON; a message from `relaylead tell` is a change of kind `message`, with its text. `--timeout 0` does not wait. The lead uses it.
 
-### `relaylead wait --all [--timeout seconds]`
+### `relaylead wait --all [--timeout seconds] [--json]`
 
-For the console: waits until something the user must know about happens in any mission of the machine, then prints `{"events": [...]}`; every event has a `mission` and a `kind`: `question` (opened, with its text and options), `task` (failed, with its summary) or `mission` (done or stopped). Without `--timeout` it waits as long as needed; `--timeout 0` looks once. What it has reported is remembered in `~/.relaylead/console-snapshot.json`, so each event is given once; it never touches what the leads see. It cannot be run from a session.
+For the console: waits until something the user must know about happens in any mission of the machine, then prints one short line per event, named by its mission: a question opened (in full: text, context, numbered options, the recommended one marked), a task failed (with its summary), a mission done or stopped, a merge done. With `--json` it prints `{"events": [...]}` instead; every event has a `mission` and a `kind` (`question`, `task`, `mission` or `merge`). Without `--timeout` it waits as long as needed; `--timeout 0` looks once. What it has reported is remembered in `~/.relaylead/console-snapshot.json`, so each event is given once; it never touches what the leads see. It cannot be run from a session.
 
 ### `relaylead tell <mission> <text>`
 
@@ -315,6 +315,10 @@ Registers the launchd agent that runs the watcher (`dev.relaylead.watcher`) and 
 ### `relaylead uninstall [--purge]`
 
 Stops the watcher's loop first and waits for its end, then removes what `install` added, and nothing else. `--purge` also deletes `~/.relaylead` (missions' state, logs, key file), after checking that the folder is Relaylead's.
+
+### `relaylead brief`
+
+What the console shows when a conversation opens, as a short text: the problems of the installation (the `warn` and `fail` lines of `doctor`, only when there are some), what happened since the console last looked (the same catch-up as `relaylead wait --all --timeout 0`, so the next wait does not give it again), every open question of every mission as it is (finished missions included), and one line per mission not over (state, tasks delivered, queue, pause, priority). It cannot be run from a session.
 
 ### `relaylead overview --json`
 

@@ -32,7 +32,7 @@ function otherMission(name) {
 }
 
 async function waitAll() {
-  const result = await relaylead(['wait', '--all', '--timeout', '0']);
+  const result = await relaylead(['wait', '--all', '--timeout', '0', '--json']);
   assert.strictEqual(result.code, 0, result.err);
   return JSON.parse(result.out).events;
 }
