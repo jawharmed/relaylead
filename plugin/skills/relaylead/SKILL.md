@@ -38,7 +38,7 @@ Wake the user only for these (not for each task).
 
 ## 4. Questions and answers
 
-Show each question as it is, never reworded, with its mission name:
+**Always show every open question, as it is, before anything else, even if the user did not ask about it, and whatever the user's output style (concise included): never summarize it as "a question is waiting".** Never reworded, with its mission name:
 
 `[<mission>] <text>` (then `context` if any) and the options numbered `1. ...`, marking the recommended one (it is option 1 when `recommended` is 1).
 
