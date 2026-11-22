@@ -306,7 +306,7 @@ test('stop on a stopped or done mission kills nothing', async (t) => {
   const doneDir = tmpDir('relaylead-project-');
   assert.strictEqual((await cli(['launch', '--agent', 'fake', '--name', 'done', '--dir', doneDir])).code, 0);
   await waitUntilWorking('done');
-  assert.strictEqual((await cli(['state', 'set', 'done', '--mission', 'done'])).code, 0);
+  assert.strictEqual((await cli(['state', 'set', 'done', '--mission', 'done', '--no-memory'])).code, 0);
   assert.strictEqual((await cli(['stop', 'done'])).code, 0);
   assert.strictEqual(stopCalls, 1);
   assert.strictEqual((await cli(['state', 'get', '--mission', 'done'])).out.trim(), 'done');
@@ -365,7 +365,7 @@ test('done stops the remaining crew, then a helper stops the lead', async (t) =>
     delete process.env.RELAYLEAD_REAP_MAX_MS;
   });
 
-  const done = await cli(['state', 'set', 'done', '--mission', 'demo']);
+  const done = await cli(['state', 'set', 'done', '--mission', 'demo', '--no-memory']);
 
   assert.strictEqual(done.code, 0, done.err);
   assert.deepStrictEqual(stopped, [crew.shortId]);
@@ -381,7 +381,7 @@ test('the helper exits at once when the lead is no longer working', { timeout: 2
   const [lead] = listSessions('demo');
   await fake.stop(lead); // like a fake lead that exits after `state set done`
   await waitFor(() => sessionEnded(lead), 30000, 'the lead to end');
-  assert.strictEqual((await cli(['state', 'set', 'done', '--mission', 'demo'])).code, 0);
+  assert.strictEqual((await cli(['state', 'set', 'done', '--mission', 'demo', '--no-memory'])).code, 0);
 
   const reaped = await cliProcess(['_reap', 'demo', createdAtOf('demo')]);
 
@@ -397,7 +397,7 @@ test('done records the pid of the helper, which ends once the lead has ended', {
   await fake.stop(lead);
   await waitFor(() => sessionEnded(lead), 30000, 'the lead to end');
 
-  assert.strictEqual((await cli(['state', 'set', 'done', '--mission', 'demo'])).code, 0);
+  assert.strictEqual((await cli(['state', 'set', 'done', '--mission', 'demo', '--no-memory'])).code, 0);
 
   const reaper = readJson(path.join(missionDir('demo'), 'reaper.json'));
   assert.ok(Number.isInteger(reaper.pid), JSON.stringify(reaper));
@@ -467,7 +467,7 @@ test('a failing crew stop does not keep the others running, and the mission stay
     return original(session);
   });
 
-  const done = await cli(['state', 'set', 'done', '--mission', 'demo']);
+  const done = await cli(['state', 'set', 'done', '--mission', 'demo', '--no-memory']);
 
   assert.strictEqual(done.code, 1);
   assert.match(done.err, /stop failed/);
@@ -626,7 +626,7 @@ test('done stops the crew sessions of the registry when the adapter list fails',
     delete process.env.RELAYLEAD_REAP_MAX_MS;
   });
 
-  const done = await cli(['state', 'set', 'done', '--mission', 'demo']);
+  const done = await cli(['state', 'set', 'done', '--mission', 'demo', '--no-memory']);
 
   assert.strictEqual(done.code, 0, done.err);
   assert.deepStrictEqual(stopped, [crew.shortId]);
@@ -637,7 +637,7 @@ test('done stops the crew sessions of the registry when the adapter list fails',
 test('once done, the lead can no longer declare another state', async (t) => {
   freshHome(t);
   writeMission('demo', tmpDir('relaylead-project-')); // no lead: the test plays it
-  const set = (state) => cli(['state', 'set', state, '--mission', 'demo']);
+  const set = (state) => cli(['state', 'set', state, '--mission', 'demo', '--no-memory']);
   assert.strictEqual((await set('done')).code, 0);
 
   for (const state of ['working', 'waiting']) {
@@ -692,7 +692,7 @@ test('a failed crew stop at done stays stopping until run again', async (t) => {
     return original(session);
   };
   try {
-    failed = await cli(['state', 'set', 'done', '--mission', 'demo']);
+    failed = await cli(['state', 'set', 'done', '--mission', 'demo', '--no-memory']);
   } finally {
     fake.stop = original;
   }
@@ -700,7 +700,7 @@ test('a failed crew stop at done stays stopping until run again', async (t) => {
   assert.strictEqual(failed.code, 1);
   assert.strictEqual(stateRecord('demo').stopping, true);
 
-  const again = await cli(['state', 'set', 'done', '--mission', 'demo']);
+  const again = await cli(['state', 'set', 'done', '--mission', 'demo', '--no-memory']);
   assert.strictEqual(again.code, 0, again.err);
   await waitFor(() => sessionEnded(crew), 30000, 'the crew member to end');
   assert.strictEqual(stateRecord('demo').stopping, undefined);
@@ -771,7 +771,7 @@ test('a 0.1 mission releases its folder lock at its end', async (t) => {
   const lock = lockFile(dir);
   writeJson(lock, { pid: process.pid, mission: 'demo' });
 
-  const done = await cli(['state', 'set', 'done', '--mission', 'demo']);
+  const done = await cli(['state', 'set', 'done', '--mission', 'demo', '--no-memory']);
 
   assert.strictEqual(done.code, 0, done.err);
   assert.strictEqual(fs.existsSync(lock), false);
@@ -858,7 +858,7 @@ test('an old stopping marker stops the fake sessions again by id', async (t) => 
 test('stop of a done mission says it is done', async (t) => {
   freshHome(t);
   writeMission('demo', tmpDir('relaylead-project-')); // no lead: the test plays it
-  assert.strictEqual((await cli(['state', 'set', 'done', '--mission', 'demo'])).code, 0);
+  assert.strictEqual((await cli(['state', 'set', 'done', '--mission', 'demo', '--no-memory'])).code, 0);
 
   const stopped = await cli(['stop', 'demo']);
 
@@ -1017,7 +1017,7 @@ test('remove waits for the end of state set done', async (t) => {
   });
   const ended = [];
 
-  const done = cli(['state', 'set', 'done', '--mission', 'demo']).then((result) => {
+  const done = cli(['state', 'set', 'done', '--mission', 'demo', '--no-memory']).then((result) => {
     ended.push('done');
     return result;
   });

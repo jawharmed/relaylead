@@ -59,7 +59,7 @@ test('a mission delivers two GitHub issues by two merged pull requests', { timeo
   for (const call of creates) assert.strictEqual(call[call.indexOf('--base') + 1], INTEGRATION);
   const state = github.read();
   assert.deepStrictEqual(state.prs.map((pr) => pr.state), ['MERGED', 'MERGED']);
-  assert.deepStrictEqual(state.issues.map((one) => one.state), ['CLOSED', 'CLOSED', 'OPEN']);
+  assert.deepStrictEqual(state.issues.map((one) => one.state), ['OPEN', 'OPEN', 'OPEN']);
   for (const id of ['issue-1', 'issue-2']) {
     assert.strictEqual(git(remote, 'show', `${INTEGRATION}:${id}.txt`), `fake work on ${id}`);
     assert.ok(!fs.existsSync(path.join(dir, '.relaylead', 'worktrees', mission, id)), `the worktree of ${id} should be removed`);

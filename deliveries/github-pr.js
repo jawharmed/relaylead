@@ -1,8 +1,13 @@
 // Delivery "GitHub pull request". Branches and worktrees are those of local-merge: each task works on
 // its own branch, from the integration branch. A finished task's branch is pushed, a pull request
 // to the integration branch is opened and merged on GitHub, the branch is deleted there, the local
-// integration branch follows the remote one, then the task's issue is closed. Meant for the source github-issues.
+// integration branch follows the remote one. The task's issue is closed later, when `relaylead merge`
+// brings the work into the user's branch. Meant for the source github-issues.
+const fs = require('node:fs');
+const path = require('node:path');
 const localMerge = require('./local-merge');
+const { missionDir } = require('../core/paths');
+const { readJson } = require('../core/store');
 const { gh, checkGh } = require('../core/github');
 const githubIssues = require('../sources/github-issues');
 const { codedError } = require('../core/messages');
@@ -109,14 +114,60 @@ function deliver(mission, task, { runHooks } = {}) {
     deleteRemoteBranch(mission, branch);
   }
   followRemote(mission);
-  githubIssues.markDone(mission.config.source, task.id, { cwd: mission.dir });
   return [codedError('pr-merged', { id: task.id, url: pr.url }), ...finish(mission, task, { runHooks })];
+}
+
+// Once the mission is merged: the issues of the tasks it delivered (their record, not the source: an
+// issue already closed before is left alone) are closed, as their work is in the user's branch now.
+// Returns the numbers of the issues gh could not close, for the user to close. Also called by the
+// cleanup of a mission merged by hand (core/merge.js).
+function closeIssues(mission) {
+  if (mission.config.source.type !== 'github-issues') return [];
+  const folder = path.join(missionDir(mission.name), 'tasks');
+  let files = [];
+  try {
+    files = fs.readdirSync(folder);
+  } catch {
+    return [];
+  }
+  const notClosed = [];
+  for (const file of files.filter((name) => /^issue-\d+\.json$/.test(name)).sort()) {
+    let record = null;
+    try {
+      record = readJson(path.join(folder, file), null);
+    } catch {
+      // unreadable: left to the user
+    }
+    if (!record || record.state !== 'delivered') continue;
+    const id = file.slice(0, -'.json'.length);
+    try {
+      githubIssues.markDone(mission.config.source, id, { cwd: mission.dir });
+    } catch {
+      notClosed.push(githubIssues.issueNumber(id));
+    }
+  }
+  return notClosed;
+}
+
+// After the merge: the integration branch is of no use on GitHub (a failure only leaves it there), and
+// the user's local branch is told about, never pulled: how many commits it is behind the remote one.
+function afterMerge(mission, target) {
+  const remote = remoteName(mission);
+  deleteRemoteBranch(mission, mission.config.delivery.branch);
+  let behind = 0;
+  try {
+    localMerge.git(mission.dir, ['fetch', remote]);
+    behind = Number(localMerge.git(mission.dir, ['rev-list', '--count', `${target}..${remote}/${target}`]).trim()) || 0;
+  } catch {
+    // no local branch of that name, or no network: nothing to say
+  }
+  return { notClosed: closeIssues(mission), behind };
 }
 
 // `relaylead merge` for GitHub (core/merge.js): the integration branch is pushed, then a pull request
 // from it to `target` is opened (or the open one found) and merged on GitHub. A pull request that
 // cannot be merged is a conflict: {outcome: 'conflict', conflicts: [], url}. Nothing to merge (gh
-// finds no commit between the branches): {outcome: 'already'}.
+// finds no commit between the branches): {outcome: 'already'}. Once merged, see afterMerge.
 function mergeIntoTarget(mission, target) {
   const integration = mission.config.delivery.branch;
   push(mission, integration);
@@ -128,7 +179,7 @@ function mergeIntoTarget(mission, target) {
     try {
       output = ghIn(mission, ['pr', 'create', '--base', target, '--head', integration, '--title', `Relaylead: ${mission.name}`, '--body', body]);
     } catch (err) {
-      if (err.code === 'gh-failed' && /no commits between/i.test(err.vars.detail)) return { outcome: 'already' };
+      if (err.code === 'gh-failed' && /no commits between/i.test(err.vars.detail)) return { outcome: 'already', ...afterMerge(mission, target) };
       throw err;
     }
     const url = output.split('\n').pop().trim();
@@ -140,12 +191,7 @@ function mergeIntoTarget(mission, target) {
     if (err.code === 'gh-failed' && /not mergeable|conflict/i.test(err.vars.detail)) return { outcome: 'conflict', conflicts: [], url: pr.url };
     throw err;
   }
-  try {
-    localMerge.git(mission.dir, ['fetch', remoteName(mission)]);
-  } catch {
-    // the merge is done on GitHub; the next fetch of the user brings it
-  }
-  return { outcome: 'merged', url: pr.url };
+  return { outcome: 'merged', url: pr.url, ...afterMerge(mission, target) };
 }
 
 // The end of a delivery, also run for a task already delivered: removes the task's worktree and
@@ -160,6 +206,7 @@ module.exports = {
   launchInfo: localMerge.launchInfo,
   mergeTarget: localMerge.mergeTarget,
   mergeIntoTarget,
+  closeIssues,
   integrationState: localMerge.integrationState,
   prepareTask: localMerge.prepareTask,
   checkDone: localMerge.checkDone,

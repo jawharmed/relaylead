@@ -58,6 +58,9 @@
   .options { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
   .options button { background: var(--card); }
   .options button.rec { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .other { display: flex; gap: 8px; margin-top: 10px; }
+  .other input { flex: 1; min-width: 0; font: inherit; padding: 5px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); }
+  .other input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .tasks { list-style: none; margin: 0; padding: 0 16px 14px; }
   .tasks li { display: flex; gap: 10px; align-items: baseline; padding: 4px 0; border-top: 1px solid var(--line); font-size: 14px; }
   .tasks li:first-child { border-top: 0; }
@@ -92,19 +95,20 @@
 const TOKEN = "__TOKEN__";
 const TEXT = {
   en: { missions: 'active missions', questions: 'questions waiting', none: 'No mission yet.', start: 'Start one from Claude Code with /relaylead:launch or from a terminal with',
-        finished: 'Finished', tasks: 'Tasks', stop: 'Stop', confirmStop: 'Stop mission {name}?', recommended: 'recommended', fiveHour: '5 h', sevenDay: '7 days',
+        finished: 'Finished', tasks: 'Tasks', stop: 'Stop', confirmStop: 'Stop mission {name}?', recommended: 'recommended', other: 'Other answer…', send: 'Send', fiveHour: '5 h', sevenDay: '7 days',
         paused: 'paused until {time}', live: 'live', offline: 'no connection', updated: 'updated {time}', sent: 'Answer sent', stopped: 'Mission stopped',
         done: 'done', todo: 'to do', running: 'running', queued: 'queued', delivered: 'delivered', failed: 'failed', progress: 'tasks delivered: {n} of {total}', prio: { low: 'low priority', normal: 'normal priority', high: 'high priority' },
         reset: 'resets {time}',
         states: {} },
   fr: { missions: 'missions actives', questions: 'questions en attente', none: 'Aucune mission pour l’instant.', start: 'Lancez-en une depuis Claude Code avec /relaylead:launch ou depuis un terminal avec',
-        finished: 'Terminées', tasks: 'Tâches', stop: 'Arrêter', confirmStop: 'Arrêter la mission {name} ?', recommended: 'recommandée', fiveHour: '5 h', sevenDay: '7 jours',
+        finished: 'Terminées', tasks: 'Tâches', stop: 'Arrêter', confirmStop: 'Arrêter la mission {name} ?', recommended: 'recommandée', other: 'Autre réponse…', send: 'Envoyer', fiveHour: '5 h', sevenDay: '7 jours',
         paused: 'en pause jusqu’à {time}', live: 'en direct', offline: 'connexion perdue', updated: 'mis à jour {time}', sent: 'Réponse envoyée', stopped: 'Mission arrêtée',
         done: 'terminée', todo: 'à faire', running: 'en cours', queued: 'en file', delivered: 'livrée', failed: 'échec', progress: 'tâches livrées : {n} sur {total}', prio: { low: 'priorité basse', normal: 'priorité normale', high: 'priorité haute' },
         reset: 'revient {time}',
         states: { starting: 'démarrage', working: 'au travail', waiting: 'en attente', handover: 'relève', done: 'terminée', stopped: 'arrêtée' } },
 };
 let T = TEXT.en;
+const drafts = new Map(); // what is typed in the free-answer fields, by mission|question
 const fill = (text, vars) => text.replace(/\{(\w+)\}/g, (_, k) => vars[k]);
 const $ = (id) => document.getElementById(id);
 
@@ -128,14 +132,18 @@ function toast(text) {
 
 async function act(path, body, okText, button) {
   if (button) button.disabled = true;
+  let ok = false;
   try {
     const reply = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Relaylead-Token': TOKEN }, body: JSON.stringify(body) });
     const data = await reply.json();
     toast(reply.ok ? okText : data.message || data.error);
+    ok = reply.ok;
   } catch {
     toast(T.offline);
   }
+  if (button && !ok) button.disabled = false;
   refresh();
+  return ok;
 }
 
 function time(iso) {
@@ -156,10 +164,31 @@ function questionBlock(mission, question) {
   const options = question.options.map((option, index) =>
     el('button', { class: index + 1 === question.recommended ? 'rec' : '', title: index + 1 === question.recommended ? T.recommended : '',
       onclick: (event) => act('/api/answer', { mission: mission.name, id: question.id, choice: index + 1 }, T.sent, event.target) }, option));
+  // A free answer, except for the questions of the hooks (irreversible action, permission): options only.
+  // What is typed is kept per question, so a redraw (the page redraws when anything changes) never erases it.
+  const canOther = !/^q-(irr|perm)-/.test(question.id);
+  const key = mission.name + '|' + question.id;
+  const field = el('input', { type: 'text', placeholder: T.other, 'aria-label': T.other, 'data-key': key });
+  field.value = drafts.get(key) || '';
+  field.addEventListener('input', () => drafts.set(key, field.value));
+  const button = el('button', { onclick: () => sendOther() }, T.send);
+  let sending = false;
+  async function sendOther() {
+    const text = field.value.trim();
+    if (!text || sending) return;
+    sending = true;
+    button.disabled = true;
+    const sent = await act('/api/answer', { mission: mission.name, id: question.id, other: text }, T.sent);
+    if (sent) drafts.delete(key);
+    sending = false;
+    button.disabled = false;
+  }
+  field.addEventListener('keydown', (event) => { if (event.key === 'Enter' && !event.isComposing) sendOther(); });
   return el('div', { class: 'question' },
     el('div', { class: 'ask' }, question.text),
     question.context ? el('div', { class: 'why' }, question.context) : null,
-    el('div', { class: 'options' }, ...options));
+    el('div', { class: 'options' }, ...options),
+    canOther ? el('div', { class: 'other' }, field, button) : null);
 }
 
 function missionCard(mission) {
@@ -202,7 +231,17 @@ function render(data) {
   }
   if (finished.length) main.push(el('details', { class: 'finished' }, el('summary', {}, T.finished + ' (' + finished.length + ')'), el('div', { class: 'grid' }, ...finished.map(missionCard))));
   const open = document.querySelector('details.finished[open]');
+  // The field being typed in keeps its focus and cursor through the redraw.
+  const typing = document.activeElement && document.activeElement.dataset ? document.activeElement : null;
+  const focused = typing && typing.dataset.key ? { key: typing.dataset.key, at: typing.selectionStart } : null;
   $('main').replaceChildren(...main);
+  if (focused) {
+    const again = [...document.querySelectorAll('input[data-key]')].find((input) => input.dataset.key === focused.key);
+    if (again) {
+      again.focus();
+      again.setSelectionRange(focused.at, focused.at);
+    }
+  }
   if (open) document.querySelector('details.finished').open = true;
   document.title = (data.openQuestions ? '(' + data.openQuestions + ') ' : '') + 'Relaylead';
 }

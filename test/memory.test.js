@@ -248,3 +248,12 @@ test('--no-memory lets a lead finish without the memory, and a memory turned off
   writeJson(path.join(missionDir('demo'), 'lead.json'), { sessionName: 'demo/lead/1', shortId: 'x', startedAt: new Date().toISOString() });
   assert.strictEqual((await relaylead(['state', 'set', 'done'], lead)).code, 0);
 });
+
+test('state set done is refused out of a session too, until the memory is written', async (t) => {
+  const dir = project(t);
+  const refused = await relaylead(['state', 'set', 'done', '--mission', 'demo']);
+  assert.strictEqual(refused.code, 1);
+  assert.match(refused.err, /compact the project memory first/);
+  assert.strictEqual((await relaylead(['memory', 'write', '--mission', 'demo', ...base(dir), '--text', '- demo: done'])).code, 0);
+  assert.strictEqual((await relaylead(['state', 'set', 'done', '--mission', 'demo'])).code, 0);
+});

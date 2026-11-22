@@ -400,7 +400,12 @@ async function deliverTask(name, id, { runHooks, env } = {}) {
       return { outcome: 'already-delivered', warnings: await underRepoLock(() => delivery.finish(mission, task, { runHooks })) };
     }
     if (task.state !== 'done') throw codedError('task-not-deliverable', { id, state: task.state });
-    return { outcome: 'delivered', warnings: await underRepoLock(() => delivery.deliver(mission, task, { runHooks })) };
+    const warnings = await underRepoLock(() => delivery.deliver(mission, task, { runHooks }));
+    // GitHub: the issue stays open until `relaylead merge`, so the source cannot say the task is delivered: the record does.
+    if (mission.config.delivery.type === 'github-pr') {
+      writeJson(taskFile(name, id), { ...readJson(taskFile(name, id), {}), state: 'delivered', deliveredAt: now() });
+    }
+    return { outcome: 'delivered', warnings };
   });
 }
 

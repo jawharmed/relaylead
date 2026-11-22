@@ -7,6 +7,8 @@ const githubPr = require('../deliveries/github-pr');
 const { loadConfig } = require('../core/config');
 const { tmpDir } = require('../fixtures/helpers');
 const { git, gitRepo } = require('../fixtures/git');
+const { missionDir } = require('../core/paths');
+const { writeJson } = require('../core/store');
 const { fakeGh, issue } = require('../fixtures/github');
 
 const { FORMAT, integrationBranch } = require('../core/layout');
@@ -42,7 +44,7 @@ function commands(github, words) {
   return github.calls().filter((call) => words.every((word, index) => call[index] === word));
 }
 
-test('deliver pushes the branch, opens and merges a pull request, deletes the branch on the remote, closes the issue', (t) => {
+test('deliver pushes the branch, opens and merges a pull request, deletes the branch on the remote, leaves the issue open', (t) => {
   const { dir, remote, github, mission } = setup(t, [issue(1, 'one')]);
   const task = work(mission, 'issue-1', 'one.txt', 'one\n');
   const warnings = githubPr.deliver(mission, task);
@@ -53,7 +55,7 @@ test('deliver pushes the branch, opens and merges a pull request, deletes the br
   assert.strictEqual(create[create.indexOf('--body') + 1], 'Closes #1\n\ndid it');
   const state = github.read();
   assert.strictEqual(state.prs[0].state, 'MERGED');
-  assert.strictEqual(state.issues[0].state, 'CLOSED');
+  assert.strictEqual(state.issues[0].state, 'OPEN'); // closed by `relaylead merge`
   assert.strictEqual(git(remote, 'show', `${INTEGRATION}:one.txt`), 'one');
   assert.strictEqual(git(dir, 'show', `${INTEGRATION}:one.txt`), 'one');
   assert.deepStrictEqual(warnings.map((warning) => [warning.code, warning.vars.url]), [['pr-merged', state.prs[0].url]]);
@@ -61,18 +63,37 @@ test('deliver pushes the branch, opens and merges a pull request, deletes the br
   assert.strictEqual(git(remote, 'branch', '--list', 'relaylead/m/issue-1'), '');
 });
 
-test('deliver played again after a failure past the merge opens no second pull request', (t) => {
+test('deliver played again after a failure at the merge opens no second pull request', (t) => {
   const { github, mission } = setup(t, [issue(1, 'one')]);
   const task = work(mission, 'issue-1', 'one.txt', 'one\n');
-  process.env.FAKE_GH_FAIL = 'issue close';
+  process.env.FAKE_GH_FAIL = 'pr merge';
   t.after(() => delete process.env.FAKE_GH_FAIL);
   assert.throws(() => githubPr.deliver(mission, task), { code: 'gh-failed' });
   delete process.env.FAKE_GH_FAIL;
   githubPr.deliver(mission, task);
 
   assert.strictEqual(commands(github, ['pr', 'create']).length, 1);
-  assert.strictEqual(commands(github, ['pr', 'merge']).length, 1);
-  assert.strictEqual(github.read().issues[0].state, 'CLOSED');
+  assert.strictEqual(github.read().prs[0].state, 'MERGED');
+});
+
+test('the merge into the base branch closes the issues, deletes the remote integration branch and says when the local branch is behind', (t) => {
+  const { dir, remote, github, mission } = setup(t, [issue(1, 'one'), issue(2, 'two'), issue(3, 'old', 'CLOSED')]);
+  githubPr.deliver(mission, work(mission, 'issue-1', 'one.txt', 'one\n'));
+  // The mission as the core keeps it: issue-1 delivered, issue-2 not.
+  writeJson(path.join(missionDir('m'), 'mission.json'), { name: 'm', format: FORMAT, dir, agent: 'fake', createdAt: new Date().toISOString(), config: mission.config });
+  writeJson(path.join(missionDir('m'), 'tasks', 'issue-1.json'), { state: 'delivered' });
+  assert.strictEqual(github.read().issues[0].state, 'OPEN');
+
+  const result = githubPr.mergeIntoTarget(mission, 'main');
+  assert.strictEqual(result.outcome, 'merged');
+  assert.deepStrictEqual(github.read().issues.map((i) => i.state), ['CLOSED', 'OPEN', 'CLOSED']);
+  // An issue closed long before is not touched: no call, no comment.
+  assert.deepStrictEqual(commands(github, ['issue', 'close']).map((call) => call[2]), ['1']);
+  assert.strictEqual(git(remote, 'branch', '--list', INTEGRATION), '');
+  // The merge commit is on the remote main only: the local main is one merge and one task behind.
+  assert.strictEqual(result.behind, Number(git(dir, 'rev-list', '--count', 'main..origin/main')));
+  assert.ok(result.behind >= 1);
+  assert.deepStrictEqual(result.notClosed, []);
 });
 
 test('changes requested on the pull request refuse the delivery without a merge', (t) => {

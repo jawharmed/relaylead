@@ -1184,7 +1184,7 @@ test('done cleans the task worktrees and notes the kept ones in the journal', as
   taskWithWork(mission, 'a', { extra: { 'draft.txt': 'not committed\n' } });
   taskWithWork(mission, 'b', { committed: true });
 
-  const done = await cli(['state', 'set', 'done', '--mission', 'demo']);
+  const done = await cli(['state', 'set', 'done', '--mission', 'demo', '--no-memory']);
 
   assert.strictEqual(done.code, 0, done.err);
   assert.strictEqual(fs.existsSync(taskWorktree(dir, 'a')), true);
@@ -1257,7 +1257,7 @@ test('done keeps the worktree of a crew session listed without its folder whose 
   };
   let done;
   try {
-    done = await cli(['state', 'set', 'done', '--mission', 'demo']);
+    done = await cli(['state', 'set', 'done', '--mission', 'demo', '--no-memory']);
   } finally {
     fake.list = originalList;
     fake.stop = originalStop;
