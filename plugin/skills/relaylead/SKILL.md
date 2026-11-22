@@ -1,7 +1,7 @@
 ---
 name: relaylead
 description: Console for Relaylead missions. Use for /relaylead or when the user asks to use relaylead, to start, follow, answer or direct a mission run by a team of background Claude Code sessions.
-allowed-tools: Bash(relaylead *)
+allowed-tools: Bash(relaylead doctor) Bash(relaylead list) Bash(relaylead question list *) Bash(relaylead task list *) Bash(relaylead state get *) Bash(relaylead wait *) Bash(relaylead launch *) Bash(relaylead answer *) Bash(relaylead tell *) Bash(relaylead init *) Bash(relaylead install *)
 ---
 
 # Relaylead console
@@ -47,7 +47,7 @@ Ask the user to choose. Send the answer with `relaylead answer <mission> <id> <n
 
 - "Tell the lead of X to ...": `relaylead tell <mission> "<text>"`. It is recorded in the mission and wakes the lead.
 - "Where is X?": `relaylead list`, `relaylead task list --mission X`, and `state.json` of the mission for the lead's note (never `relaylead show`: it opens the lead's session). Answer in a few lines.
-- "Stop X": ask once to confirm, then `relaylead stop X`.
+- "Stop X": ask once to confirm, then `relaylead stop X` (it is not pre-approved: Claude Code will ask too).
 - A mission asks you something you cannot do for the user (permission, irreversible action): show it like any question.
 
 Keep your own messages short; the details live in the files.
