@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { run } = require('../core/cli');
 const { readMission } = require('../core/missions');
-const { listTasks } = require('../core/tasks');
+const { listTasks, deliverMergeTask } = require('../core/tasks');
 const { tendMerge, OPTIONS } = require('../core/merge');
 const { listQuestions } = require('../core/questions');
 const { listSessions } = require('../core/sessions');
@@ -266,4 +266,36 @@ test('a resolution crew member that dies without a result is failed by the watch
   assert.strictEqual(placesTaken(), 0);
   assert.strictEqual(mergeRecord().state, 'asked');
   assert.strictEqual(listQuestions('demo', { state: 'open' }).length, 1);
+});
+
+test('a merge that fails once the resolution is delivered is paused with why, and relaylead merge takes it up', async (t) => {
+  const { dir, integration } = project(t);
+  conflict(dir, integration);
+  await cli(['merge', 'demo']);
+  await waitFor(() => taskState('merge-into-main') === 'done', 30000, 'the resolution to be done', () => missionReport('demo'));
+  fs.writeFileSync(path.join(dir, 'README.md'), 'the user goes on working\n');
+
+  await tendMerge('demo');
+
+  assert.strictEqual(taskState('merge-into-main'), 'delivered');
+  assert.strictEqual(mergeRecord().state, 'paused');
+  assert.match(mergeRecord().error, /has changes not committed/);
+  git(dir, 'checkout', '--', 'README.md');
+  const merged = await cli(['merge', 'demo']);
+  assert.strictEqual(merged.code, 0, merged.err);
+  assert.strictEqual(mergeRecord().state, 'merged');
+});
+
+test('a resolution delivered whose merge did not run (a crash between the two) is merged at the next pass', async (t) => {
+  const { dir, integration } = project(t);
+  conflict(dir, integration);
+  await cli(['merge', 'demo']);
+  await waitFor(() => taskState('merge-into-main') === 'done', 30000, 'the resolution to be done', () => missionReport('demo'));
+  const task = listTasks('demo').find((candidate) => candidate.id === 'merge-into-main');
+  await deliverMergeTask(readMission('demo'), task);
+
+  await tendMerge('demo');
+
+  assert.strictEqual(mergeRecord().state, 'merged', missionReport('demo'));
+  assert.strictEqual(git(dir, 'show', 'main:greet.txt'), 'hello from the mission');
 });

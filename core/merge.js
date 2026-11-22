@@ -27,6 +27,8 @@ const { getDelivery } = require('../deliveries');
 // Resolutions started by the watcher itself, when the merge conflicts again after one was delivered
 // (the target moved meanwhile); past them, the user is asked.
 const MAX_RESOLUTIONS = 2;
+// Errors of a wait for a lock that gave up: the watcher tries again at its next pass.
+const LOCK_GAVE_UP = ['start-busy', 'start-stuck', 'repo-busy', 'places-busy'];
 // The options of the question asked when a resolution fails, in this order (core/merge.js followAnswer).
 const OPTIONS = ['Resolve it here with me', 'Relaunch a crew member with hints', 'Pause the mission'];
 
@@ -107,7 +109,7 @@ async function tryMerge(mission, target, current, { byWatcher = false } = {}) {
   const result = await withRepoLock(mission.dir, 'merge', () => delivery.mergeIntoTarget(mission, target));
   if (result.outcome !== 'conflict') {
     // The resolution task, if any, stays described: its record says it is delivered.
-    writeMerge(name, { ...(current || {}), state: 'merged', target, sha: result.sha || null, url: result.url || null });
+    writeMerge(name, { ...(current || {}), state: 'merged', target, sha: result.sha || null, url: result.url || null, error: undefined });
     watchLog(name, 'merged', `into ${target}${result.sha ? ` (${result.sha})` : ''}${result.url ? ` ${result.url}` : ''}`);
     if (byWatcher) notify({ title: `Relaylead: ${name}`, text: `Mission ${name} merged into ${target}` });
     return { ...result, target };
@@ -193,16 +195,33 @@ async function tendMerge(name) {
       watchLog(name, 'crew-lost', `${task.session || '-'} task ${task.id}`);
       task = { ...task, state: 'failed', summary };
     }
-    if (!task || !['done', 'failed'].includes(task.state)) return;
-    await stopCrew(mission, task.session);
+    if (!task || !['done', 'failed', 'delivered'].includes(task.state)) return;
+    if (task.state !== 'delivered') await stopCrew(mission, task.session);
     if (task.state === 'failed') return askUser(mission, merge, task.summary);
-    try {
-      await deliverMergeTask(mission, task);
-    } catch (err) {
-      return askUser(mission, merge, `its work could not be delivered: ${err.message}`);
+    // Delivered already: a merge that failed, or never ran (a crash), after an earlier delivery.
+    if (task.state === 'done') {
+      try {
+        await deliverMergeTask(mission, task);
+      } catch (err) {
+        return askUser(mission, merge, `its work could not be delivered: ${err.message}`);
+      }
     }
-    await tryMerge(mission, merge.target, merge, { byWatcher: true });
+    await mergeAgain(mission, merge);
   });
+}
+
+// The merge again once the resolution is delivered. A wait for a lock that gave up is left to the next
+// pass; any other failure (the user's checkout with changes not committed, a hook) pauses the merge
+// with why, and tells the user: `relaylead merge` takes it up.
+async function mergeAgain(mission, merge) {
+  try {
+    await tryMerge(mission, merge.target, merge, { byWatcher: true });
+  } catch (err) {
+    if (LOCK_GAVE_UP.includes(err.code)) return;
+    writeMerge(mission.name, { ...readMerge(mission.name), state: 'paused', error: err.message });
+    watchLog(mission.name, 'merge-paused', err.message);
+    notify({ title: `Relaylead: ${mission.name}`, text: `The merge of ${mission.name} into ${merge.target} stopped: ${err.message}` });
+  }
 }
 
 // The answer to the question of a failed resolution: a new crew member with the hints the user told
