@@ -59,8 +59,8 @@ const messages = {
     deliveryCommit: 'chore(relaylead): deliver {id}',
     // Errors: the key is the error code (see codedError).
     usage: 'usage: {usage}',
-    'dir-busy':
-      'the folder {dir} is busy with mission "{mission}" ({state}); if its lead is gone, stop it first with: relaylead stop {mission}',
+    'old-mission-running':
+      'mission "{mission}" was launched by relaylead 0.1 and still runs in {dir} ({state}); a new mission can start in this folder once it is over; if its lead is gone, stop it with: relaylead stop {mission}',
     'mission-exists':
       'a mission named "{mission}" already exists; choose another name with --name, or remove the finished one with: relaylead remove {mission}',
     'mission-running': 'mission "{mission}" is {state}; stop it first with: relaylead stop {mission}',
@@ -303,8 +303,8 @@ const messages = {
       'relaylead launch : le veilleur n\'a pas pu être lancé ({detail}) ; lancez-le avec : relaylead watcher start\n',
     deliveryCommit: 'chore(relaylead): {id} livrée',
     usage: 'usage : {usage}',
-    'dir-busy':
-      'le dossier {dir} est occupé par la mission « {mission} » ({state}) ; si son lead a disparu, arrêtez-la d\'abord avec : relaylead stop {mission}',
+    'old-mission-running':
+      'la mission « {mission} » a été lancée par relaylead 0.1 et tourne encore dans {dir} ({state}) ; une nouvelle mission pourra démarrer dans ce dossier une fois celle-ci finie ; si son lead a disparu, arrêtez-la avec : relaylead stop {mission}',
     'mission-exists':
       'une mission nommée « {mission} » existe déjà ; choisissez un autre nom avec --name, ou supprimez celle qui est finie avec : relaylead remove {mission}',
     'mission-running': 'la mission « {mission} » est {state} ; arrêtez-la d\'abord avec : relaylead stop {mission}',

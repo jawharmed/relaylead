@@ -270,8 +270,8 @@ function mergeInProgress(cwd) {
 }
 
 // Runs git in the integration worktree. A command stopped by its timeout was killed: it may have
-// left its index.lock, and a merge going. Only one relaylead at a time runs git there (a delivery
-// holds the mission's start.lock, a launch the folder's lock), and the killed git has ended, so
+// left its index.lock, and a merge going. Only one relaylead at a time runs git there (a launch or a
+// delivery holds the mission's start.lock), and the killed git has ended, so
 // that index.lock is stale: it is removed and the merge cancelled before the error is thrown.
 function gitInIntegration(mission, args) {
   try {

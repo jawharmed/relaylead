@@ -9,8 +9,7 @@ const { sleep } = require('./timing');
 
 // Long enough for a slow agent launch held by another start. Read at each call.
 const lockWaitMs = () => Number(process.env.RELAYLEAD_START_LOCK_WAIT_MS) || 60 * 1000;
-// An empty or partly written lock file this old was left by a holder that crashed (also used for
-// the folder lock of missions.js).
+// An empty or partly written lock file this old was left by a holder that crashed.
 const EMPTY_LOCK_STALE_MS = 10 * 1000;
 // A live holder this old is stuck: a delivery runs a few git commands, each stopped after
 // gitTimeoutMs(), so even a slow one ends well before.
@@ -86,9 +85,8 @@ async function removeQuietly(file) {
 // Only the holder of the .takeover file may delete a stale lock, after checking again that it is
 // stale. Otherwise two takers could both delete it, the second one deleting the lock the first
 // one has just created. Returns true once the lock is deleted.
-// `isStale(file)` runs while the guard is held and tells whether the lock may be deleted (the
-// folder lock of missions.js has its own rule, and a mission releasing its own lock checks that it
-// is still its own). Like isStaleLock, it must return false for a lock that is gone: another
+// `isStale(file)` runs while the guard is held and tells whether the lock may be deleted (a 0.1
+// mission releasing its folder lock, or a watcher pass its own lock, checks that it is still its own). Like isStaleLock, it must return false for a lock that is gone: another
 // caller may create a new lock between this check and the removal.
 async function takeOverStaleLock(file, isStale = isStaleLock) {
   const guard = file + '.takeover';

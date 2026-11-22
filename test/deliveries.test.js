@@ -1085,9 +1085,6 @@ test('a session still alive after the wait keeps the folder', async (t) => {
   assert.strictEqual(sessionEnded(crew), false);
   assert.strictEqual(readJson(path.join(missionDir('demo'), 'state.json')).stopping, true);
   assert.strictEqual(fs.existsSync(taskWorktree(dir, 'a')), true);
-  const refused = await cli(['launch', '--agent', 'fake', '--name', 'two', '--dir', dir]);
-  assert.strictEqual(refused.code, 1);
-  assert.match(refused.err, /busy with mission "demo"/);
 });
 
 test('a stop with nothing to do still cleans', async (t) => {
