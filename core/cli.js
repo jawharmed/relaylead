@@ -393,8 +393,10 @@ commands.memory = async (args, io) => {
       io.out.write(t('memoryFingerprint', { fingerprint: memory.fingerprint }, lang));
       if (memory.text === '') io.out.write(t('memoryEmpty', {}, lang));
       else {
-        if (memory.tooLong) io.out.write(t('memoryTooLong', { lines: memory.lines, max: memory.maxLines }, lang));
-        io.out.write(memory.text);
+        if (memory.tooBig) io.out.write(t('memoryTooBig', { bytes: memory.bytes, max: memory.maxBytes }, lang));
+        else if (memory.tooLong) io.out.write(t('memoryTooLong', { lines: memory.lines, max: memory.maxLines }, lang));
+        io.out.write(memory.shown);
+        if (memory.hidden > 0) io.out.write(t('memoryTruncated', { hidden: memory.hidden }, lang));
       }
     }
     return 0;

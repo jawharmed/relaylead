@@ -110,7 +110,7 @@ test('a text over the ceiling is refused, and a memory over it is flagged by sho
   fs.writeFileSync(memoryFile(dir), '1\n2\n3\n4\n5\n');
   const shown = await relaylead(['memory', 'show']);
   assert.match(shown.out, /\nWARNING: this memory has 5 lines, over the ceiling of 3\. Compact it before you start/);
-  assert.ok(shown.out.endsWith('1\n2\n3\n4\n5\n'));
+  assert.ok(shown.out.endsWith('\n\n1\n2\n3\n[truncated: 2 lines not shown]\n'), shown.out);
   writeJson(path.join(home(), 'config.json'), { language: 'fr', delivery: { type: 'files' } });
   assert.match((await relaylead(['memory', 'show'])).out, /\nATTENTION : cette mémoire fait 5 lignes/);
 });
@@ -202,4 +202,21 @@ test('a versioned memory stays visible to git after the delivery excluded .relay
   assert.strictEqual(ignored('.relaylead/worktrees/a/file'), true);
   assert.strictEqual(ignored('.relaylead/memoire-archive/x.md'), true);
   assert.match(runFileSync('git', ['status', '--porcelain', '-uall'], { cwd: dir, encoding: 'utf8' }), /\.relaylead\/memoire\.md/);
+});
+
+test('over the byte ceiling, show prints only what fits and says so; write refuses; maxLines is bounded', async (t) => {
+  const dir = project(t, { memory: { maxBytes: 1024, maxLines: 5000 } });
+  const line = 'x'.repeat(99) + '\n'; // 100 bytes
+  fs.mkdirSync(path.dirname(memoryFile(dir)), { recursive: true });
+  fs.writeFileSync(memoryFile(dir), line.repeat(30));
+  const shown = (await relaylead(['memory', 'show'])).out;
+  assert.match(shown, /WARNING: this memory is 3000 bytes, over the ceiling of 1024/);
+  assert.match(shown, /\[truncated: 20 lines not shown\]\n$/);
+  assert.strictEqual(shown.split(line).length - 1, 10);
+  const refused = await relaylead(['memory', 'write', ...base(dir), '--text', ('y'.repeat(99) + '\\n').repeat(11)]);
+  assert.strictEqual(refused.code, 1);
+  assert.match(refused.err, /bytes, over the ceiling of 1024/);
+  assert.strictEqual((await relaylead(['memory', 'write', ...base(dir), '--text', 'short'])).code, 0);
+  // maxLines 5000 is out of range: the default 200 applies
+  assert.strictEqual(readMemory(dir).maxLines, 200);
 });

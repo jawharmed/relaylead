@@ -168,6 +168,7 @@ Each project has a memory shared by its missions: `.relaylead/memoire.md` in the
 
 - `memory.enabled` (`true`): turns the memory off with `false`.
 - `memory.maxLines` (`200`): the ceiling. A memory over it is flagged when a lead starts (the lead must compact it before anything else, with no AI involved in the check), `relaylead doctor` warns about it in the folder you run it in, and a compaction over the ceiling is refused.
+- `memory.maxBytes` (`16384`): the ceiling in bytes (1024 to 65536; `maxLines` is 1 to 1000, a value out of range is ignored). Over either ceiling, `memory show` prints only the start of the memory that fits, says how many lines it left out, and the lead must compact before anything else; a text over either is refused.
 - `memory.versioned` (`false`): by default the memory stays out of git: `relaylead init` adds it and its archive to `.git/info/exclude` (your `.gitignore` is not touched). With `true`, the memory is left visible to git (the exclusion of `.relaylead/` becomes `.relaylead/*` plus `!.relaylead/memoire.md`, also after a delivery) and you commit it with the code; its archive stays excluded.
 
 `relaylead init` asks the two questions (turn it on; version it), with these defaults; `--yes` takes them, `--no-memory` and `--versioned-memory` answer them. The memory of one mission (its decisions and the messages you told it) lives in the mission's folder and is deleted with it.

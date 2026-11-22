@@ -87,7 +87,9 @@ async function doctor(dir) {
     try {
       const memory = memorySettings(dir).enabled ? readMemory(dir) : null;
       if (memory && memory.text !== '') {
-        const over = `${memory.lines} lines, over the ceiling of ${memory.maxLines}; the next lead will compact it before starting`;
+        const over = memory.tooBig
+          ? `${memory.bytes} bytes, over the ceiling of ${memory.maxBytes}; the next lead will compact it before starting`
+          : `${memory.lines} lines, over the ceiling of ${memory.maxLines}; the next lead will compact it before starting`;
         add(memory.tooLong ? 'warn' : 'ok', 'memory', memory.tooLong ? over : `${memory.lines} lines (ceiling ${memory.maxLines})`);
       }
     } catch (err) {

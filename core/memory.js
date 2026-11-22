@@ -44,8 +44,10 @@ function archiveDir(dir) {
 // { enabled, maxLines, versioned } of a project, the defaults for what is missing or not valid.
 function memorySettings(dir) {
   const { memory } = loadConfig({ dir: projectRoot(dir) });
-  const maxLines = Number.isInteger(memory.maxLines) && memory.maxLines >= 1 ? memory.maxLines : 200;
-  return { enabled: memory.enabled !== false, maxLines, versioned: memory.versioned === true };
+  // The ceilings are bounded: a setting out of range (or not a whole number) is the default.
+  const maxLines = Number.isInteger(memory.maxLines) && memory.maxLines >= 1 && memory.maxLines <= 1000 ? memory.maxLines : 200;
+  const maxBytes = Number.isInteger(memory.maxBytes) && memory.maxBytes >= 1024 && memory.maxBytes <= 65536 ? memory.maxBytes : 16384;
+  return { enabled: memory.enabled !== false, maxLines, maxBytes, versioned: memory.versioned === true };
 }
 
 // The lines of a text, without the empty end.
@@ -69,12 +71,24 @@ function fingerprint(text) {
   return crypto.createHash('sha1').update(text).digest('hex').slice(0, 12);
 }
 
-// { text, lines, maxLines, tooLong } of a project; used by `memory show` and by doctor.
+// { text, lines, bytes, maxLines, maxBytes, tooBig, tooLong, shown, hidden, fingerprint } of a project; used by `memory show` and by doctor.
 function readMemory(dir) {
-  const { maxLines } = memorySettings(dir);
+  const { maxLines, maxBytes } = memorySettings(dir);
   const text = readMemoryText(dir);
   const lines = countLines(text);
-  return { text, lines, maxLines, tooLong: lines > maxLines, fingerprint: fingerprint(text) };
+  const bytes = Buffer.byteLength(text);
+  const tooBig = bytes > maxBytes;
+  const tooLong = tooBig || lines > maxLines;
+  // What `memory show` prints: all of it, or when over a ceiling the first lines that fit under both.
+  let shown = text;
+  if (tooLong) {
+    shown = '';
+    for (const line of text.split('\n').slice(0, maxLines)) {
+      if (Buffer.byteLength(shown + line + '\n') > maxBytes) break;
+      shown += line + '\n';
+    }
+  }
+  return { text, lines, bytes, maxLines, maxBytes, tooBig, tooLong, shown, hidden: lines - countLines(shown), fingerprint: fingerprint(text) };
 }
 
 // Keeps .git/info/exclude right for the memory, the .gitignore never touched. Not versioned: the memory
@@ -129,12 +143,14 @@ async function withMemoryLock(dir, action) {
 // empty or longer than the ceiling, or when the file is not the one `base` (its fingerprint) was taken from. The previous version goes to the archive. Returns the number of lines.
 async function writeMemory(mission, text, base) {
   const dir = projectRoot(require('./missions').readMission(mission).dir); // lazy: missions.js needs the delivery, which needs this file
-  const { enabled, maxLines, versioned } = memorySettings(dir);
+  const { enabled, maxLines, maxBytes, versioned } = memorySettings(dir);
   if (!enabled) throw codedError('memory-disabled', {});
   const body = String(text).replace(/\s+$/, '');
   if (!body.trim()) throw codedError('bad-memory', {});
   const lines = countLines(body);
   if (lines > maxLines) throw codedError('memory-too-long', { lines, max: maxLines });
+  const bytes = Buffer.byteLength(body + '\n');
+  if (bytes > maxBytes) throw codedError('memory-too-big', { bytes, max: maxBytes });
   await withMemoryLock(dir, async () => {
     const before = readMemoryText(dir);
     // Another mission may have written since the lead read: its compaction would be lost.
