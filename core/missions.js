@@ -115,8 +115,9 @@ function sourceTakenBy(realDir, source) {
 
 // Whether the mission is done but its work was not brought into the user's branch: `relaylead merge`
 // is the next step. A delivery that has nothing to merge (files) never waits for it; a merge being
-// resolved by the crew or asked about is not waiting for the user to start it.
-function awaitsMerge(mission) {
+// resolved by the crew or asked about is not waiting for the user to start it, unless `unfinished`
+// (the launch's check): any merge not completed still holds the tasks of the mission.
+function awaitsMerge(mission, { unfinished = false } = {}) {
   if (!getDelivery(mission.config.delivery.type).mergeIntoTarget) return false;
   const record = readStateRecord(mission.name);
   if (record.state !== 'done' || record.stopping) return false;
@@ -127,6 +128,7 @@ function awaitsMerge(mission) {
     // being written: the merge is on its way
     return false;
   }
+  if (unfinished) return !merge || merge.state !== 'merged';
   return !merge || merge.state === 'paused';
 }
 
@@ -134,7 +136,7 @@ function awaitsMerge(mission) {
 // or null: launching again would do the same tasks twice.
 function deliveredSourceHolder(realDir, source) {
   const text = sourceText(source);
-  return allMissions().find((mission) => mission.dir === realDir && sourceText(mission.config.source) === text && awaitsMerge(mission)) || null;
+  return allMissions().find((mission) => mission.dir === realDir && sourceText(mission.config.source) === text && awaitsMerge(mission, { unfinished: true })) || null;
 }
 
 // The task folder given with `relaylead launch --tasks`, relative to the project, with / separators.
@@ -196,7 +198,11 @@ async function createMission({ name, dir, request, team, priority, agent, tasks,
   const sharing = sourceTakenBy(realDir, config.source);
   if (sharing) throw codedError('source-taken', { mission: sharing.name, source: sourceText(config.source) });
   const delivered = force ? null : deliveredSourceHolder(realDir, config.source);
-  if (delivered) throw codedError('source-delivered', { mission: delivered.name, source: sourceText(config.source) });
+  if (delivered) {
+    const merging = readJson(missionFile(delivered.name, 'merge.json'), null);
+    const code = merging && merging.state !== 'paused' ? 'source-merging' : 'source-delivered';
+    throw codedError(code, { mission: delivered.name, source: sourceText(config.source) });
+  }
   reserveName(missionName);
   // What prepareMission creates (the integration branch and its worktree): a launch that fails removes it.
   const created = {};
@@ -219,7 +225,8 @@ async function createMission({ name, dir, request, team, priority, agent, tasks,
     // A lead launched, then failed, was stopped by launchLead. Retries: it may still be finishing a
     // write in the folder.
     fs.rmSync(missionDir(missionName), { recursive: true, force: true, maxRetries: 5 });
-    if (delivery.undoPrepare) {
+    // Only what this launch made is removed: a refusal before any creation touches nothing.
+    if (delivery.undoPrepare && (created.branch || created.worktree)) {
       try {
         await withRepoLock(realDir, 'launch', () => delivery.undoPrepare(mission, created));
       } catch {

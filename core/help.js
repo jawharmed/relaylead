@@ -46,8 +46,8 @@ const HELP = {
     fr: ['relaylead show <mission>', '', 'Ouvre la session du lead d\'une mission en cours. Une mission terminée n\'a plus de session.'],
   },
   stop: {
-    en: ['relaylead stop <mission>', '', 'Stops the mission and all its sessions. Its branches and worktrees stay until relaylead remove.'],
-    fr: ['relaylead stop <mission>', '', 'Arrête la mission et toutes ses sessions. Ses branches et ses worktrees restent jusqu\'à relaylead remove.'],
+    en: ['relaylead stop <mission>', '', 'Stops the mission and all its sessions. Its branches stay until relaylead remove; the task worktrees with no uncommitted work are removed.'],
+    fr: ['relaylead stop <mission>', '', 'Arrête la mission et toutes ses sessions. Ses branches restent jusqu\'à relaylead remove ; les worktrees de tâche sans travail non commité sont retirés.'],
   },
   remove: {
     en: [
@@ -59,7 +59,7 @@ const HELP = {
     fr: [
       'relaylead remove <mission> [--force]',
       '',
-      'Retire une mission terminée : son état, ses worktrees et ses branches. Refusé tant que du travail n\'est pas livré ;',
+      'Supprime une mission terminée : son état, ses worktrees et ses branches. Refusé tant que du travail n\'est pas livré ;',
       '--force supprime aussi ce travail.',
     ],
   },
@@ -83,12 +83,12 @@ const HELP = {
   },
   task: {
     en: [
-      'relaylead task list [--short] | start <id> | retry <id> | deliver <id> | done <id> | fail <id> [--summary text] [--mission <name>]',
+      'relaylead task list [--short] | start <id> [--profile <p>] | retry <id> [--profile <p>] | deliver <id> [--no-hooks] | done <id> | fail <id> [--summary text] [--mission <name>]',
       '',
       'Manages the tasks of a mission. Mostly for the lead and the crew; --mission names the mission outside a session.',
     ],
     fr: [
-      'relaylead task list [--short] | start <id> | retry <id> | deliver <id> | done <id> | fail <id> [--summary texte] [--mission <nom>]',
+      'relaylead task list [--short] | start <id> [--profile <p>] | retry <id> [--profile <p>] | deliver <id> [--no-hooks] | done <id> | fail <id> [--summary texte] [--mission <nom>]',
       '',
       'Gère les tâches d\'une mission. Surtout pour le lead et l\'équipe ; --mission nomme la mission hors d\'une session.',
     ],

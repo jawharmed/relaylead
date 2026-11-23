@@ -179,11 +179,13 @@ const messages = {
     'integration-dirty':
       'the integration worktree {dir} has changes nobody committed ({files}); commit them there, or remove the ones that are not under {tasksDir}, then launch again; files under {tasksDir} hold the state of delivered tasks: never remove them',
     'tasks-folder-missing':
-      'there is no task folder "{dir}" in this project. Create it with one file per task, for instance {dir}/hello.md:\n---\ntitle: Say hello\n---\nCreate hello.txt that says hello.\nthen commit it (git add {dir} && git commit -m "tasks"): the crew works from commits',
+      'there is no task folder "{dir}" in this project. Create it with one file per task, for instance {dir}/hello.md:\n  ---\n  title: Say hello\n  ---\n  Create hello.txt that says hello.\nthen commit it (git add {dir} && git commit -m "tasks"): the crew works from commits',
     'tasks-folder-empty':
-      'the task folder "{dir}" has no .md file. Add one file per task, for instance {dir}/hello.md:\n---\ntitle: Say hello\n---\nCreate hello.txt that says hello.\nthen commit it (git add {dir} && git commit -m "tasks")',
+      'the task folder "{dir}" has no .md file. Add one file per task, for instance {dir}/hello.md:\n  ---\n  title: Say hello\n  ---\n  Create hello.txt that says hello.\nthen commit it (git add {dir} && git commit -m "tasks")',
     'tasks-not-committed':
-      'the task folder "{dir}" has changes not committed, or is missing from branch {branch}; commit it first (git add {dir} && git commit -m "tasks"): the crew works from commits',
+      'the task folder "{dir}" has changes not committed, or is missing from branch {branch}; commit it first (git add {dir} && git commit -m "tasks"): the crew works from commits. A task is one file per task, for instance {dir}/hello.md:\n  ---\n  title: Say hello\n  ---\n  Create hello.txt that says hello.',
+    'source-merging':
+      'mission "{mission}" of this project is done and its merge is not over, and it took its tasks from the same source ({source}): wait for the merge to end (see relaylead brief), or launch anyway with --force',
     'source-delivered':
       'mission "{mission}" of this project is done but not merged, and it took its tasks from the same source ({source}): this mission would do them again. Merge the finished one with: relaylead merge {mission}; or throw it away with: relaylead remove {mission}; or launch anyway with --force',
     'question-unknown': 'mission "{mission}" has no question "{id}"; see the open ones with: relaylead question list {mission}',
@@ -315,7 +317,7 @@ const messages = {
     eventMissionDone: '[{mission}] mission done; bring its work into your branch with: relaylead merge {mission}\n',
     briefToMerge: 'Done, not merged yet:\n',
     briefToMergeLine: '  {mission}: relaylead merge {mission}\n',
-    showMissionOver: 'mission {mission} is {state}: its session was removed; to read it again, use claude --resume\n',
+    showMissionOver: 'mission {mission} is {state}: there is no session left to open; to read its work again, use claude --resume\n',
     // The lines of doctor: "<level> <name>: <detail>", the detail being one of these.
     'doctor-node-old': '{found}, Node {min} or later is needed',
     'doctor-git-found': 'found',
@@ -355,7 +357,7 @@ const messages = {
       '  list      lister les missions',
       '  show      ouvrir la session du lead d\'une mission',
       '  stop      arrêter une mission',
-      '  remove    supprimer une mission finie',
+      '  remove    supprimer une mission terminée',
       '  priority  changer la priorité d\'une mission (high, normal, low)',
       '  merge     ramener le travail d\'une mission terminée dans votre branche',
       '  task      gérer les tâches d\'une mission',
@@ -526,11 +528,13 @@ const messages = {
     'integration-dirty':
       'le worktree d\'intégration {dir} a des changements que personne n\'a commités ({files}) ; commitez-les dans ce dossier, ou retirez ceux qui ne sont pas sous {tasksDir}, puis relancez ; les fichiers sous {tasksDir} portent l\'état des tâches livrées : ne les retirez jamais',
     'tasks-folder-missing':
-      'il n\'y a pas de dossier de tâches « {dir} » dans ce projet. Créez-le avec un fichier par tâche, par exemple {dir}/hello.md :\n---\ntitle: Dire bonjour\n---\nCréer hello.txt qui dit bonjour.\npuis commitez-le (git add {dir} && git commit -m "tâches") : les équipiers travaillent à partir des commits',
+      'il n\'y a pas de dossier de tâches « {dir} » dans ce projet. Créez-le avec un fichier par tâche, par exemple {dir}/hello.md :\n  ---\n  title: Dire bonjour\n  ---\n  Créer hello.txt qui dit bonjour.\npuis commitez-le (git add {dir} && git commit -m "tâches") : les équipiers travaillent à partir des commits',
     'tasks-folder-empty':
-      'le dossier de tâches « {dir} » ne contient aucun fichier .md. Ajoutez un fichier par tâche, par exemple {dir}/hello.md :\n---\ntitle: Dire bonjour\n---\nCréer hello.txt qui dit bonjour.\npuis commitez-le (git add {dir} && git commit -m "tâches")',
+      'le dossier de tâches « {dir} » ne contient aucun fichier .md. Ajoutez un fichier par tâche, par exemple {dir}/hello.md :\n  ---\n  title: Dire bonjour\n  ---\n  Créer hello.txt qui dit bonjour.\npuis commitez-le (git add {dir} && git commit -m "tâches")',
     'tasks-not-committed':
-      'le dossier des tâches « {dir} » a des changements non commités, ou manque dans la branche {branch} ; commitez-le d\'abord (git add {dir} && git commit -m "tâches") : les équipiers travaillent à partir des commits',
+      'le dossier des tâches « {dir} » a des changements non commités, ou manque dans la branche {branch} ; commitez-le d\'abord (git add {dir} && git commit -m "tâches") : les équipiers travaillent à partir des commits. Une tâche est un fichier, par exemple {dir}/hello.md :\n  ---\n  title: Dire bonjour\n  ---\n  Créer hello.txt qui dit bonjour.',
+    'source-merging':
+      'la mission « {mission} » de ce projet est terminée et sa fusion n\'est pas finie, et elle prenait ses tâches à la même source ({source}) : attendez la fin de la fusion (voir relaylead brief), ou lancez quand même avec --force',
     'source-delivered':
       'la mission « {mission} » de ce projet est terminée mais pas fusionnée, et elle prenait ses tâches à la même source ({source}) : cette mission les referait. Fusionnez la mission terminée avec : relaylead merge {mission} ; ou jetez-la avec : relaylead remove {mission} ; ou lancez quand même avec --force',
     'question-unknown': 'la mission « {mission} » n\'a pas de question « {id} » ; voir les questions ouvertes avec : relaylead question list {mission}',
@@ -658,7 +662,7 @@ const messages = {
     eventMissionDone: '[{mission}] mission terminée ; ramenez son travail dans votre branche avec : relaylead merge {mission}\n',
     briefToMerge: 'Terminées, pas encore fusionnées :\n',
     briefToMergeLine: '  {mission} : relaylead merge {mission}\n',
-    showMissionOver: 'la mission {mission} est {state} : sa session a été retirée ; pour la relire, utilisez claude --resume\n',
+    showMissionOver: 'la mission {mission} est {state} : il n\'y a plus de session à ouvrir ; pour relire son travail, utilisez claude --resume\n',
     // Les lignes de doctor : « <niveau> <nom> : <détail> », le détail étant l\'un de ces textes.
     'doctor-node-old': '{found}, Node {min} ou plus récent est nécessaire',
     'doctor-git-found': 'trouvé',

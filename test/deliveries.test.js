@@ -94,7 +94,7 @@ function merge(dir, branch) {
 
 test('prepareMission creates the integration worktree without touching the user checkout', async (t) => {
   freshHome(t);
-  const dir = userRepo({ 'tasks/finished.md': '---\\ntitle: Finished\\nstate: done\\n---\\n' }); // a committed task folder whose only task is done: the lead idles
+  const dir = userRepo({ 'tasks/finished.md': '---\ntitle: Finished\nstate: done\n---\n' }); // a committed task folder whose only task is done: the lead idles
   const before = checkoutState(dir);
 
   const launched = await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir]);
@@ -493,6 +493,18 @@ test('a missing, an empty and an uncommitted task folder each have their own mes
   assert.strictEqual(fs.existsSync(missionDir('demo')), false);
 });
 
+test('a launch refused before anything is made leaves the worktrees of the user alone', async (t) => {
+  freshHome(t);
+  const dir = userRepo({});
+  const elsewhere = path.join(tmpDir('relaylead-elsewhere-'), 'wt');
+  git(dir, 'worktree', 'add', '-q', '-b', 'mine', elsewhere);
+  fs.rmSync(elsewhere, { recursive: true, force: true }); // a worktree whose folder is gone (a disk not plugged in)
+  const refused = await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir]);
+  assert.strictEqual(refused.code, 1);
+  assert.match(refused.err, /there is no task folder/);
+  assert.match(git(dir, 'worktree', 'list', '--porcelain'), /wt\b/); // not pruned
+});
+
 test('a launch that fails after the preparation removes the branch and the worktree it made', async (t) => {
   freshHome(t);
   const dir = userRepo({ 'tasks/a.md': TASK_A });
@@ -531,6 +543,27 @@ test('a launch is refused while a done mission of the project, not merged, has t
 
   const forced = await cli(['launch', '--agent', 'fake', '--name', 'second', '--dir', dir, '--force']);
   assert.strictEqual(forced.code, 0, forced.err);
+});
+
+test('a merge being resolved, or a merge done, or another task folder: the first blocks the launch, the others do not', async (t) => {
+  freshHome(t);
+  t.after(async () => {
+    for (const name of ['second', 'third']) for (const session of listSessions(name)) await fake.stop(session);
+  });
+  const dir = userRepo({ 'tasks/a.md': TASK_A, 'other/b.md': TASK_B });
+  assert.strictEqual((await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir])).code, 0);
+  writeJson(path.join(missionDir('demo'), 'state.json'), { state: 'done', updatedAt: new Date().toISOString() });
+  writeJson(path.join(missionDir('demo'), 'merge.json'), { state: 'resolving', target: 'main', at: new Date().toISOString() });
+  const refused = await cli(['launch', '--agent', 'fake', '--name', 'second', '--dir', dir]);
+  assert.strictEqual(refused.code, 1);
+  assert.match(refused.err, /its merge is not over/);
+
+  const otherFolder = await cli(['launch', '--agent', 'fake', '--name', 'second', '--dir', dir, '--tasks', 'other']);
+  assert.strictEqual(otherFolder.code, 0, otherFolder.err);
+
+  writeJson(path.join(missionDir('demo'), 'merge.json'), { state: 'merged', target: 'main', at: new Date().toISOString() });
+  const merged = await cli(['launch', '--agent', 'fake', '--name', 'third', '--dir', dir]);
+  assert.strictEqual(merged.code, 0, merged.err);
 });
 
 // A git hook of the user's repository, shared by all its worktrees. POSIX sh: Git for Windows runs
@@ -1197,7 +1230,7 @@ test('stop keeps the worktree of a crew session whose stop failed, and cleans th
 
 test('a session still alive after the wait keeps the folder', async (t) => {
   freshHome(t);
-  const dir = userRepo({ 'tasks/finished.md': '---\\ntitle: Finished\\nstate: done\\n---\\n' }); // its only task is done: the lead idles
+  const dir = userRepo({ 'tasks/finished.md': '---\ntitle: Finished\nstate: done\n---\n' }); // its only task is done: the lead idles
   assert.strictEqual((await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir])).code, 0);
   await waitFor(() => getState('demo') === 'working', 30000, 'the lead to be working');
   const crew = await crewIn(taskWithWork(readMission('demo'), 'a', { committed: true }), 1);

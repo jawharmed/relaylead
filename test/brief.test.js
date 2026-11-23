@@ -90,6 +90,8 @@ test('a done mission says what to run next, in wait --all and in brief; a delive
 
   const waited = await relaylead(['wait', '--all', '--timeout', '0']);
   assert.match(waited, /\[demo\] mission done; bring its work into your branch with: relaylead merge demo/);
+  assert.match(waited, /\[plain\] mission done\n/);
+  assert.doesNotMatch(waited, /plain.*merge/);
   const text = await relaylead(['brief']);
   assert.match(text, /Done, not merged yet:\n  demo: relaylead merge demo\n$/);
   assert.doesNotMatch(text, /plain: relaylead merge/);

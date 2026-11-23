@@ -73,6 +73,7 @@ test('a crew member finishes only its own task and drives no task', async () => 
 });
 
 test('--help after a command prints the help of that command', async () => {
+  process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
   const io = makeIo();
   assert.strictEqual(await run(['stop', '--help'], io), 0);
   assert.match(io.out.text, /^relaylead stop <mission>\n/);
@@ -80,6 +81,7 @@ test('--help after a command prints the help of that command', async () => {
 });
 
 test('every command has its help, in both languages, by --help and by help <command>', async () => {
+  process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-'); // English, whatever the machine's own configuration
   const { helpCommands, commandHelp } = require('../core/help');
   // The commands the general help lists, plus help itself: none lacks a text.
   const commandLines = require('../core/messages').t('help', {}, 'en').split('Options:')[0];
@@ -132,7 +134,7 @@ test('show on a finished mission says it has no session left, not the error of t
   writeJson(path.join(missionDir('demo'), 'state.json'), { state: 'done', updatedAt: new Date().toISOString() });
   const io = makeIo();
   assert.strictEqual(await run(['show', 'demo'], io), 0);
-  assert.match(io.out.text, /mission demo is done: its session was removed; to read it again, use claude --resume/);
+  assert.match(io.out.text, /mission demo is done: there is no session left to open; to read its work again, use claude --resume/);
 });
 
 test('question list on an unknown mission is an error, like show', async () => {

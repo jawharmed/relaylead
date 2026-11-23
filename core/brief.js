@@ -7,6 +7,7 @@ const { waitForEvents } = require('./console-wait');
 const { buildOverview } = require('./overview');
 const { localTime } = require('./usage-pause');
 const { t } = require('./messages');
+const { readMission, awaitsMerge } = require('./missions');
 
 // A question as it is, with its mission and id: text, context, then the options numbered from 1,
 // the recommended one marked. `isNew`: it was opened since the last look of the console.
@@ -21,6 +22,14 @@ function questionText(mission, question, isNew, lang) {
   return text;
 }
 
+function mergeable(name) {
+  try {
+    return awaitsMerge(readMission(name));
+  } catch {
+    return false; // the mission was removed since
+  }
+}
+
 // An event of console-wait that is not a question: a task failed, a mission over, a merge done.
 function eventText(event, lang) {
   if (event.kind === 'task') {
@@ -28,7 +37,8 @@ function eventText(event, lang) {
   }
   if (event.kind === 'merge') return t('eventMerged', { mission: event.mission, target: event.target }, lang);
   // A done mission says what to run next: its work is still to be merged.
-  if (/^done/.test(event.state)) return t('eventMissionDone', { mission: event.mission }, lang);
+  // Only when the mission can be merged now (not a delivery of files, not still stopping, not removed).
+  if (/^done/.test(event.state) && mergeable(event.mission)) return t('eventMissionDone', { mission: event.mission }, lang);
   return t('eventMission', { mission: event.mission, state: event.state }, lang);
 }
 

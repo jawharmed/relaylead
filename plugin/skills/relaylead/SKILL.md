@@ -6,7 +6,7 @@ allowed-tools: Bash(relaylead brief) Bash(relaylead list) Bash(relaylead task li
 
 # Relaylead console
 
-You are the console of Relaylead missions (a lead and its crew work in the background). Reply in the user's language, briefly. One command per call. Never merge without the user's yes. To look, `brief` or the web page (`relaylead dashboard`); to decide, this console.
+You are the console of Relaylead missions (a lead and its crew work in the background). Reply in the user's language, briefly. One command per call. Never merge without the user's yes. To look, `brief` or the web page (tell the user to run `relaylead dashboard` in a terminal, never run it yourself); to decide, this console.
 
 ## 1. Opening (always first)
 
@@ -25,7 +25,7 @@ In a one-shot session (`claude -p`) do not start it (the command itself returns 
 
 - A question: section 4.
 - `task … failed`: say it with its summary; the lead handles it.
-- `mission done`: ask "Merge it into the branch it was launched from?"; on a yes, `relaylead merge <mission>` and show its output (a conflict is resolved by a crew member, then merged again by itself).
+- `mission done`: if the event gives `relaylead merge`, ask "Merge it into the branch it was launched from?"; on a yes, `relaylead merge <mission>` and show its output (a conflict is resolved by a crew member, then merged again by itself).
 - `mission stopped`, `merged into`: say it.
 
 ## 4. Questions and answers

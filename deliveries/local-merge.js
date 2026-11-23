@@ -222,9 +222,21 @@ function checkTasksFolder(mission) {
 function undoPrepare(mission, created) {
   const branch = mission.config.delivery.branch;
   const integration = integrationDir(mission);
-  if (created.worktree && fs.existsSync(integration)) removeWorktree(mission, integration);
-  git(mission.dir, ['worktree', 'prune']);
-  if (created.branch && branchExists(mission.dir, branch)) git(mission.dir, ['branch', '-D', branch]);
+  // Each step on its own: one that fails does not keep the others from running. `prune` only after a
+  // worktree of ours was removed: it would also forget a worktree of the user (a disk not plugged in).
+  if (created.worktree) {
+    try {
+      if (fs.existsSync(integration)) removeWorktree(mission, integration);
+      git(mission.dir, ['worktree', 'prune']);
+    } catch {
+      // the branch below may then stay too: git refuses to delete a branch a worktree has out
+    }
+  }
+  try {
+    if (created.branch && branchExists(mission.dir, branch)) git(mission.dir, ['branch', '-D', branch]);
+  } catch {
+    // left in place
+  }
   try {
     fs.rmdirSync(layout.worktreesDir(mission));
   } catch {
