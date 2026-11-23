@@ -15,6 +15,7 @@ const { runFileSync } = require('./run-file');
 const { readMemory, memorySettings } = require('./memory');
 const { listMissions } = require('./missions');
 const { abandonment } = require('./abandon');
+const { secureHome } = require('./store');
 
 const MIN_NODE = 18;
 
@@ -110,6 +111,15 @@ async function doctor(dir, lang) {
     }
   } catch (err) {
     add('warn', 'missions', say('doctor-missions-unreadable', { detail: err.message }));
+  }
+
+  // RELAYLEAD_HOME for the user alone: a folder readable by others is put back in 700.
+  try {
+    const former = secureHome();
+    if (former) add('ok', 'permissions', say('doctor-home-fixed', { dir: home(), mode: former }));
+    else if (fs.existsSync(home()) && process.platform !== 'win32') add('ok', 'permissions', say('doctor-home-private', { dir: home() }));
+  } catch (err) {
+    add('warn', 'permissions', say('doctor-home-unfixed', { dir: home(), detail: err.message }));
   }
 
   if (fs.existsSync(path.join(home(), 'STOP'))) add('warn', 'STOP', say('doctor-stop', { home: home() }));

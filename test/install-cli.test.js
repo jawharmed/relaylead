@@ -225,3 +225,19 @@ test('uninstall --purge refuses while a mission runs, and --force stops its sess
   assert.ok(!fs.existsSync(env.RELAYLEAD_HOME));
   await waitFor(() => !isAlive(lead.pid), 10000, 'the lead process to end');
 });
+
+test('install and doctor put a home readable by others back in 700', { skip: process.platform === 'win32' }, async (t) => {
+  const env = installEnv(t);
+  const modeOf = (file) => fs.statSync(file).mode & 0o777;
+  fs.chmodSync(env.RELAYLEAD_HOME, 0o755);
+  const installed = await run(env, 'install');
+  assert.strictEqual(installed.code, 0, installed.err + installed.out);
+  assert.strictEqual(modeOf(env.RELAYLEAD_HOME), 0o700);
+  assert.strictEqual(modeOf(path.join(env.RELAYLEAD_HOME, 'install.json')), 0o600);
+  assert.match(installed.out, /^ok permissions: .* readable by you only$/m);
+
+  fs.chmodSync(env.RELAYLEAD_HOME, 0o755);
+  const doctor = await run(env, 'doctor');
+  assert.ok(doctor.out.includes(`ok permissions: ${msg('doctor-home-fixed', { dir: env.RELAYLEAD_HOME, mode: '755' })}`), doctor.out);
+  assert.strictEqual(modeOf(env.RELAYLEAD_HOME), 0o700);
+});

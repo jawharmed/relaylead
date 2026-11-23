@@ -76,10 +76,11 @@ async function releaseLock(realDir, mission) {
 }
 
 // mkdir without `recursive` fails if the folder exists: two launches cannot take the same name.
+// Folders for the user alone, as core/store.js makes them.
 function reserveName(name) {
-  fs.mkdirSync(path.join(home(), 'missions'), { recursive: true });
+  fs.mkdirSync(path.join(home(), 'missions'), { recursive: true, mode: 0o700 });
   try {
-    fs.mkdirSync(missionDir(name));
+    fs.mkdirSync(missionDir(name), { mode: 0o700 });
   } catch (err) {
     if (err.code === 'EEXIST') throw codedError('mission-exists', { mission: name });
     throw err;

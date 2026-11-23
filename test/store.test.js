@@ -108,3 +108,51 @@ test('writeText sets the mode despite the umask', { skip: process.platform === '
   writeText(file, '#!/bin/sh\n', { mode: 0o755 });
   assert.strictEqual(fs.statSync(file).mode & 0o777, 0o755);
 });
+
+// --- Permissions (lot H1) ---------------------------------------------------------------------
+
+const { appendText, secureHome } = require('../core/store');
+const modeOf = (file) => fs.statSync(file).mode & 0o777;
+
+// RELAYLEAD_HOME set to a folder not made yet, for the rest of test `t`.
+function useNewHome(t) {
+  const home = path.join(tmpDir(), 'home');
+  const previous = process.env.RELAYLEAD_HOME;
+  process.env.RELAYLEAD_HOME = home;
+  t.after(() => {
+    if (previous === undefined) delete process.env.RELAYLEAD_HOME;
+    else process.env.RELAYLEAD_HOME = previous;
+  });
+  return home;
+}
+
+test('under RELAYLEAD_HOME, folders are made in 700 and files in 600', { skip: process.platform === 'win32' }, (t) => {
+  const home = useNewHome(t);
+  const previousMask = process.umask(0o022);
+  t.after(() => process.umask(previousMask));
+  writeJson(path.join(home, 'missions', 'demo', 'state.json'), { state: 'working' });
+  writeTextExclusive(path.join(home, 'missions', 'demo', 'mail', 'one.md'), 'hello');
+  appendText(path.join(home, 'watch.log'), 'line\n');
+  assert.strictEqual(modeOf(home), 0o700);
+  assert.strictEqual(modeOf(path.join(home, 'missions', 'demo')), 0o700);
+  assert.strictEqual(modeOf(path.join(home, 'missions', 'demo', 'state.json')), 0o600);
+  assert.strictEqual(modeOf(path.join(home, 'missions', 'demo', 'mail', 'one.md')), 0o600);
+  assert.strictEqual(modeOf(path.join(home, 'watch.log')), 0o600);
+  // A mode given by the caller wins (the mission's relaylead shim is run by the sessions).
+  writeText(path.join(home, 'missions', 'demo', 'bin', 'relaylead'), '#!/bin/sh\n', { mode: 0o755 });
+  assert.strictEqual(modeOf(path.join(home, 'missions', 'demo', 'bin', 'relaylead')), 0o755);
+  // Elsewhere (the project memory, the plist), the usual modes.
+  const outside = path.join(tmpDir(), 'project', 'memory.md');
+  writeText(outside, 'notes\n');
+  assert.strictEqual(modeOf(outside), 0o644);
+});
+
+test('secureHome puts a home readable by others back in 700', { skip: process.platform === 'win32' }, (t) => {
+  const home = useNewHome(t);
+  assert.strictEqual(secureHome(), null, 'nothing to do when the folder does not exist');
+  fs.mkdirSync(home, { mode: 0o755 });
+  fs.chmodSync(home, 0o755);
+  assert.strictEqual(secureHome(), '755');
+  assert.strictEqual(modeOf(home), 0o700);
+  assert.strictEqual(secureHome(), null);
+});

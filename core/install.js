@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { home } = require('./paths');
-const { readJson, writeJson } = require('./store');
+const { readJson, writeJson, secureHome } = require('./store');
 const { assertSupported } = require('./platform');
 const { installScheduler, uninstallScheduler, plistPath, LABEL } = require('./scheduler');
 const { installPlugin, uninstallPlugin, removePluginCache, PLUGIN_ID, MARKETPLACE } = require('./plugin');
@@ -24,9 +24,11 @@ const MARKER = '.relaylead-home';
 // install.json as soon as it is done, so uninstall can undo a partial install.
 function install(say) {
   assertSupported();
-  fs.mkdirSync(home(), { recursive: true });
+  // For the user alone; a folder made by an older version is put back in 700.
+  fs.mkdirSync(home(), { recursive: true, mode: 0o700 });
+  secureHome();
   // Tells --purge that this folder is relaylead's.
-  fs.writeFileSync(path.join(home(), MARKER), '');
+  fs.writeFileSync(path.join(home(), MARKER), '', { mode: 0o600 });
   const previous = readJson(installFile(), {});
   const record = { installedAt: new Date().toISOString(), scheduler: previous.scheduler || null, plugin: previous.plugin || null };
   const save = () => writeJson(installFile(), record);
