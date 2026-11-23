@@ -1,10 +1,11 @@
 // PermissionRequest hook: answers every permission prompt so no session waits for a human. Allows
 // what guard.allow or the profile's tools (RELAYLEAD_ALLOW, a JSON array) list. The rest is denied,
-// and the user is asked (question q-perm-<hash>, about the whole command): "Allow once" lets that
-// exact request through a single time, "Always allow in this mission" every time.
+// and the user is asked (question q-perm-<hash>, about the whole command): the first option lets that
+// exact request through a single time, the second every time (options in the mission's language).
 const { isAllowed, actionText, actionHash, denyMessage, loadMissionGuard, readHookInput, writeJournal } = require('../guard');
 const { askQuestion, listQuestions } = require('../questions');
 const { consumeGrant } = require('../grants');
+const { t } = require('../messages');
 
 // Past this many open permission questions in a mission, a request is denied without a new one.
 const MAX_OPEN_PERMISSION_QUESTIONS = 10;
@@ -32,12 +33,12 @@ function refusal(input, patterns) {
 
 // {allowed, question, note} for a request out of the lists: allowed by the user's answer, or denied
 // with a question (the same one when asked again). Without a mission, denied as it is.
-function askUser(mission, input, reason) {
+function askUser(mission, input, reason, language) {
   if (!mission) return { allowed: false };
   const text = actionText(input);
   const key = `perm-${actionHash(input.tool_name, text)}`;
   const id = `q-${key}`;
-  const grant = consumeGrant(mission, id, { kind: 'permission', once: ['Allow once'], always: ['Always allow in this mission'] });
+  const grant = consumeGrant(mission, id, { kind: 'permission', once: ['hookAllowOnce'], always: ['hookAlwaysAllow'] });
   if (grant.allowed) return { allowed: true, note: `allowed ${grant.reason === 'always' ? 'always' : 'once'} by the user (question ${id})` };
   if (grant.reason === 'used' || grant.reason === 'refused') return { allowed: false, question: id, answered: true };
   const questions = listQuestions(mission);
@@ -46,19 +47,19 @@ function askUser(mission, input, reason) {
   if (!exists && open >= MAX_OPEN_PERMISSION_QUESTIONS) {
     return { allowed: false, note: `${reason}; no question asked: ${open} permission questions already open` };
   }
-  const context = `Tool ${input.tool_name || 'unknown'}, session ${input.session_id || 'unknown'}, in ${input.cwd || 'unknown'}: ${reason}`;
-  const options = ['Allow once', 'Always allow in this mission', 'Refuse'];
+  const context = t('hookQuestionContext', { tool: input.tool_name || 'unknown', session: input.session_id || 'unknown', cwd: input.cwd || 'unknown', reason }, language);
+  const options = [t('hookAllowOnce', {}, language), t('hookAlwaysAllow', {}, language), t('hookRefuse', {}, language)];
   askQuestion(mission, { key, kind: 'permission', text, context, options, recommended: 3 });
   return { allowed: false, question: id };
 }
 
-const { mission, guard } = loadMissionGuard();
+const { mission, guard, language } = loadMissionGuard();
 const input = readHookInput();
 const reason = refusal(input, [...guard.allow, ...profileTools()]);
 let answer = { allowed: false };
 if (reason && input && input.tool_name && reason !== 'guard error') {
   try {
-    answer = askUser(mission, input, reason);
+    answer = askUser(mission, input, reason, language);
   } catch {
     // A question that cannot be written: denied as it is.
   }

@@ -852,19 +852,20 @@ function taskWorkDir(mission, id) {
 // mission is unknown.
 function loadMissionGuard() {
   const name = process.env.RELAYLEAD_MISSION;
-  if (!name || !/^[a-z0-9-]+$/.test(name)) return { mission: null, guard: DEFAULTS.guard, stateDir: null, workDir: null, keyFile: null };
+  if (!name || !/^[a-z0-9-]+$/.test(name)) return { mission: null, guard: DEFAULTS.guard, stateDir: null, workDir: null, keyFile: null, language: 'en' };
   const stateDir = missionDir(name);
   try {
     const mission = readJson(path.join(stateDir, 'mission.json'), null);
     if (mission) {
       const workDir = taskWorkDir(mission, process.env.RELAYLEAD_TASK);
       const keyFile = ((mission.config || {}).auth || {}).keyFile || null;
-      return { mission: name, guard: cleanGuard((mission.config || {}).guard), stateDir, workDir, keyFile };
+      const language = (mission.config || {}).language === 'fr' ? 'fr' : 'en';
+      return { mission: name, guard: cleanGuard((mission.config || {}).guard), stateDir, workDir, keyFile, language };
     }
   } catch {
     // Unreadable mission.json: default guard.
   }
-  return { mission: null, guard: DEFAULTS.guard, stateDir, workDir: null, keyFile: null };
+  return { mission: null, guard: DEFAULTS.guard, stateDir, workDir: null, keyFile: null, language: 'en' };
 }
 
 // The hook input sent by Claude Code on stdin, or null when it is not a JSON object.
