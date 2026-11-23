@@ -15,16 +15,26 @@ Relaylead fait tourner des sessions Claude Code sans personne devant l'écran. C
 
 Chaque session reçoit les hooks de Relaylead par les réglages passés à cette session seulement (`claude --settings`) ; rien n'est installé dans vos propres réglages Claude Code. Les hooks vérifient chaque appel d'outil avant qu'il ne s'exécute, quel que soit le mode de permission.
 
-**Les écritures restent dans le dossier de la session.** Les outils `Write`, `Edit` et `NotebookEdit` de Claude Code sont refusés quand le chemin réel (liens symboliques résolus) sort du dossier de la session : le worktree de la tâche, ou `out/<mission>/<tâche>/` avec la livraison `files`. La seule exception est le dossier temporaire de Claude Code (`/private/tmp/claude-<uid>/`). Le lead n'a aucun outil d'écriture ; il écrit la mémoire du projet par `relaylead memory write`. Quand une écriture est refusée, la session est invitée à finir ce qu'elle peut dans son dossier et à dire dans son résumé ce qu'elle n'a pas pu écrire, sans chercher de détour.
+**Les écritures restent dans le dossier de la session.** Les outils `Write`, `Edit`, `MultiEdit` et `NotebookEdit` de Claude Code sont refusés quand le chemin réel sort du dossier de la session : le worktree de la tâche, ou `out/<mission>/<tâche>/` avec la livraison `files`. Les chemins sont comparés après résolution des liens symboliques : un lien posé dans le worktree et qui pointe ailleurs ne contourne pas la règle. Cela vaut dans les deux modes de permission, `allowlist` et `all`.
 
-**Les fichiers sensibles ne s'ouvrent pas avec les outils de fichiers.** `Read`, `Grep` et `Glob` sont refusés sur :
+- **La seule exception** est le dossier temporaire propre à la session, dans l'espace temporaire de Claude Code : `/private/tmp/claude-<uid>/<projet>/<session>/` sous macOS (`/tmp` est un lien vers `/private/tmp`). Le dossier temporaire d'une autre session est refusé.
+- **Le dossier de Relaylead** (`~/.relaylead`, ou `$RELAYLEAD_HOME`) est toujours refusé, même s'il se trouve sous le dossier temporaire.
+- **Le lead n'écrit aucun fichier.** Il écrit la mémoire du projet par `relaylead memory write`, et change tout le reste par les autres commandes `relaylead`.
+
+Une session refusée reçoit la raison et ce conseil : *« Do not look for a way around it: finish what you can in your folder and say in your summary what you could not write. »* (ne cherchez pas de détour : finissez ce que vous pouvez dans votre dossier et dites dans votre résumé ce que vous n'avez pas pu écrire). Les textes adressés aux sessions restent en anglais.
+
+**Les fichiers sensibles ne s'ouvrent pas avec les outils de fichiers.** `Read`, `Grep` et `Glob` sont refusés sur ces emplacements et tout ce qu'ils contiennent :
 
 - `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.netrc` ;
 - `~/.config/gh`, `~/.config/anthropic`, `~/.config/gcloud` ;
 - `~/Library/Keychains` ;
 - `~/.claude.json`, `~/.claude/.credentials.json` ;
 - `~/.npmrc`, `~/.git-credentials`, `~/.docker/config.json`, `~/.kube` ;
-- le `config.json` et le fichier de clé API de Relaylead, et les dossiers des autres missions.
+- dans le dossier de Relaylead : `config.json`, le fichier de clé API `api-key`, et `missions/`, les dossiers d'état de toutes les missions (une session n'atteint sa propre mission que par les commandes `relaylead`) ;
+- le fichier de clé donné avec `relaylead init --api-key-file`, où qu'il soit ;
+- `.credentials.json` et `.claude.json` dans le dossier désigné par `CLAUDE_CONFIG_DIR`, quand cette variable déplace le dossier de Claude Code.
+
+`Grep` et `Glob` refusent aussi de fouiller un dossier qui *contient* l'un de ces emplacements, comme votre dossier personnel, `~/.config`, `~/.docker`, `~/.claude` ou le dossier de Relaylead : une fouille à cet endroit les lirait. Les worktrees des missions ne sont pas concernés. La session refusée est invitée à dire dans son résumé ce qu'elle n'a pas pu lire.
 
 **Git et secrets.** Refusés quel que soit le mode de permission :
 
@@ -49,7 +59,8 @@ Toute autre commande devient une question (*Allow once*, *Always allow in this m
 
 Les hooks jugent chaque appel d'outil tel que Claude Code le décrit : un chemin de fichier, ou une commande shell sous forme de texte. C'est un bon filet contre les erreurs de bonne foi. Ce n'est pas un bac à sable. Une session qui veut le contourner le peut, avec les commandes qu'elle a le droit de lancer :
 
-- **`node`.** Un équipier peut lancer `node`, et `node -e` peut lire, écrire, supprimer ou pousser tout ce que votre compte macOS peut atteindre. Le confinement des écritures et les règles de lecture couvrent les outils de fichiers de Claude Code, pas ce que fait un programme.
+- **Tout ce qui passe par Bash.** Le confinement des écritures et les règles de lecture couvrent les outils de fichiers de Claude Code (`Read`, `Write`, `Edit`, `Grep`, `Glob`…), pas les commandes. En mode `allowlist`, les commandes d'un équipier se limitent à son profil, mais ces quelques commandes suffisent, comme le montrent les lignes suivantes.
+- **`node`.** Un équipier peut lancer `node`, et `node -e` peut lire, écrire, supprimer ou pousser tout ce que votre compte macOS peut atteindre.
 - **`git`.** Git a beaucoup de portes : de la configuration passée sur la ligne de commande, des alias qui lancent des commandes shell, d'autres dépôts distants, des commandes de bas niveau qui déplacent une branche, et `git show` pour afficher un fichier de l'historique. Le garde attrape les formes directes (`git push origin main`), pas tous les déguisements.
 - **Les scripts de test.** `npm test` lance ce que dit `package.json`, et un équipier peut modifier `package.json`.
 - **La lecture par un programme.** Un fichier que l'outil `Read` n'a pas le droit d'ouvrir peut encore être affiché par `git show` ou `node`.
@@ -97,9 +108,10 @@ La même prudence vaut, à un moindre degré, pour tout projet dont vous n'avez 
 
 ## Vos fichiers et vos secrets sur le disque
 
-- `~/.relaylead` est réservé à votre compte : dossiers en 700, fichiers en 600. `relaylead install` et `relaylead doctor` corrigent les dossiers plus anciens.
+- `~/.relaylead` est réservé à votre compte : Relaylead crée ses dossiers en mode 700 et ses fichiers en mode 600. `relaylead install` et `relaylead doctor` remettent en 700 un dossier que d'autres comptes pouvaient lire, ce qui ferme tout ce qu'il contient ; `doctor` le dit sur sa ligne `permissions`.
 - Avec `relaylead init --api-key-env NOM`, la clé est copiée dans `~/.relaylead/api-key`, lisible par vous seul. Elle n'est jamais affichée, ni écrite dans la configuration, un journal ou le fichier launchd. Les sessions la reçoivent par le réglage `apiKeyHelper` de Claude Code. Une variable `ANTHROPIC_API_KEY` exportée dans votre shell n'est pas transmise aux sessions.
-- `relaylead uninstall --purge` supprime `~/.relaylead`, fichier de clé compris, et refuse tant qu'une mission tourne.
+- `relaylead uninstall --purge` supprime `~/.relaylead`, fichier de clé compris. Il refuse tant qu'une mission peut encore avoir des sessions en cours : une mission pas finie, une mission terminée dont un conflit de fusion est en cours de résolution, ou une mission dont les fichiers sont illisibles. `--purge --force` arrête d'abord ces sessions, et ne supprime rien si l'une d'elles ne peut pas être arrêtée.
+- La purge n'arrête pas une page `relaylead dashboard` restée ouverte : fermez-la par Ctrl-C dans son terminal.
 
 ## Signaler une faille
 

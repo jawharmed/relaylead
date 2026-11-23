@@ -197,7 +197,13 @@ Relaylead's own commits run your git hooks (with `LC_ALL=C`), in the integration
 - `secrets` (patterns, `*` matches any characters) cannot be read or written, except `secretExceptions`.
 - `allow` adds commands to the crew's allowlist, in Claude Code's permission syntax, for example `["Bash(npm ci)"]`.
 
-On top of these settings, every session is confined: Claude Code's `Write`, `Edit` and `NotebookEdit` tools are refused outside the session's folder (its worktree, or `out/<mission>/<id>/` with the `files` delivery; Claude Code's own temporary folder is the one exception), and `Read`, `Grep` and `Glob` are refused on credential folders such as `~/.ssh`, `~/.aws`, `~/.config/gh` and the Keychains, on Relaylead's configuration and key file, and on other missions. Paths are resolved first, so a symbolic link does not get around the rule. [Safety](safety.md) lists every path, and what the guardrails do not cover.
+On top of these settings, every session is confined, in both permission modes:
+
+- Claude Code's `Write`, `Edit`, `MultiEdit` and `NotebookEdit` tools are refused outside the session's folder: its worktree, or `out/<mission>/<id>/` with the `files` delivery. The one exception is the session's own temporary folder under `/private/tmp/claude-<uid>/`. Relaylead's folder is always refused, and the lead writes no file at all.
+- `Read`, `Grep` and `Glob` are refused on credential places such as `~/.ssh`, `~/.aws`, `~/.config/gh` and the Keychains, on Relaylead's configuration, key file and missions' state folders, and `Grep` and `Glob` will not search a folder that holds one of them, such as your home folder.
+- Paths are resolved first, so a symbolic link does not get around the rules.
+
+These rules cover Claude Code's file tools, not commands run through Bash. [Safety](safety.md) lists every path, and what the guardrails do not cover.
 
 In `allowlist` mode the developer profile may install dependencies only with `npm ci --ignore-scripts` or `npm install --ignore-scripts`, because install scripts run third-party code. A project that needs them adds, knowingly, `"guard": {"allow": ["Bash(npm ci)"]}`. Mode `all` allows `npm ci` and runs those scripts.
 
@@ -306,7 +312,7 @@ A launch that fails removes the integration branch and worktree it created. `lau
 
 ### `relaylead list`
 
-One line per mission: name, state, the lead's session, folder. The state may say `(n queued)`, `usage-pause (resume …)` or `(abandoned)`. A mission whose files cannot be read shows as `unreadable`, with its path, and the others still show.
+One line per mission: name, state, the lead's session, folder. The state may say `(n queued)`, `usage-pause (resume …)` or `(abandoned)`. A mission whose `mission.json`, `state.json` or `lead.json` is not valid JSON shows as `unreadable`, with the path of its state folder, and the others still show; `brief`, `overview --json`, the web page and `doctor` report it too. Its sessions may still run. Fix the file to see the mission again: `relaylead remove` cannot remove an unreadable mission yet.
 
 ### `relaylead brief`
 
@@ -385,15 +391,30 @@ Sets up the machine once (`~/.relaylead/config.json`), then the current project 
 
 ### `relaylead install`
 
-Registers the launchd agent of the watcher (`dev.relaylead.watcher`) and the Claude Code plugin, which brings the `/relaylead` console, the `/pane` panel and the `/relaylead:*` commands. It also makes `~/.relaylead` private to your account (folder 700, files 600). Safe to run again. Without Claude Code, the plugin step is skipped. It finishes with `relaylead doctor`.
+Registers the launchd agent of the watcher (`dev.relaylead.watcher`) and the Claude Code plugin, which brings the `/relaylead` console, the `/pane` panel and the `/relaylead:*` commands. When the plugin installed is from another version, it updates it: run `relaylead install` again after each update of Relaylead. It also creates `~/.relaylead` in mode 700, or puts an existing one back to 700. Safe to run again. Without Claude Code, the plugin step is skipped. The launchd agent keeps the paths of `node`, of Relaylead and the `PATH` of the terminal you run it from: run it where `node` and `claude` are found. It finishes with `relaylead doctor`.
 
-### `relaylead uninstall [--purge] [--force]`
+### `relaylead uninstall [--purge [--force]]`
 
-Stops the watcher and waits for its end, then removes what `install` added, and nothing else. `--purge` also deletes `~/.relaylead` (missions' state, logs, key file), after checking that the folder is Relaylead's. `--purge` refuses while a mission is not finished, and names it; `--purge --force` first stops those missions' sessions, then deletes. See [Uninstalling](#uninstalling).
+Stops the watcher and waits for its end, then removes what `install` added, and nothing else. `--purge` also deletes `~/.relaylead` (missions' state, logs, key file), after checking that the folder is Relaylead's.
+
+- `--purge` refuses, before changing anything, while a mission may still have sessions running: a mission not finished, a done mission whose merge conflict is being resolved, or an unreadable one. It names them.
+- `--purge --force` first stops the watcher, then the sessions of those missions, then deletes. If a session cannot be stopped, nothing is deleted, the scheduler and the plugin stay, and the command names the mission and exits with 1. `--force` does nothing without `--purge`.
+- A `relaylead dashboard` left running is not stopped: close it with Ctrl-C in its terminal.
+
+See [Uninstalling](#uninstalling).
 
 ### `relaylead doctor`
 
-Checks Node, Claude Code, git, the scheduler (and that the Node and `PATH` it was installed with still exist), the plugin, the watcher, the authentication, the configuration (unknown keys, `language`, `permissionMode`, `parallel`, `maxSessions`), the permissions of `~/.relaylead`, the project memory, abandoned missions and a `STOP` file. One line per check: `ok`, `warn` or `fail`, its name and detail. It exits with 1 when a check failed, and starts no session.
+Checks, one line each: `node`, `claude`, `git`, `scheduler`, `plugin`, `watcher`, the authentication (`auth`, or `api-key` and `api-key-use` with a key), `config`, the project `memory` of the current folder, each abandoned or unreadable `mission`, `permissions` and a `STOP` file. Each line is `ok`, `warn` or `fail`, the check's name, and a detail in your language. It exits with 1 when a check failed, and starts no session.
+
+- **Configuration:** a `warn config` for each unknown setting (a typo is otherwise ignored in silence) in `~/.relaylead/config.json` and in the current folder's `.relaylead.json`, and for a wrong `language` (`en` or `fr`), `permissionMode` (`allowlist` or `all`), `parallel` or `maxSessions` (a whole number of at least 1). A `.relaylead.json` that is not valid JSON is a `fail config`.
+- **Scheduler:** a `warn scheduler` when the `node` or the Relaylead script saved in the launchd agent no longer exists (after updating Node with nvm, for example), or when `claude` is not on the `PATH` it saved. Run `relaylead install` again from a terminal where `node` and `claude` are found.
+- **Permissions:** puts `~/.relaylead` back to 700 when other accounts could read it, and says so.
+
+```text
+warn config: /Users/you/code/hello-api/.relaylead.json: unknown setting "paralel", ignored; check its spelling
+ok permissions: /Users/you/.relaylead readable by you only
+```
 
 ### `relaylead watcher start|stop|status|run`
 
@@ -449,7 +470,7 @@ What Relaylead writes, and where.
 | `~/Library/LaunchAgents/dev.relaylead.watcher.plist` | The watcher's launchd agent. |
 | Claude Code's plugin list | The `relaylead` plugin from the `relaylead-local` marketplace. Nothing is written in your Claude Code settings directly. |
 
-`~/.relaylead` is private to your account (700 for folders, 600 for files); `install` and `doctor` fix older folders.
+`~/.relaylead` is private to your account: Relaylead creates its folders in mode 700 and its files in mode 600, and `install` and `doctor` put the folder back to 700 when other accounts could read it.
 
 ## Logs and diagnostics
 
@@ -467,7 +488,7 @@ relaylead uninstall --purge    # watcher, plugin and ~/.relaylead
 npm uninstall -g relaylead
 ```
 
-`--purge` refuses while a mission is not finished, and names it. Stop it first (`relaylead stop <mission>`), or add `--force` to stop the sessions of every unfinished mission before deleting. Without `--purge`, `~/.relaylead` stays, with your settings and missions.
+`--purge` refuses while a mission may still have sessions running, and names it. Stop it first (`relaylead stop <mission>`), or add `--force` to stop those sessions before deleting; if one cannot be stopped, nothing is deleted. Without `--purge`, `~/.relaylead` stays, with your settings and missions. If `relaylead dashboard` is still running in a terminal, close it with Ctrl-C.
 
 `uninstall` does not touch your projects. In each project where you ran missions, you can then remove:
 

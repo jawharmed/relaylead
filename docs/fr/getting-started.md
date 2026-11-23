@@ -43,6 +43,7 @@ ok scheduler: installed and loaded
 ok plugin: relaylead@relaylead-local
 ok watcher: no pass recorded yet
 ok auth: login (the connected Claude account)
+ok permissions: /Users/you/.relaylead readable by you only
 ```
 
 Une ligne `warn` donne la commande à lancer ; une ligne `fail` dit ce qui manque. Vous pouvez relancer `relaylead doctor` à tout moment. Une fois la langue réglée sur `fr` (`relaylead init` vous la propose), le détail de chaque ligne s'affiche en français, par exemple `ok scheduler: installé et chargé` ; les noms des vérifications et `ok`, `warn`, `fail` restent tels quels.

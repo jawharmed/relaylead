@@ -52,8 +52,7 @@ Commit it if the settings belong to the project and your team should share them.
 
 ```sh
 npm install -g relaylead@latest
-relaylead uninstall    # while no mission is running; keeps ~/.relaylead
-relaylead install      # registers the watcher and the plugin of the new version
+relaylead install      # updates the plugin and the watcher's launchd agent
 ```
 
 `relaylead --version` prints the version you have. The [changelog](../CHANGELOG.md) says what changed and what to do when updating.
@@ -65,7 +64,7 @@ relaylead uninstall --purge
 npm uninstall -g relaylead
 ```
 
-`--purge` refuses while a mission is running; stop it first or add `--force`. Branches and worktrees in your projects stay: [Uninstalling](guide.md#uninstalling) shows how to remove them.
+`--purge` refuses while a mission may still have sessions running; stop it first, or add `--force` to stop them (nothing is deleted if one cannot be stopped). Close a `relaylead dashboard` still running with Ctrl-C. Branches and worktrees in your projects stay: [Uninstalling](guide.md#uninstalling) shows how to remove them.
 
 ## Running missions
 
@@ -217,7 +216,7 @@ The lead could not be restarted. `relaylead list` and `~/.relaylead/missions/<mi
 
 ### The watcher does nothing
 
-Run `relaylead watcher status`, and check that `~/.relaylead/STOP` does not exist. If `relaylead doctor` says the scheduler is not installed or not loaded, run `relaylead install`. After updating Node (with nvm, for example), run `relaylead install` again so launchd uses the new path.
+Run `relaylead watcher status`, and check that `~/.relaylead/STOP` does not exist. If `relaylead doctor` says the scheduler is not installed or not loaded, run `relaylead install`. After updating Node (with nvm, for example), `relaylead doctor` warns that the scheduler runs a file that no longer exists: run `relaylead install` again from a terminal where `node` and `claude` are found, so launchd uses the new paths.
 
 ### A lead does not answer
 
@@ -229,7 +228,15 @@ Relaylead's commits run your hooks in the integration worktree, where `node_modu
 
 ### A crew member says a write was refused
 
-Since 0.4, crew members can write only inside their own worktree. If a task really needs to change files elsewhere, change them yourself, or rewrite the task so the work stays in the repository.
+Since 0.4, a crew member's file tools write only inside its own worktree (and its own temporary folder). If a task really needs to change files elsewhere, change them yourself, or rewrite the task so the work stays in the repository.
+
+### A mission shows as `unreadable`
+
+One of its state files (`mission.json`, `state.json` or `lead.json`, in the folder shown) is not valid JSON, and its sessions may still run. The other missions are not affected. Fix or restore the file to see the mission again; `relaylead remove` cannot remove an unreadable mission yet.
+
+### `doctor` warns about the configuration
+
+`warn config` names the file and the setting: an unknown setting (often a typo, otherwise ignored in silence) or a value Relaylead cannot use. Fix the file; `relaylead doctor` then says `ok`.
 
 ### The panel or the status line does not appear
 

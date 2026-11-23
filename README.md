@@ -99,7 +99,7 @@ Details and the method behind these numbers: [Costs](docs/costs.md).
 
 Sessions run with nobody watching, so Relaylead puts guardrails around them:
 
-- a crew member's file tools write only inside its own worktree, and cannot open SSH keys, cloud credentials, your Relaylead settings or other missions;
+- a crew member's file tools write only inside its own worktree, and cannot open SSH keys, cloud credentials, your Relaylead settings or the missions' state;
 - pushes to protected branches (`main`, `master`), forced pushes, commits on protected branches and secret files (`.env` and friends) are refused in every permission mode;
 - irreversible commands (`git reset --hard`, a recursive delete outside the worktree) wait for your answer;
 - crew members get only the commands of their profile, and the work stays on Relaylead's branches until you run `relaylead merge`.

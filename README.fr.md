@@ -99,7 +99,7 @@ Le détail et la façon dont ces chiffres ont été mesurés : [Coûts](docs/fr/
 
 Les sessions tournent sans personne devant l'écran. Relaylead les entoure donc de garde-fous :
 
-- les outils de fichiers d'un équipier n'écrivent que dans son propre worktree, et ne peuvent pas ouvrir les clés SSH, les identifiants cloud, vos réglages Relaylead ni les autres missions ;
+- les outils de fichiers d'un équipier n'écrivent que dans son propre worktree, et ne peuvent pas ouvrir les clés SSH, les identifiants cloud, vos réglages Relaylead ni l'état des missions ;
 - les pushs vers les branches protégées (`main`, `master`), les pushs forcés, les commits sur une branche protégée et les fichiers secrets (`.env` et compagnie) sont refusés quel que soit le mode de permission ;
 - les commandes irréversibles (`git reset --hard`, une suppression récursive hors du worktree) attendent votre réponse ;
 - les équipiers n'ont que les commandes de leur profil, et le travail reste sur les branches de Relaylead jusqu'à ce que vous lanciez `relaylead merge`.

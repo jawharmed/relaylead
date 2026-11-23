@@ -43,6 +43,7 @@ ok scheduler: installed and loaded
 ok plugin: relaylead@relaylead-local
 ok watcher: no pass recorded yet
 ok auth: login (the connected Claude account)
+ok permissions: /Users/you/.relaylead readable by you only
 ```
 
 A `warn` line names the command to run; a `fail` line says what is missing. You can run `relaylead doctor` again at any time.

@@ -15,16 +15,26 @@ Relaylead runs Claude Code sessions with nobody watching. This page says what pr
 
 Every session gets Relaylead's hooks through the settings passed to that session only (`claude --settings`); nothing is installed in your own Claude Code settings. The hooks check each tool call before it runs, whatever the permission mode.
 
-**Writes stay in the session's folder.** Claude Code's `Write`, `Edit` and `NotebookEdit` tools are refused when the real path (symbolic links resolved) is outside the session's folder: the task's worktree, or `out/<mission>/<task>/` with the `files` delivery. The only exception is Claude Code's own temporary folder (`/private/tmp/claude-<uid>/`). The lead has no write tool at all; it writes the project memory through `relaylead memory write`. When a write is refused, the session is told to finish what it can in its folder and to say in its summary what it could not write, not to look for a way around.
+**Writes stay in the session's folder.** Claude Code's `Write`, `Edit`, `MultiEdit` and `NotebookEdit` tools are refused when the real path is outside the session's folder: the task's worktree, or `out/<mission>/<task>/` with the `files` delivery. Paths are compared after symbolic links are resolved, so a link inside the worktree that points elsewhere does not get around the rule. This holds in both permission modes, `allowlist` and `all`.
 
-**Sensitive files cannot be opened with the file tools.** `Read`, `Grep` and `Glob` are refused on:
+- **The one exception** is the session's own temporary folder in Claude Code's temporary space, `/private/tmp/claude-<uid>/<project>/<session>/` on macOS (`/tmp` is a link to `/private/tmp`). Another session's temporary folder is refused.
+- **Relaylead's own folder** (`~/.relaylead`, or `$RELAYLEAD_HOME`) is always refused, even if it sits under the temporary folder.
+- **The lead writes no file at all.** It writes the project memory through `relaylead memory write`, and changes everything else through the other `relaylead` commands.
+
+A refused session gets the reason and this advice: *"Do not look for a way around it: finish what you can in your folder and say in your summary what you could not write."*
+
+**Sensitive files cannot be opened with the file tools.** `Read`, `Grep` and `Glob` are refused on these places and everything inside them:
 
 - `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.netrc`;
 - `~/.config/gh`, `~/.config/anthropic`, `~/.config/gcloud`;
 - `~/Library/Keychains`;
 - `~/.claude.json`, `~/.claude/.credentials.json`;
 - `~/.npmrc`, `~/.git-credentials`, `~/.docker/config.json`, `~/.kube`;
-- Relaylead's own `config.json` and API key file, and the folders of other missions.
+- in Relaylead's folder: `config.json`, the API key file `api-key`, and `missions/`, the state folders of every mission (a session reaches its own mission only through `relaylead` commands);
+- the key file given with `relaylead init --api-key-file`, wherever it is;
+- `.credentials.json` and `.claude.json` in the folder named by `CLAUDE_CONFIG_DIR`, when that variable moves Claude Code's folder.
+
+`Grep` and `Glob` also refuse to search a folder that *holds* one of these places, such as your home folder, `~/.config`, `~/.docker`, `~/.claude` or Relaylead's folder: a search there would read them. The worktrees of the missions are not concerned. The refused session is told to say in its summary what it could not read.
 
 **Git and secrets.** Refused in every permission mode:
 
@@ -49,7 +59,8 @@ Any other command becomes a question (*Allow once*, *Always allow in this missio
 
 The hooks judge each tool call as Claude Code describes it: a file path, or a shell command as text. That is a good net for honest mistakes. It is not a sandbox. A session that wants to get around it can, through the commands it is allowed to run:
 
-- **`node`.** A crew member may run `node`, and `node -e` can read, write, delete or push anything your macOS account can. The write confinement and the read rules cover Claude Code's file tools, not what a program does.
+- **Anything run through Bash.** The write confinement and the read rules cover Claude Code's file tools (`Read`, `Write`, `Edit`, `Grep`, `Glob`…), not commands. In `allowlist` mode a crew member's commands are limited to its profile, but those few are enough, as the next lines show.
+- **`node`.** A crew member may run `node`, and `node -e` can read, write, delete or push anything your macOS account can.
 - **`git`.** Git has many doors: configuration given on the command line, aliases that run shell commands, other remotes, low-level commands that move a branch, and `git show` to print a file from history. The guard catches the plain forms (`git push origin main`), not every disguise.
 - **Test scripts.** `npm test` runs whatever `package.json` says, and a crew member can edit `package.json`.
 - **Reading through a program.** A file the `Read` tool may not open can still be printed by `git show` or `node`.
@@ -97,9 +108,10 @@ The same applies, to a lesser degree, to any project whose files you did not wri
 
 ## Your files and secrets on disk
 
-- `~/.relaylead` is private to your account: folders 700, files 600. `relaylead install` and `relaylead doctor` fix older folders.
+- `~/.relaylead` is private to your account: Relaylead creates its folders with mode 700 and its files with mode 600. `relaylead install` and `relaylead doctor` put a folder that other accounts could read back to 700, which closes everything inside it; `doctor` says so on its `permissions` line.
 - With `relaylead init --api-key-env NAME`, the key is copied to `~/.relaylead/api-key`, readable by you alone. It is never printed, and never written to the configuration, a log or the launchd file. Sessions get it through Claude Code's `apiKeyHelper` setting. An `ANTHROPIC_API_KEY` exported in your shell is not passed to the sessions.
-- `relaylead uninstall --purge` deletes `~/.relaylead`, key file included, and refuses while a mission is still running.
+- `relaylead uninstall --purge` deletes `~/.relaylead`, key file included. It refuses while a mission may still have sessions running: a mission not finished, a finished one whose merge conflict is being resolved, or one whose files cannot be read. `--purge --force` first stops those sessions, and deletes nothing if one of them cannot be stopped.
+- The purge does not stop a `relaylead dashboard` you left running: close it with Ctrl-C in its terminal.
 
 ## Reporting a vulnerability
 

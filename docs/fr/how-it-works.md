@@ -136,7 +136,7 @@ gitGraph
 ```
 
 - La branche d'intégration part de la branche d'où vous avez lancé la mission, avec son worktree dans `.relaylead/worktrees/<mission>/_integration/`.
-- Chaque tâche reçoit une branche issue de la branche d'intégration et un worktree dans `.relaylead/worktrees/<mission>/<tâche>/`. Un équipier ne peut écrire que là.
+- Chaque tâche reçoit une branche issue de la branche d'intégration et un worktree dans `.relaylead/worktrees/<mission>/<tâche>/`. Les outils de fichiers d'un équipier ne peuvent écrire que là.
 - Livrer une tâche fusionne sa branche dans la branche d'intégration, puis retire le worktree et la branche de la tâche.
 - `relaylead merge` fusionne la branche d'intégration dans votre branche. En cas de conflit, il annule la fusion, et un équipier résout d'abord le conflit sur une branche à lui.
 - Les opérations git de missions différentes sur un même dépôt passent à tour de rôle, sous verrou.

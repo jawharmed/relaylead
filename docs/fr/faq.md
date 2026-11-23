@@ -52,8 +52,7 @@ Commitez-le si les réglages appartiennent au projet et que votre équipe doit l
 
 ```sh
 npm install -g relaylead@latest
-relaylead uninstall    # quand aucune mission ne tourne ; garde ~/.relaylead
-relaylead install      # enregistre le veilleur et le plugin de la nouvelle version
+relaylead install      # met à jour le plugin et l'agent launchd du veilleur
 ```
 
 `relaylead --version` affiche la version installée. Le [changelog](../../CHANGELOG.md) (en anglais) dit ce qui change et quoi faire en mettant à jour.
@@ -65,7 +64,7 @@ relaylead uninstall --purge
 npm uninstall -g relaylead
 ```
 
-`--purge` refuse tant qu'une mission tourne ; arrêtez-la d'abord ou ajoutez `--force`. Les branches et les worktrees de vos projets restent : [Désinstaller](guide.md#désinstaller) explique comment les retirer.
+`--purge` refuse tant qu'une mission peut encore avoir des sessions en cours ; arrêtez-la d'abord, ou ajoutez `--force` pour les arrêter (rien n'est supprimé si l'une d'elles ne peut pas l'être). Fermez par Ctrl-C une page `relaylead dashboard` encore ouverte. Les branches et les worktrees de vos projets restent : [Désinstaller](guide.md#désinstaller) explique comment les retirer.
 
 ## Faire tourner des missions
 
@@ -217,7 +216,7 @@ Le lead n'a pas pu être relancé. `relaylead list` et `~/.relaylead/missions/<m
 
 ### Le veilleur ne fait rien
 
-Lancez `relaylead watcher status`, et vérifiez que `~/.relaylead/STOP` n'existe pas. Si `relaylead doctor` dit que le planificateur n'est pas installé ou pas chargé, lancez `relaylead install`. Après une mise à jour de Node (avec nvm, par exemple), relancez `relaylead install` pour que launchd prenne le nouveau chemin.
+Lancez `relaylead watcher status`, et vérifiez que `~/.relaylead/STOP` n'existe pas. Si `relaylead doctor` dit que le planificateur n'est pas installé ou pas chargé, lancez `relaylead install`. Après une mise à jour de Node (avec nvm, par exemple), `relaylead doctor` signale que le planificateur lance un fichier qui n'existe plus : relancez `relaylead install` depuis un terminal où `node` et `claude` sont trouvés, pour que launchd prenne les nouveaux chemins.
 
 ### Un lead ne répond pas
 
@@ -229,7 +228,15 @@ Les commits de Relaylead lancent vos hooks dans le worktree d'intégration, où 
 
 ### Un équipier dit qu'une écriture a été refusée
 
-Depuis la 0.4, un équipier ne peut écrire que dans son propre worktree. Si une tâche doit vraiment modifier des fichiers ailleurs, faites-le vous-même, ou réécrivez la tâche pour que le travail reste dans le dépôt.
+Depuis la 0.4, les outils de fichiers d'un équipier n'écrivent que dans son propre worktree (et son propre dossier temporaire). Si une tâche doit vraiment modifier des fichiers ailleurs, faites-le vous-même, ou réécrivez la tâche pour que le travail reste dans le dépôt.
+
+### Une mission apparaît comme `unreadable`
+
+L'un de ses fichiers d'état (`mission.json`, `state.json` ou `lead.json`, dans le dossier affiché) n'est pas du JSON valide, et ses sessions tournent peut-être encore. Les autres missions ne sont pas touchées. Réparez ou restaurez le fichier pour revoir la mission ; `relaylead remove` ne sait pas encore retirer une mission illisible.
+
+### `doctor` signale un problème de configuration
+
+`warn config` nomme le fichier et le réglage : un réglage inconnu (souvent une faute de frappe, sinon ignorée en silence) ou une valeur que Relaylead ne peut pas utiliser. Corrigez le fichier ; `relaylead doctor` dit alors `ok`.
 
 ### Le panneau ou la ligne d'état n'apparaît pas
 

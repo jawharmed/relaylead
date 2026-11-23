@@ -136,7 +136,7 @@ gitGraph
 ```
 
 - The integration branch starts from the branch you launched from, with its worktree in `.relaylead/worktrees/<mission>/_integration/`.
-- Each task gets a branch from the integration branch and a worktree in `.relaylead/worktrees/<mission>/<task>/`. A crew member can only write there.
+- Each task gets a branch from the integration branch and a worktree in `.relaylead/worktrees/<mission>/<task>/`. A crew member's file tools can only write there.
 - Delivering a task merges its branch into the integration branch, then removes the task's worktree and branch.
 - `relaylead merge` merges the integration branch into your branch. On a conflict, it cancels the merge, and a crew member resolves it on a branch of its own first.
 - Git operations of different missions on the same repository take turns, under a lock.
