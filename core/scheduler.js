@@ -149,6 +149,23 @@ function uninstallScheduler() {
   return true;
 }
 
+// What the plist froze at install: {node, bin, path}, read back from its text; null without a plist
+// or when it is not one of ours.
+function readPlist() {
+  let text;
+  try {
+    text = fs.readFileSync(plistPath(), 'utf8');
+  } catch {
+    return null;
+  }
+  const unescape = (value) => value.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  const program = /<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/.exec(text);
+  if (!program) return null;
+  const [node, bin] = [...program[1].matchAll(/<string>([\s\S]*?)<\/string>/g)].map((match) => unescape(match[1]));
+  const searchPath = /<key>PATH<\/key>\s*<string>([\s\S]*?)<\/string>/.exec(text);
+  return { node: node || null, bin: bin || null, path: searchPath ? unescape(searchPath[1]) : '' };
+}
+
 function schedulerStatus() {
   const installed = fs.existsSync(plistPath());
   let loaded = false;
@@ -161,4 +178,4 @@ function schedulerStatus() {
   return { installed, loaded };
 }
 
-module.exports = { LABEL, plistPath, buildPlist, installScheduler, uninstallScheduler, schedulerStatus };
+module.exports = { LABEL, plistPath, buildPlist, readPlist, installScheduler, uninstallScheduler, schedulerStatus };

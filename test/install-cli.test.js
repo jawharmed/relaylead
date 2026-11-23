@@ -241,3 +241,61 @@ test('install and doctor put a home readable by others back in 700', { skip: pro
   assert.ok(doctor.out.includes(`ok permissions: ${msg('doctor-home-fixed', { dir: env.RELAYLEAD_HOME, mode: '755' })}`), doctor.out);
   assert.strictEqual(modeOf(env.RELAYLEAD_HOME), 0o700);
 });
+
+test('doctor warns about unknown settings and values it cannot use, in both files', async (t) => {
+  const env = installEnv(t);
+  fs.writeFileSync(
+    path.join(env.RELAYLEAD_HOME, 'config.json'),
+    JSON.stringify({ language: 'de', parallel: 'many', permissionMode: 'yolo', maxSessions: 0, paralel: 2 }),
+  );
+  // As process.cwd() spells it in the CLI.
+  const project = fs.realpathSync(tmpDir('relaylead-project-'));
+  const projectFile = path.join(project, '.relaylead.json');
+  fs.writeFileSync(projectFile, JSON.stringify({ team: 'code', delivery: { type: 'files' }, sorce: {} }));
+  const doctor = await runRelaylead(['doctor'], { cwd: project, env });
+  const machineFile = path.join(env.RELAYLEAD_HOME, 'config.json');
+  const warnings = doctor.out.split('\n').filter((line) => line.startsWith('warn config: '));
+  assert.deepStrictEqual(warnings, [
+    `warn config: ${msg('doctor-config-unknown-key', { file: machineFile, key: 'paralel' })}`,
+    `warn config: ${msg('doctor-config-language', { file: machineFile, value: '"de"' })}`,
+    `warn config: ${msg('doctor-config-permission-mode', { file: machineFile, value: '"yolo"' })}`,
+    `warn config: ${msg('doctor-config-whole-number', { file: machineFile, key: 'parallel', value: '"many"' })}`,
+    `warn config: ${msg('doctor-config-whole-number', { file: machineFile, key: 'maxSessions', value: '0' })}`,
+    `warn config: ${msg('doctor-config-unknown-key', { file: projectFile, key: 'sorce' })}`,
+  ]);
+
+  // A project file that is not JSON is a fail.
+  fs.writeFileSync(projectFile, '{ not json');
+  const broken = await runRelaylead(['doctor'], { cwd: project, env });
+  assert.strictEqual(broken.code, 1);
+  assert.match(broken.out, /^fail config: invalid JSON in .*\.relaylead\.json/m);
+});
+
+test('doctor warns when what the plist froze is gone', async (t) => {
+  const env = installEnv(t);
+  const installed = await run(env, 'install');
+  assert.strictEqual(installed.code, 0, installed.err + installed.out);
+  const plist = fs.readdirSync(env.RELAYLEAD_LAUNCHD_DIR).map((name) => path.join(env.RELAYLEAD_LAUNCHD_DIR, name))[0];
+  // The Node of the plist was removed (an update by nvm).
+  const gone = path.join(tmpDir(), 'v0.0.0', 'bin', 'node');
+  fs.writeFileSync(plist, fs.readFileSync(plist, 'utf8').replace(`<string>${process.execPath}</string>`, `<string>${gone}</string>`));
+  const doctor = await run(env, 'doctor');
+  assert.ok(doctor.out.includes(`warn scheduler: ${msg('doctor-plist-missing', { file: gone })}`), doctor.out);
+});
+
+test('doctor warns when claude is not on the PATH the plist froze', async (t) => {
+  // An empty PATH: no claude there, and the real claude is never run.
+  const empty = tmpDir('relaylead-empty-path-');
+  const env = installEnv(t, { PATH: empty });
+  // Its doctor fails on git, not found on that PATH; the plist is written all the same.
+  const installed = await run(env, 'install');
+  assert.match(installed.out, /^scheduler installed /m, installed.err + installed.out);
+  const withoutChosen = { ...env };
+  delete withoutChosen.RELAYLEAD_CLAUDE;
+  const doctor = await run(withoutChosen, 'doctor');
+  assert.ok(doctor.out.includes(`warn scheduler: ${msg('doctor-plist-no-claude', { path: empty })}`), doctor.out);
+  // A claude in that folder is enough.
+  fs.writeFileSync(path.join(empty, 'claude'), '');
+  const found = await run(withoutChosen, 'doctor');
+  assert.ok(!found.out.includes('claude is not on the PATH'), found.out);
+});
