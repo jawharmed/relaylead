@@ -3,6 +3,8 @@
 // An action that cannot be undone is refused too, and the user is asked about it (question
 // q-irr-<hash>): once answered "Allow once", that exact action goes through a single time, with an
 // explicit allow, so no permission prompt follows to refuse it after the permission is used.
+// Writes stay in the session's working folder, and the files of keys and tokens are never read
+// (core/guard.js, checkToolUse): such a refusal says not to look for a way around it.
 const { checkToolUse, actionText, actionHash, denyMessage, loadMissionGuard, readHookInput, writeJournal } = require('../guard');
 const { askQuestion } = require('../questions');
 const { consumeGrant } = require('../grants');
@@ -27,14 +29,14 @@ function irreversibleDecision(mission, input, result) {
   }
 }
 
-const { mission, guard, stateDir } = loadMissionGuard();
+const { mission, guard, stateDir, workDir } = loadMissionGuard();
 const input = readHookInput();
 if (!input) {
   writeJournal(mission, 'unknown', 'unreadable hook input');
 } else {
   let result;
   try {
-    result = checkToolUse(input, guard, stateDir);
+    result = checkToolUse(input, guard, stateDir, { workDir });
   } catch {
     // A crashing hook would let the action through: refuse what the guard cannot judge.
     result = { decision: 'deny', reason: 'guard error' };
@@ -45,7 +47,7 @@ if (!input) {
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
         permissionDecision: 'deny',
-        permissionDecisionReason: denyMessage(result.reason, result.question, result.answered),
+        permissionDecisionReason: denyMessage(result.reason, result.question, result.answered) + (result.advice ? ` ${result.advice}` : ''),
       },
     };
     process.stdout.write(JSON.stringify(output) + '\n');

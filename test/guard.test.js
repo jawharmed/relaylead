@@ -582,3 +582,141 @@ test('an action hash is the same for the same words', () => {
   assert.strictEqual(actionHash('Bash', text), actionHash('Bash', 'git reset --hard'));
   assert.notStrictEqual(actionHash('Bash', text), actionHash('Read', text));
 });
+
+// --- Confinement (lot H1) ---------------------------------------------------------------------
+
+// RELAYLEAD_HOME set to `dir` for the rest of test `t`.
+function useHome(t, dir) {
+  const previous = process.env.RELAYLEAD_HOME;
+  process.env.RELAYLEAD_HOME = dir;
+  t.after(() => {
+    if (previous === undefined) delete process.env.RELAYLEAD_HOME;
+    else process.env.RELAYLEAD_HOME = previous;
+  });
+}
+
+// A file tool call of a session confined to `workDir` (null: a session with no working folder).
+function confined(tool_name, tool_input, workDir, stateDir = null) {
+  return checkToolUse({ tool_name, tool_input, cwd: workDir || tmpDir() }, GUARD, stateDir, { workDir });
+}
+
+const WRITE_ADVICE = 'Do not look for a way around it: finish what you can in your folder and say in your summary what you could not write.';
+
+test('a Write, Edit or NotebookEdit out of the working folder is refused, with the advice', (t) => {
+  useHome(t, tmpDir('relaylead home-'));
+  const workDir = tmpDir('relaylead-work-');
+  const outside = path.join(tmpDir('relaylead-outside-'), 'proof.txt');
+  assert.deepStrictEqual(confined('Write', { file_path: path.join(workDir, 'src', 'a.js') }, workDir), ALLOW);
+  assert.deepStrictEqual(confined('Edit', { file_path: 'README.md' }, workDir), ALLOW);
+  const expected = { decision: 'deny', reason: `write outside the working folder ${workDir}`, advice: WRITE_ADVICE };
+  assert.deepStrictEqual(confined('Write', { file_path: outside }, workDir), expected);
+  assert.deepStrictEqual(confined('Edit', { file_path: outside }, workDir), expected);
+  assert.deepStrictEqual(confined('NotebookEdit', { notebook_path: outside }, workDir), expected);
+  assert.deepStrictEqual(confined('Write', { file_path: '../elsewhere.txt' }, workDir), expected);
+  assertDenied(confined('Write', { file_path: '~/.zshrc' }, workDir), `write outside the working folder ${workDir}`);
+  // Without the confinement (a call judged outside the hooks), only the other rules apply.
+  assert.deepStrictEqual(checkToolUse({ tool_name: 'Write', tool_input: { file_path: outside }, cwd: workDir }, GUARD), ALLOW);
+});
+
+test('a link in the working folder that points out of it does not open the way', { skip: process.platform === 'win32' }, (t) => {
+  useHome(t, tmpDir('relaylead home-'));
+  const workDir = tmpDir('relaylead-work-');
+  const outside = tmpDir('relaylead-outside-');
+  fs.symlinkSync(outside, path.join(workDir, 'out'));
+  // A link to a file not made yet: the write would create it where the link points.
+  fs.symlinkSync(path.join(outside, 'new.txt'), path.join(workDir, 'new.txt'));
+  const reason = `write outside the working folder ${workDir}`;
+  assertDenied(confined('Write', { file_path: path.join(workDir, 'out', 'proof.txt') }, workDir), reason);
+  assertDenied(confined('Write', { file_path: path.join(workDir, 'new.txt') }, workDir), reason);
+  // A link that stays in the folder is fine.
+  fs.mkdirSync(path.join(workDir, 'src'));
+  fs.symlinkSync(path.join(workDir, 'src'), path.join(workDir, 'lib'));
+  assert.deepStrictEqual(confined('Write', { file_path: path.join(workDir, 'lib', 'a.js') }, workDir), ALLOW);
+});
+
+test('/tmp and /private/tmp are the same folder for the confinement and the state folder', { skip: process.platform !== 'darwin' }, (t) => {
+  // The working folder as given (/tmp/…) and as written by the session (/private/tmp/…).
+  const workDir = fs.mkdtempSync('/tmp/relaylead-work-');
+  const home = fs.mkdtempSync('/tmp/relaylead-home-');
+  t.after(() => fs.rmSync(workDir, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  useHome(t, home);
+  assert.deepStrictEqual(confined('Write', { file_path: path.join('/private', workDir, 'a.txt') }, workDir), ALLOW);
+  assertDenied(confined('Write', { file_path: '/tmp/relaylead-elsewhere/a.txt' }, workDir), `write outside the working folder ${workDir}`);
+  // The state folder, named under /private/tmp, reached through /tmp (defect 12), and the other way round.
+  const stateDir = path.join('/private', home, 'missions', 'demo');
+  const reason = 'access to the mission state folder';
+  assertDenied(confined('Write', { file_path: path.join(home, 'missions', 'demo', 'questions', 'q-x.json') }, workDir, stateDir), reason);
+  assertDenied(confined('Bash', { command: `cat ${path.join(home, 'missions', 'demo', 'state.json')}` }, workDir, stateDir), reason);
+  assertDenied(confined('Read', { file_path: path.join('/private', home, 'missions', 'demo', 'mission.json') }, workDir, path.join(home, 'missions', 'demo')), reason);
+});
+
+test('the state folder is refused through a link in the working folder', { skip: process.platform === 'win32' }, (t) => {
+  const home = tmpDir('relaylead home-');
+  useHome(t, home);
+  const stateDir = path.join(home, 'missions', 'demo');
+  fs.mkdirSync(stateDir, { recursive: true });
+  const workDir = tmpDir('relaylead-work-');
+  fs.symlinkSync(stateDir, path.join(workDir, 'state'));
+  const reason = 'access to the mission state folder';
+  assertDenied(confined('Write', { file_path: path.join(workDir, 'state', 'state.json') }, workDir, stateDir), reason);
+  assertDenied(confined('Read', { file_path: path.join(workDir, 'state', 'mission.json') }, workDir, stateDir), reason);
+  assertDenied(confined('Bash', { command: 'cat state/mission.json' }, workDir, stateDir), reason);
+});
+
+test('Claude Code\'s temporary folder is the only exception, and never opens the Relaylead folder', { skip: process.platform === 'win32' }, (t) => {
+  const temp = `/tmp/claude-${process.getuid()}`;
+  useHome(t, tmpDir('relaylead home-'));
+  const workDir = tmpDir('relaylead-work-');
+  // Only paths are compared: nothing is written there.
+  assert.deepStrictEqual(confined('Write', { file_path: path.join(temp, 'scratch', 'notes.md') }, workDir), ALLOW);
+  assert.deepStrictEqual(confined('Write', { file_path: path.join(temp, 'notes.md') }, null), ALLOW);
+  if (process.platform === 'darwin') {
+    assert.deepStrictEqual(confined('Write', { file_path: path.join('/private', temp, 'notes.md') }, workDir), ALLOW);
+  }
+  // Not os.tmpdir(), nor a look-alike name.
+  assertDenied(confined('Write', { file_path: path.join(os.tmpdir(), 'notes.md') }, workDir), `write outside the working folder ${workDir}`);
+  assertDenied(confined('Write', { file_path: `${temp}-other/notes.md` }, workDir), `write outside the working folder ${workDir}`);
+  // A session with no working folder (the lead) writes nowhere else.
+  assertDenied(confined('Write', { file_path: path.join(workDir, 'a.txt') }, null), 'write by a session that has no working folder');
+  // A Relaylead folder under the temporary folder stays closed.
+  const home = path.join(temp, `relaylead-home-${process.pid}`);
+  useHome(t, home);
+  assertDenied(confined('Write', { file_path: path.join(home, 'config.json') }, workDir), `write in the Relaylead folder ${home}`);
+});
+
+test('the files of keys and tokens are never read, with the advice', (t) => {
+  const home = tmpDir('relaylead home-');
+  useHome(t, home);
+  const workDir = tmpDir('relaylead-work-');
+  const advice = 'Do not look for a way around it: say in your summary what you could not read.';
+  const read = (tool_name, tool_input) => checkToolUse({ tool_name, tool_input, cwd: workDir }, GUARD);
+  const inHome = (...parts) => path.join(os.homedir(), ...parts);
+  const expected = (place) => ({ decision: 'deny', reason: `read of sensitive location ${place}`, advice });
+  // Only paths are compared: nothing is read under the real home folder.
+  assert.deepStrictEqual(read('Read', { file_path: '~/.ssh/id_rsa' }), expected(inHome('.ssh')));
+  assert.deepStrictEqual(read('Read', { file_path: inHome('.claude.json') }), expected(inHome('.claude.json')));
+  assert.deepStrictEqual(read('Read', { file_path: inHome('.claude', '.credentials.json') }), expected(inHome('.claude', '.credentials.json')));
+  assert.deepStrictEqual(read('Read', { file_path: inHome('.config', 'gh', 'hosts.yml') }), expected(inHome('.config', 'gh')));
+  assert.deepStrictEqual(read('Read', { file_path: inHome('Library', 'Keychains', 'login.keychain-db') }), expected(inHome('Library', 'Keychains')));
+  assert.deepStrictEqual(read('Grep', { pattern: 'key', path: inHome('.aws') }), expected(inHome('.aws')));
+  assert.deepStrictEqual(read('Glob', { pattern: '~/.kube/*' }), expected(inHome('.kube')));
+  assert.deepStrictEqual(read('Glob', { pattern: '*', path: inHome('.gnupg') }), expected(inHome('.gnupg')));
+  assert.deepStrictEqual(read('Read', { file_path: path.join(home, 'config.json') }), expected(path.join(home, 'config.json')));
+  assert.deepStrictEqual(read('Read', { file_path: path.join(home, 'api-key') }), expected(path.join(home, 'api-key')));
+  assert.deepStrictEqual(read('Read', { file_path: path.join(home, 'missions', 'other', 'mission.json') }), expected(path.join(home, 'missions')));
+  // Look-alike names and the project's own files are read.
+  assert.deepStrictEqual(read('Read', { file_path: inHome('.ssh-notes.txt') }), ALLOW);
+  assert.deepStrictEqual(read('Read', { file_path: inHome('.config', 'git', 'config') }), ALLOW);
+  assert.deepStrictEqual(read('Read', { file_path: path.join(workDir, 'README.md') }), ALLOW);
+  assert.deepStrictEqual(read('Grep', { pattern: 'x' }), ALLOW);
+});
+
+test('a link to a file of keys is not read either', { skip: process.platform === 'win32' }, (t) => {
+  useHome(t, tmpDir('relaylead home-'));
+  const workDir = tmpDir('relaylead-work-');
+  // The link points to a path under ~/.ssh; nothing there is opened.
+  fs.symlinkSync(path.join(os.homedir(), '.ssh', 'id_rsa'), path.join(workDir, 'key.txt'));
+  const result = checkToolUse({ tool_name: 'Read', tool_input: { file_path: path.join(workDir, 'key.txt') }, cwd: workDir }, GUARD);
+  assertDenied(result, `read of sensitive location ${path.join(os.homedir(), '.ssh')}`);
+});
