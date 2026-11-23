@@ -1,0 +1,37 @@
+# Relaylead
+
+> Relaylead is an open-source (MIT) command-line tool and Claude Code plugin for macOS that runs a team of Claude Code sessions in the background on a mission. A lead session (Opus) splits the work into tasks, crew sessions (Sonnet) carry out each task in its own git worktree and branch, and a watcher with no AI, kept alive by launchd, restarts or wakes sessions that stop. The user is asked a question only before something irreversible, and the work reaches the user's branch only through `relaylead merge`.
+
+Key facts:
+
+- Install: `npm install -g relaylead`, then `relaylead install` (launchd watcher and Claude Code plugin). Requires macOS, Node.js 18 or newer, git, and Claude Code 2.1.325 or newer signed in (Pro, Max, Team or Enterprise plan, or an Anthropic API key). `gh` only for GitHub issues and pull requests.
+- Start from Claude Code with `/relaylead` (the console), or from a terminal: `relaylead init`, one Markdown file per task in `tasks/` (committed), `relaylead launch --request "..."`, `relaylead brief`, `relaylead answer <mission> <id> <choice>`, `relaylead merge <mission>`.
+- Claude Code must trust the project folder: in its dialog choose "Yes, I trust this folder"; the default, "No, exit", refuses.
+- Work lands on `relaylead/<mission>/integration`; the user's checkout is never changed by a mission. Relaylead writes `.relaylead.json`, a `.relaylead/` folder (worktrees, project memory `memory.md`), `relaylead/...` branches and a line in `.git/info/exclude`.
+- Cost: measured about $0.60 at API list prices for a real two-task mission (November 2026), three quarters for the lead. `relaylead brief`, `relaylead dashboard` and the status line cost nothing; the console is a Claude conversation (about $0.13 to $0.46 per exchange at Opus API prices).
+- Usage limits: missions pause before the 5-hour and 7-day thresholds of their priority and resume after the reset.
+- Safety: guardrails confine writes to the task's worktree, refuse reading credential folders with the file tools, refuse pushes and commits to protected branches and secret files, and ask before irreversible commands. They stop the mistakes of a good-faith agent, not a hijacked one (sessions may run `node`, `git` and test scripts). For untrusted GitHub issues, use an account or machine without secrets.
+- Not supported: Linux, Windows, agents other than Claude Code. No telemetry.
+- Messages and documentation in English and French (`"language": "fr"`).
+
+## Documentation
+
+- [README](https://github.com/jawharmed/relaylead/blob/main/README.md): overview, quick start, costs, safety summary, files written
+- [Getting started](https://github.com/jawharmed/relaylead/blob/main/docs/getting-started.md): installation and a complete first mission with every command and its output
+- [Guide](https://github.com/jawharmed/relaylead/blob/main/docs/guide.md): glossary, every command and option, every setting, files and folders, uninstalling
+- [How it works](https://github.com/jawharmed/relaylead/blob/main/docs/how-it-works.md): architecture, mission lifecycle, states, branches, the watcher's rules
+- [Safety](https://github.com/jawharmed/relaylead/blob/main/docs/safety.md): threat model, what the guardrails stop and do not stop
+- [Costs](https://github.com/jawharmed/relaylead/blob/main/docs/costs.md): models used, measured costs, console versus `brief`
+- [FAQ](https://github.com/jawharmed/relaylead/blob/main/docs/faq.md): common questions and troubleshooting
+
+## Project
+
+- [Changelog](https://github.com/jawharmed/relaylead/blob/main/CHANGELOG.md)
+- [Security policy](https://github.com/jawharmed/relaylead/blob/main/SECURITY.md)
+- [Contributing](https://github.com/jawharmed/relaylead/blob/main/CONTRIBUTING.md)
+- [npm package](https://www.npmjs.com/package/relaylead)
+
+## Optional
+
+- [Documentation en français](https://github.com/jawharmed/relaylead/blob/main/README.fr.md)
+- [Guide en français](https://github.com/jawharmed/relaylead/blob/main/docs/fr/guide.md)
