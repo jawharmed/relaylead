@@ -35,13 +35,14 @@ const FILE_TOOLS = new Map([
   ['Read', 'file_path'],
   ['Write', 'file_path'],
   ['Edit', 'file_path'],
+  ['MultiEdit', 'file_path'],
   ['NotebookEdit', 'notebook_path'],
   ['Grep', 'path'],
   ['Glob', 'path'],
 ]);
 
 // Tools that change a file: confined to the session's working folder.
-const WRITE_TOOLS = ['Write', 'Edit', 'NotebookEdit'];
+const WRITE_TOOLS = ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'];
 
 // Files and folders of the home folder that hold keys and tokens: no session reads them.
 const SENSITIVE_IN_HOME = [
@@ -64,6 +65,8 @@ const SENSITIVE_IN_HOME = [
 // Said after a refusal of the confinement, so the session does not look for a detour (`node -e`…).
 const WRITE_ADVICE = 'Do not look for a way around it: finish what you can in your folder and say in your summary what you could not write.';
 const READ_ADVICE = 'Do not look for a way around it: say in your summary what you could not read.';
+// A session with no working folder is a lead: it changes nothing itself.
+const LEAD_WRITE_ADVICE = 'Do not look for a way around it: a lead writes no file; the project memory goes through relaylead memory write, the rest through the other relaylead commands.';
 
 // Config patterns: `*` matches any characters; everything else is literal.
 function globMatch(pattern, text, ignoreCase = false) {
@@ -234,7 +237,8 @@ function expandHome(file) {
   return result;
 }
 
-// The real path of `file`: links followed, and `/tmp` read as `/private/tmp` on macOS. A path not
+// The real path of `file`: links followed, and `/tmp` read as `/private/tmp` on macOS. The native
+// realpath gives the names as the disk holds them (case and Unicode form included). A path not
 // made yet gets the real path of its nearest existing parent, with the rest added; a link that
 // points to nothing yet is followed all the same, since a write would go where it points.
 function realPath(file) {
@@ -242,7 +246,7 @@ function realPath(file) {
   const rest = [];
   for (let links = 0; links < 40; ) {
     try {
-      return path.join(fs.realpathSync(current), ...rest);
+      return path.join(fs.realpathSync.native(current), ...rest);
     } catch {
       // missing: a link that points to nothing, or a path not made yet
     }
@@ -265,9 +269,12 @@ function realPath(file) {
   return path.resolve(file);
 }
 
-// True when `file` is `folder` or inside it. Both paths are already resolved.
+// True when `file` is `folder` or inside it. Both paths are already resolved. On macOS, `É` written
+// as one character or as `E` and an accent are the same name (a folder made by the Finder holds the
+// second form): both paths are compared in the first form (NFC).
 function isInside(file, folder) {
-  const normalize = (p) => (CASE_INSENSITIVE ? p.toLowerCase() : p);
+  const unicode = (p) => (process.platform === 'darwin' ? p.normalize('NFC') : p);
+  const normalize = (p) => (CASE_INSENSITIVE ? unicode(p).toLowerCase() : p);
   const full = normalize(file);
   const base = normalize(folder);
   return full === base || full.startsWith(base.endsWith(path.sep) ? base : base + path.sep);
@@ -279,9 +286,23 @@ function reaches(file, folder) {
   return isInside(path.resolve(file), path.resolve(folder)) || isInside(realPath(file), realPath(folder));
 }
 
-// The temporary folder Claude Code tells its sessions to use: /tmp/claude-<uid>. None on Windows.
-function claudeTempDir() {
-  return process.getuid ? path.join('/tmp', `claude-${process.getuid()}`) : null;
+// The temporary folder Claude Code gives a session: /tmp/claude-<uid>/<project>/<session id>/
+// (/private/tmp on macOS). Only that session's own folder, when its id is known; the whole
+// /tmp/claude-<uid> otherwise. None on Windows, and none when /tmp/claude-<uid> is a link or is not
+// the user's: no link at its root may widen the exception.
+function claudeTempAllows(real, sessionId) {
+  if (!process.getuid) return false;
+  const root = path.join(realPath('/tmp'), `claude-${process.getuid()}`);
+  try {
+    const stat = fs.lstatSync(root);
+    if (!stat.isDirectory() || stat.uid !== process.getuid()) return false;
+  } catch {
+    // not made yet: a write there makes a real folder
+  }
+  if (!isInside(real, root)) return false;
+  if (!sessionId || !/^[A-Za-z0-9-]+$/.test(sessionId)) return true;
+  const parts = path.relative(root, real).split(path.sep);
+  return parts.length >= 2 && parts[1] === sessionId;
 }
 
 // `target` seen from `dir`; null when only the shell knows it (a variable, `cd -`, an unknown dir).
@@ -644,21 +665,24 @@ function globPieces(glob) {
 // (`<project>/.relaylead/worktrees/<id>`).
 function holdsStateFolder(folder, stateDir) {
   if (!stateDir) return false;
+  return !inMissionWorktree(folder) && reaches(stateDir, folder);
+}
+
+// True when `folder` is in a worktree of a mission (`<project>/.relaylead/worktrees/<id>`).
+function inMissionWorktree(folder) {
   const parts = path.resolve(folder).split(path.sep);
-  const inWorktree = parts.some((part, i) => part === '.relaylead' && parts[i + 1] === 'worktrees' && parts[i + 2]);
-  return !inWorktree && reaches(stateDir, folder);
+  return parts.some((part, i) => part === '.relaylead' && parts[i + 1] === 'worktrees' && parts[i + 2]);
 }
 
 // Reason to refuse a write to `file` (seen from `dir`), or null. Only the real path lets a write
 // through: a link in the working folder that points out of it is out of it. The Relaylead folder is
 // refused first, so the exception of Claude Code's temporary folder never opens it, even when it lies there.
-function writeRefusal(file, dir, workDir) {
+function writeRefusal(file, dir, workDir, sessionId) {
   const target = path.resolve(dir, expandHome(file));
   if (reaches(target, home())) return `write in the Relaylead folder ${home()}`;
   const real = realPath(target);
   if (workDir && isInside(real, realPath(workDir))) return null;
-  const temp = claudeTempDir();
-  if (temp && isInside(real, realPath(temp))) return null;
+  if (claudeTempAllows(real, sessionId)) return null;
   return workDir ? `write outside the working folder ${workDir}` : 'write by a session that has no working folder';
 }
 
@@ -670,18 +694,32 @@ function globBase(glob) {
   return segments.slice(0, first).join('/') || (glob.startsWith('/') ? '/' : '.');
 }
 
-// Reason to refuse a read of `file` (seen from `dir`), or null: the files of keys and tokens of the
-// home folder, the configuration and the API key of Relaylead, and the missions' state folders.
-function readRefusal(file, dir) {
-  const target = path.resolve(dir, expandHome(file));
-  const sensitive = [
+// The files of keys and tokens: those of the home folder, those of Claude Code's own folder when
+// CLAUDE_CONFIG_DIR moves it, the configuration and the API key of Relaylead (`keyFile`, the key file
+// the mission was launched with, when it is not the default one), and the missions' state folders.
+function sensitivePlaces(keyFile) {
+  const places = [
     ...SENSITIVE_IN_HOME.map((name) => path.join(os.homedir(), name)),
     path.join(home(), 'config.json'),
     path.join(home(), 'api-key'),
     path.join(home(), 'missions'),
   ];
-  const found = sensitive.find((place) => reaches(target, place));
-  return found ? `read of sensitive location ${found}` : null;
+  const claudeDir = process.env.CLAUDE_CONFIG_DIR;
+  if (claudeDir) places.push(path.join(expandHome(claudeDir), '.credentials.json'), path.join(expandHome(claudeDir), '.claude.json'));
+  if (typeof keyFile === 'string' && keyFile) places.push(path.resolve(expandHome(keyFile)));
+  return places;
+}
+
+// Reason to refuse a read of `file` (seen from `dir`), or null: a sensitive place, or something in
+// one. With `holds` (the folder Grep or Glob searches), also a folder that holds a sensitive place,
+// unless it is in a worktree of a mission: a search of ~ or ~/.config would read them.
+function readRefusal(file, dir, keyFile, holds = false) {
+  const target = path.resolve(dir, expandHome(file));
+  const places = sensitivePlaces(keyFile);
+  const found = places.find((place) => reaches(target, place));
+  if (found) return `read of sensitive location ${found}`;
+  const held = holds && !inMissionWorktree(target) ? places.find((place) => reaches(place, target)) : null;
+  return held ? `search of a folder that holds sensitive location ${held}` : null;
 }
 
 // `stateDir` is the mission's state folder: sessions change it only through the relaylead CLI.
@@ -695,11 +733,13 @@ function readRefusal(file, dir) {
 // that path is in a worktree of the mission. Without `path`, Grep searches its cwd, judged as a path.
 // Known gap: a glob with no folder part (`*.json`) and a `path` that is a parent of the state folder
 // is let through; refusing it would block every search in the home folder.
-// Read, Grep and Glob never reach the sensitive locations of readRefusal (Glob: its `path` and the
-// folder part of its pattern). With `confine` (the hooks always give it), Write, Edit and
-// NotebookEdit stay in `confine.workDir`, the session's working folder (null: the session has none,
-// as the lead), or in Claude Code's temporary folder. These two refusals carry `advice`.
-function checkToolUse({ tool_name, tool_input, cwd }, guard, stateDir = null, confine = null) {
+// Read, Grep and Glob never reach the sensitive locations of readRefusal, and Grep and Glob never
+// search a folder that holds one (Glob: its `path` and the folder part of its pattern). With
+// `confine` (the hooks always give it), Write, Edit, MultiEdit and NotebookEdit stay in
+// `confine.workDir`, the session's working folder (null: the session has none, as the lead), or in
+// the session's own temporary folder of Claude Code. `confine.keyFile` is the mission's own key file.
+// These refusals carry `advice`.
+function checkToolUse({ tool_name, tool_input, cwd, session_id }, guard, stateDir = null, confine = null) {
   const input = tool_input || {};
   const dir = cwd || process.cwd();
   let reason = null;
@@ -726,11 +766,12 @@ function checkToolUse({ tool_name, tool_input, cwd }, guard, stateDir = null, co
   if (tool_name === 'Read' && input.file_path) reads.push(String(input.file_path));
   if (tool_name === 'Grep' || tool_name === 'Glob') reads.push(searched);
   if (tool_name === 'Glob' && input.pattern) reads.push(path.resolve(searched, expandHome(globBase(String(input.pattern)))));
-  const unreadable = reads.map((place) => readRefusal(place, dir)).find(Boolean);
+  const keyFile = confine ? confine.keyFile : null;
+  const unreadable = reads.map((place) => readRefusal(place, dir, keyFile, tool_name !== 'Read')).find(Boolean);
   if (unreadable) return { decision: 'deny', reason: unreadable, advice: READ_ADVICE };
   if (confine && WRITE_TOOLS.includes(tool_name) && input[field]) {
-    const outside = writeRefusal(String(input[field]), dir, confine.workDir);
-    if (outside) return { decision: 'deny', reason: outside, advice: WRITE_ADVICE };
+    const outside = writeRefusal(String(input[field]), dir, confine.workDir, session_id);
+    if (outside) return { decision: 'deny', reason: outside, advice: confine.workDir ? WRITE_ADVICE : LEAD_WRITE_ADVICE };
   }
   return { decision: 'allow' };
 }
@@ -811,18 +852,19 @@ function taskWorkDir(mission, id) {
 // mission is unknown.
 function loadMissionGuard() {
   const name = process.env.RELAYLEAD_MISSION;
-  if (!name || !/^[a-z0-9-]+$/.test(name)) return { mission: null, guard: DEFAULTS.guard, stateDir: null, workDir: null };
+  if (!name || !/^[a-z0-9-]+$/.test(name)) return { mission: null, guard: DEFAULTS.guard, stateDir: null, workDir: null, keyFile: null };
   const stateDir = missionDir(name);
   try {
     const mission = readJson(path.join(stateDir, 'mission.json'), null);
     if (mission) {
       const workDir = taskWorkDir(mission, process.env.RELAYLEAD_TASK);
-      return { mission: name, guard: cleanGuard((mission.config || {}).guard), stateDir, workDir };
+      const keyFile = ((mission.config || {}).auth || {}).keyFile || null;
+      return { mission: name, guard: cleanGuard((mission.config || {}).guard), stateDir, workDir, keyFile };
     }
   } catch {
     // Unreadable mission.json: default guard.
   }
-  return { mission: null, guard: DEFAULTS.guard, stateDir, workDir: null };
+  return { mission: null, guard: DEFAULTS.guard, stateDir, workDir: null, keyFile: null };
 }
 
 // The hook input sent by Claude Code on stdin, or null when it is not a JSON object.

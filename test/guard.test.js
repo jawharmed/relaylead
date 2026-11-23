@@ -720,3 +720,87 @@ test('a link to a file of keys is not read either', { skip: process.platform ===
   const result = checkToolUse({ tool_name: 'Read', tool_input: { file_path: path.join(workDir, 'key.txt') }, cwd: workDir }, GUARD);
   assertDenied(result, `read of sensitive location ${path.join(os.homedir(), '.ssh')}`);
 });
+
+// --- Confinement, second round (lot H1) -------------------------------------------------------
+
+test('a Grep or Glob of a folder that holds a file of keys is refused', (t) => {
+  const home = tmpDir('relaylead home-');
+  useHome(t, home);
+  const workDir = tmpDir('relaylead-work-');
+  const use = (tool_name, tool_input) => checkToolUse({ tool_name, tool_input, cwd: workDir }, GUARD, null, { workDir });
+  const inHome = (...parts) => path.join(os.homedir(), ...parts);
+  // Only paths are compared: nothing is searched under the real home folder.
+  assertDenied(use('Grep', { pattern: 'oauth_token', path: inHome('.config') }), `search of a folder that holds sensitive location ${inHome('.config', 'gh')}`);
+  assertDenied(use('Grep', { pattern: 'auth', path: inHome('.docker') }), `search of a folder that holds sensitive location ${inHome('.docker', 'config.json')}`);
+  assertDenied(use('Grep', { pattern: 'accessToken', path: inHome('.claude') }), `search of a folder that holds sensitive location ${inHome('.claude', '.credentials.json')}`);
+  assertDenied(use('Grep', { pattern: 'x', path: '~', glob: 'id_*' }), `search of a folder that holds sensitive location ${inHome('.ssh')}`);
+  assertDenied(use('Grep', { pattern: '.', path: home, glob: '*.json' }), `search of a folder that holds sensitive location ${path.join(home, 'config.json')}`);
+  assertDenied(use('Glob', { pattern: '~/.ss?/*' }), `search of a folder that holds sensitive location ${inHome('.ssh')}`);
+  assertDenied(use('Glob', { pattern: '**/.ssh/*', path: '~' }), `search of a folder that holds sensitive location ${inHome('.ssh')}`);
+  assert.strictEqual(use('Grep', { pattern: 'x', path: inHome('.config') }).advice, 'Do not look for a way around it: say in your summary what you could not read.');
+  // A folder beside them, or the project itself, is searched.
+  assert.deepStrictEqual(use('Grep', { pattern: 'x', path: inHome('.config', 'git') }), ALLOW);
+  assert.deepStrictEqual(use('Grep', { pattern: 'x' }), ALLOW);
+  assert.deepStrictEqual(use('Glob', { pattern: 'src/**/*.js' }), ALLOW);
+  // Read names one file: reading the home folder itself is no search.
+  assert.deepStrictEqual(use('Read', { file_path: inHome('notes.txt') }), ALLOW);
+});
+
+test('a path written in another Unicode form is the same folder on macOS', { skip: process.platform !== 'darwin' }, (t) => {
+  useHome(t, tmpDir('relaylead home-'));
+  // As the Finder makes it: E followed by a combining accent (NFD).
+  const workDir = path.join(fs.realpathSync(tmpDir('relaylead-work-')), 'Équipe');
+  fs.mkdirSync(workDir);
+  const written = path.join(workDir.normalize('NFC'), 'a.js');
+  assert.notStrictEqual(written, path.join(workDir, 'a.js'));
+  assert.deepStrictEqual(confined('Write', { file_path: written }, workDir), ALLOW);
+  assert.deepStrictEqual(confined('Write', { file_path: path.join(workDir, 'b.js') }, workDir.normalize('NFC')), ALLOW);
+});
+
+test('the temporary exception is the session\'s own folder when its id is known', { skip: process.platform === 'win32' }, (t) => {
+  useHome(t, tmpDir('relaylead home-'));
+  const workDir = tmpDir('relaylead-work-');
+  const temp = `/tmp/claude-${process.getuid()}`;
+  const write = (file_path, session_id) =>
+    checkToolUse({ tool_name: 'Write', tool_input: { file_path }, cwd: workDir, session_id }, GUARD, null, { workDir });
+  // Only paths are compared: nothing is written there.
+  assert.deepStrictEqual(write(path.join(temp, '-project', 'abc-123', 'scratchpad', 'a.md'), 'abc-123'), ALLOW);
+  assertDenied(write(path.join(temp, '-project', 'other-456', 'scratchpad', 'a.md'), 'abc-123'), `write outside the working folder ${workDir}`);
+  assertDenied(write(path.join(temp, 'a.md'), 'abc-123'), `write outside the working folder ${workDir}`);
+});
+
+test('a MultiEdit is confined like an Edit', (t) => {
+  useHome(t, tmpDir('relaylead home-'));
+  const workDir = tmpDir('relaylead-work-');
+  const outside = path.join(tmpDir('relaylead-outside-'), 'a.js');
+  assertDenied(confined('MultiEdit', { file_path: outside, edits: [] }, workDir), `write outside the working folder ${workDir}`);
+  assert.deepStrictEqual(confined('MultiEdit', { file_path: path.join(workDir, 'a.js'), edits: [] }, workDir), ALLOW);
+});
+
+test('a lead is told to write the memory through relaylead', (t) => {
+  useHome(t, tmpDir('relaylead home-'));
+  const result = confined('Write', { file_path: path.join(tmpDir(), 'memoire.txt') }, null);
+  assert.strictEqual(result.reason, 'write by a session that has no working folder');
+  assert.strictEqual(
+    result.advice,
+    'Do not look for a way around it: a lead writes no file; the project memory goes through relaylead memory write, the rest through the other relaylead commands.',
+  );
+});
+
+test('the mission\'s own key file and Claude Code\'s moved folder are not read', (t) => {
+  useHome(t, tmpDir('relaylead home-'));
+  const workDir = tmpDir('relaylead-work-');
+  const keyFile = path.join(tmpDir('relaylead-secrets-'), 'anthropic.key');
+  const claudeDir = tmpDir('relaylead-claude-config-');
+  const previous = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = claudeDir;
+  t.after(() => {
+    if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = previous;
+  });
+  const read = (file_path) => checkToolUse({ tool_name: 'Read', tool_input: { file_path }, cwd: workDir }, GUARD, null, { workDir, keyFile });
+  assertDenied(read(keyFile), `read of sensitive location ${keyFile}`);
+  assertDenied(read(path.join(claudeDir, '.credentials.json')), `read of sensitive location ${path.join(claudeDir, '.credentials.json')}`);
+  assertDenied(read(path.join(claudeDir, '.claude.json')), `read of sensitive location ${path.join(claudeDir, '.claude.json')}`);
+  assert.deepStrictEqual(read(path.join(claudeDir, 'settings.json')), ALLOW);
+});

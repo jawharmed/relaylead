@@ -9,6 +9,7 @@ const { writeJson } = require('../core/store');
 const { sendMail, readMail } = require('../core/mailbox');
 const { readReadings } = require('../core/readings');
 const { DEFAULTS } = require('../core/config');
+const layout = require('../core/layout');
 const { tmpDir } = require('../fixtures/helpers');
 const { gitRepo } = require('../fixtures/git');
 
@@ -118,7 +119,7 @@ function crewHome(project, delivery) {
   const home = tmpDir('relaylead home-');
   writeJson(path.join(home, 'missions', 'demo', 'mission.json'), {
     name: 'demo',
-    format: 2,
+    format: layout.FORMAT,
     dir: project,
     config: { ...structuredClone(DEFAULTS), delivery: { type: delivery } },
   });
@@ -128,9 +129,10 @@ function crewHome(project, delivery) {
 test('pretool hook keeps the writes of a crew member in its working folder', () => {
   const project = tmpDir('relaylead-project-');
   const outside = path.join(tmpDir('relaylead-outside-'), 'proof.txt');
+  const mission = { name: 'demo', format: layout.FORMAT, dir: project };
   for (const [delivery, workDir] of [
-    ['local-merge', path.join(project, '.relaylead', 'worktrees', 'demo', 'note')],
-    ['files', path.join(project, 'out', 'demo', 'note')],
+    ['local-merge', layout.taskDir(mission, 'note')],
+    ['files', layout.outDir(mission, 'note')],
   ]) {
     const home = crewHome(project, delivery);
     const env = { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'demo', RELAYLEAD_TASK: 'note' };

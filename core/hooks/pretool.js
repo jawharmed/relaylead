@@ -29,14 +29,14 @@ function irreversibleDecision(mission, input, result) {
   }
 }
 
-const { mission, guard, stateDir, workDir } = loadMissionGuard();
+const { mission, guard, stateDir, workDir, keyFile } = loadMissionGuard();
 const input = readHookInput();
 if (!input) {
   writeJournal(mission, 'unknown', 'unreadable hook input');
 } else {
   let result;
   try {
-    result = checkToolUse(input, guard, stateDir, { workDir });
+    result = checkToolUse(input, guard, stateDir, { workDir, keyFile });
   } catch {
     // A crashing hook would let the action through: refuse what the guard cannot judge.
     result = { decision: 'deny', reason: 'guard error' };
