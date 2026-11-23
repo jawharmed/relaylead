@@ -172,7 +172,18 @@ Start with `relaylead doctor`: each `warn` or `fail` line says what to do.
 
 ### `launch` says the task folder is missing, empty, or not committed
 
-Crew members start from commits, so the task folder must exist, hold at least one `.md` file, and be committed:
+Crew members start from commits, so the task folder must exist, hold at least one `.md` file, and be committed. Each case has its own message, with an example task, such as:
+
+```text
+relaylead launch: the task folder "tasks" has no .md file. Add one file per task, for instance tasks/hello.md:
+  ---
+  title: Say hello
+  ---
+  Create hello.txt that says hello.
+then commit it (git add tasks && git commit -m "tasks")
+```
+
+The fix:
 
 ```sh
 mkdir -p tasks
@@ -184,7 +195,13 @@ With `--tasks <folder>`, the same applies to that folder.
 
 ### `launch` says another mission already takes its tasks from this source
 
-Two missions on the same tasks would do the same work. If the other mission is still running, give the new one its own task folder (`--tasks tasks/other`) or wait. If it is done but not merged, merge it (`relaylead merge <mission>`) or remove it (`relaylead remove <mission>`); `--force` launches anyway.
+Two missions on the same tasks would do the same work. If the other mission is still running, give the new one its own task folder (`--tasks tasks/other`) or wait. If it is done but not merged, the message says what to do:
+
+```text
+relaylead launch: mission "hello-api" of this project is done but not merged, and it took its tasks from the same source (tasks-dir "tasks"): this mission would do them again. Merge the finished one with: relaylead merge hello-api; or throw it away with: relaylead remove hello-api; or launch anyway with --force
+```
+
+If its merge is under way (a crew member resolving a conflict), wait for it to end, or pass `--force`.
 
 ### "a mission named … already exists"
 

@@ -205,11 +205,11 @@ En mode `allowlist`, le profil développeur ne peut installer les dépendances q
 
 Chaque projet a une mémoire partagée par ses missions : `.relaylead/memory.md` à la racine du dépôt principal (jamais dans un worktree). Elle contient les conventions du projet, une ligne par mission passée et les leçons apprises. Chaque lead la lit au démarrage (`relaylead memory show`), et la compacte avant de déclarer sa mission terminée : la mission devient une ligne, les leçons sont fusionnées, ce qui est périmé disparaît. `state set done` est refusé tant que la mémoire n'est pas écrite (`--no-memory` est l'échappatoire quand elle ne peut pas l'être). La version précédente est gardée dans `.relaylead/memory-archive/`, qui n'est jamais relu. Les écritures se font sous verrou : deux missions ne s'écrasent jamais.
 
-Les projets préparés avant la 0.4 ont `.relaylead/memoire.md` et `.relaylead/memoire-archive/`. Relaylead continue de s'en servir tant que `memory.md` n'existe pas ; rien n'est renommé à votre place. Pour changer, renommez le fichier vous-même quand aucune mission du projet ne tourne (avec `git mv` si vous la versionnez).
+Les projets préparés avant la 0.4 ont `.relaylead/memoire.md` et `.relaylead/memoire-archive/`. Relaylead continue de s'en servir tant que `memory.md` n'existe pas (si les deux existent, `memory.md` l'emporte) ; rien n'est renommé à votre place, et les règles d'exclusion de git couvrent les deux noms. Pour changer, renommez le fichier vous-même quand aucune mission du projet ne tourne (avec `git mv` si vous la versionnez).
 
 - `memory.enabled` (`true`) : `false` désactive la mémoire.
 - `memory.maxLines` (`200`, de 1 à 1000) et `memory.maxBytes` (`16384`, de 1024 à 65536) : les plafonds. Une mémoire qui dépasse l'un d'eux est signalée au démarrage d'un lead (il doit la compacter d'abord), `relaylead doctor` le signale, `memory show` n'affiche que le début qui tient, et une compaction au-dessus du plafond est refusée.
-- `memory.versioned` (`false`) : par défaut, la mémoire reste hors de git grâce à `.git/info/exclude` (votre `.gitignore` n'est pas touché). Avec `true`, elle reste visible de git et vous la commitez avec le code ; son archive reste exclue.
+- `memory.versioned` (`false`) : par défaut, la mémoire reste hors de git grâce à `.git/info/exclude` (votre `.gitignore` n'est pas touché). Avec `true`, elle reste visible de git et vous la commitez avec le code : l'exclusion devient `.relaylead/*`, `!.relaylead/memory.md` et `!.relaylead/memoire.md`, et l'archive reste exclue.
 
 `relaylead init` pose les deux questions (tenir une mémoire ; la versionner). `--yes` prend les valeurs par défaut, `--no-memory` et `--versioned-memory` y répondent.
 
@@ -273,6 +273,7 @@ Lance une mission avec un lead et son équipe, affiche son nom, et rend la main 
 - `--tasks <dossier>` : le dossier de tâches de la mission, dans le projet (`source.dir`, `tasks` par défaut).
 - `--priority <valeur>` : `high`, `normal` (par défaut) ou `low`. Changez-la plus tard avec `relaylead priority`.
 - `--dir <chemin>` : le dossier du projet (le dossier courant par défaut).
+- `--team <nom>` et `--agent <nom>` : l'équipe et l'agent (`code` et `claude`, les seuls intégrés).
 - `--force` : lancer même si une mission terminée de ce projet, pas encore fusionnée, a pris ses tâches à la même source (voir plus bas).
 
 Plusieurs missions d'un même projet tournent côte à côte, chacune avec sa branche d'intégration et ses worktrees ; leurs opérations git sur le dépôt passent à tour de rôle. Chaque mission a besoin de ses propres tâches :
@@ -286,7 +287,20 @@ relaylead launch --name frontend --tasks tasks/frontend --request "Construis les
 
 - quand le dossier de tâches manque, ne contient aucun fichier `.md`, ou a des modifications non commitées ; le message dit lequel, avec un exemple de tâche ;
 - tant qu'une mission du même projet, pas encore terminée, prend ses tâches à la même source (le même dossier, ou le même label GitHub) ;
-- quand une mission du même projet, terminée mais pas fusionnée, avait la même source, puisque la nouvelle referait les mêmes tâches : fusionnez-la (`relaylead merge <m>`), retirez-la (`relaylead remove <m>`), ou passez `--force`.
+- quand une mission du même projet, terminée mais pas fusionnée, avait la même source, puisque la nouvelle referait les mêmes tâches : fusionnez-la (`relaylead merge <m>`), retirez-la (`relaylead remove <m>`), ou passez `--force`. Cela ne vaut pas pour la livraison `files`, qui n'a rien à fusionner ;
+- tant que la fusion d'une telle mission n'est pas finie (un équipier résout un conflit, ou une question attend) : attendez-la (voir `relaylead brief`), ou passez `--force`.
+
+Par exemple, sans dossier de tâches, avec `"language": "fr"` :
+
+```text
+$ relaylead launch --request "Réalise les tâches"
+relaylead launch: il n'y a pas de dossier de tâches « tasks » dans ce projet. Créez-le avec un fichier par tâche, par exemple tasks/hello.md :
+  ---
+  title: Dire bonjour
+  ---
+  Créer hello.txt qui dit bonjour.
+puis commitez-le (git add tasks && git commit -m "tâches") : les équipiers travaillent à partir des commits
+```
 
 Un lancement qui échoue retire la branche et le worktree d'intégration qu'il a créés. `launch` lance aussi la boucle du veilleur, sauf si `watcher.autoStart` vaut `false`.
 
@@ -296,7 +310,16 @@ Une ligne par mission : nom, état, session du lead, dossier. L'état peut indiq
 
 ### `relaylead brief`
 
-Ce que la console montre à l'ouverture d'une conversation, en un texte court : les problèmes d'installation (seulement s'il y en a), ce qui s'est passé depuis le dernier coup d'œil, chaque question ouverte en entier (missions terminées comprises), et une ligne par mission en cours. Après la fin d'une mission, il donne la commande suivante, `relaylead merge <mission>`. Il ne lit que des fichiers locaux et n'appelle aucun modèle.
+Ce que la console montre à l'ouverture d'une conversation, en un texte court : les problèmes d'installation (seulement s'il y en a), ce qui s'est passé depuis le dernier coup d'œil, chaque question ouverte en entier (missions terminées comprises), une ligne par mission en cours, et une section *Terminées, pas encore fusionnées* avec la commande à lancer pour chaque mission qui peut être fusionnée. « Rien de nouveau. » ne s'affiche que s'il n'y a ni nouveauté ni question nouvelle. Il n'appelle aucun modèle.
+
+```text
+$ relaylead brief
+Rien de nouveau.
+Aucune question ouverte.
+Aucune mission en cours.
+Terminées, pas encore fusionnées :
+  hello-api : relaylead merge hello-api
+```
 
 ### `relaylead answer <mission> <id> <choice>`
 
@@ -329,7 +352,12 @@ Change la priorité d'une mission, même en cours : ses seuils d'usage et son ra
 
 ### `relaylead show <mission>`
 
-Ouvre la session du lead dans Claude Code, pour la lire et y écrire. Pour une mission terminée, dont la session n'existe plus, la commande le dit, et comment relire la conversation (`claude --resume`).
+Ouvre la session du lead dans Claude Code, pour la lire et y écrire. Une mission terminée n'a plus de session :
+
+```text
+$ relaylead show hello-api
+la mission hello-api est done : il n'y a plus de session à ouvrir ; pour relire son travail, utilisez claude --resume
+```
 
 ### `relaylead stop <mission>`
 
@@ -353,7 +381,7 @@ Toutes les missions de la machine en JSON : nom, dossier, priorité, état, paus
 
 ### `relaylead init [--yes] [--api-key-env NAME] [--api-key-file PATH] [--no-memory] [--versioned-memory]`
 
-Prépare la machine une fois (`~/.relaylead/config.json`), puis le projet courant (`.relaylead.json`, jamais écrasé). Elle doit tourner à la racine d'un dépôt git. Dans un terminal, elle pose quelques questions : la langue (proposée d'après `LANG`), votre compte Claude ou une clé API, s'il faut lancer `install`, s'il faut tenir une mémoire de projet et s'il faut la versionner. Avec `--yes`, ou sans terminal, elle prend les valeurs par défaut. Elle se termine par les étapes suivantes, dont le dossier de tâches à remplir.
+Prépare la machine une fois (`~/.relaylead/config.json`), puis le projet courant (`.relaylead.json`, jamais écrasé). Elle doit tourner à la racine d'un dépôt git. Dans un terminal, elle pose quelques questions : la langue (`fr` proposé quand `LANG` commence par `fr`, demandée tant que les réglages de la machine n'ont pas de langue), votre compte Claude ou une clé API, s'il faut lancer `install`, s'il faut tenir une mémoire de projet et s'il faut la versionner. Avec `--yes`, ou sans terminal, elle prend les valeurs par défaut, et écrit quand même la langue. Tant qu'`install` n'a pas tourné, elle se termine par les étapes suivantes : écrire vos tâches dans `tasks/` et les commiter, puis `relaylead install` et `relaylead doctor`. [Premiers pas](getting-started.md#une-mission-complète-depuis-le-terminal) montre un passage complet.
 
 ### `relaylead install`
 
@@ -376,7 +404,7 @@ Vérifie Node, Claude Code, git, le planificateur (et que le Node et le `PATH` e
 
 ### `relaylead wait`
 
-- `wait --all [--timeout secondes] [--json]` : pour la console. Attend qu'il se passe dans une mission quelque chose que vous devez savoir (une question, une tâche en échec, une mission terminée ou arrêtée, une fusion), puis affiche une ligne par événement, avec le nom de sa mission. `--timeout 0` regarde une fois. Chaque événement n'est donné qu'une fois.
+- `wait --all [--timeout secondes] [--json]` : pour la console. Attend qu'il se passe dans une mission quelque chose que vous devez savoir (une question, une tâche en échec, une mission terminée ou arrêtée, une fusion), puis affiche une ligne par événement, avec le nom de sa mission. Une mission terminée qui peut être fusionnée arrive avec sa commande suivante : `[hello-api] mission terminée ; ramenez son travail dans votre branche avec : relaylead merge hello-api`. `--timeout 0` regarde une fois. Chaque événement n'est donné qu'une fois.
 - `wait [--timeout secondes] [--mission nom]` : *pour les sessions*. Le lead attend qu'une tâche, une question ou un message de sa mission change.
 
 ### `relaylead task`

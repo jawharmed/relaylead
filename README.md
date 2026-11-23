@@ -1,8 +1,8 @@
 <p align="right"><strong>English</strong> · <a href="README.fr.md">Français</a></p>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner-dark.svg">
-  <img alt="Relaylead: a team of Claude Code sessions, working in the background on your Mac" src="docs/assets/banner-light.svg" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/jawharmed/relaylead/main/docs/assets/banner-dark.svg">
+  <img alt="Relaylead: a team of Claude Code sessions, working in the background on your Mac" src="https://raw.githubusercontent.com/jawharmed/relaylead/main/docs/assets/banner-light.svg" width="100%">
 </picture>
 
 <p>
@@ -68,7 +68,7 @@ relaylead merge my-project                       # once the mission is done
 
 `relaylead dashboard` serves a local page that refreshes on its own. Here, two missions run at once; one waits for an answer:
 
-<img alt="The Relaylead dashboard: two missions with their tasks, a question with its options, and the 5-hour and 7-day usage" src="docs/assets/dashboard.png" width="100%">
+<img alt="The Relaylead dashboard: two missions with their tasks, a question with its options, and the 5-hour and 7-day usage" src="https://raw.githubusercontent.com/jawharmed/relaylead/main/docs/assets/dashboard.png" width="100%">
 
 The same state is in the Claude Code status line (`relaylead · 2 missions · ❓1 · quota 5 h 41 %`), in a panel next to the conversation (`/pane`), and in the terminal:
 

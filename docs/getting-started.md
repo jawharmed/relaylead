@@ -115,7 +115,24 @@ cd ~/code/hello-api
 relaylead init
 ```
 
-The first time on a Mac, it asks a few questions; press Enter to take the default shown in brackets.
+The first time on a Mac, it asks a few questions; press Enter to take the default shown in brackets:
+
+```text
+$ relaylead init
+Language / Langue (en, fr) [en]
+Authentication: "login" (your Claude account) or "api-key"? [login]
+machine settings written to /Users/you/.relaylead/config.json
+Run "relaylead install" now (scheduler and plugin)? [no]
+Keep a project memory for the leads (conventions, lessons)? [yes]
+Version the project memory with the code? [no]
+project settings written to /Users/you/code/hello-api/.relaylead.json
+if Claude Code has never run in /Users/you/code/hello-api, run `claude` once there and accept the trust question, so missions can start
+Access tips: give the sessions only the access they need.
+Keep secrets (.env files, keys) out of the project folder when you can.
+Review what a mission delivered before you merge it.
+```
+
+What each question decides:
 
 | Question | Default | What it decides |
 | --- | --- | --- |
@@ -125,7 +142,7 @@ The first time on a Mac, it asks a few questions; press Enter to take the defaul
 | Keep a project memory for the leads? | `yes` | A short file of conventions and lessons that every lead reads first. |
 | Version the project memory with the code? | `no` | `yes` lets you commit it; `no` keeps it out of git. |
 
-It writes `~/.relaylead/config.json` (once per Mac) and `.relaylead.json` (once per project), then reminds you of the trust step and of a few access tips. `relaylead init --yes` takes every default without asking.
+It writes `~/.relaylead/config.json` (once per Mac) and `.relaylead.json` (once per project), then reminds you of the trust step and of a few access tips. On a Mac that is already set up, only the project questions are asked (and the language, if your settings have none yet). `relaylead init --yes` takes every default without asking, the language included. If you have not run `relaylead install` yet, a last line reminds you to write your tasks, then to run `install` and `doctor`.
 
 **2. Write the tasks.** One Markdown file per task in `tasks/`. The file name is the task's id.
 
@@ -205,6 +222,13 @@ The lead is woken within seconds and starts a crew member on `license`. A free a
 ```text
 $ relaylead list
 hello-api  done  hello-api/lead/1  /Users/you/code/hello-api
+$ relaylead brief
+New:
+  [hello-api] mission done; bring its work into your branch with: relaylead merge hello-api
+No open question.
+No mission running.
+Done, not merged yet:
+  hello-api: relaylead merge hello-api
 ```
 
 **8. Review, then merge.**

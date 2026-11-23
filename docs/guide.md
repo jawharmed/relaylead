@@ -205,11 +205,11 @@ In `allowlist` mode the developer profile may install dependencies only with `np
 
 Each project has a memory shared by its missions: `.relaylead/memory.md` at the root of the main repository (never in a worktree). It holds the project's conventions, one line per past mission and the lessons learned. Every lead reads it when it starts (`relaylead memory show`), and compacts it before declaring its mission done: the mission becomes one line, the lessons are merged, what is out of date goes. `state set done` is refused until the memory is written (`--no-memory` is the way out when it cannot be). The previous version is kept in `.relaylead/memory-archive/`, which is never read again. Writes are done under a lock, so two missions never overwrite each other.
 
-Projects set up before 0.4 have `.relaylead/memoire.md` and `.relaylead/memoire-archive/`. Relaylead keeps using them as long as `memory.md` does not exist; nothing is renamed for you. To switch, rename the file yourself while no mission of the project runs (with `git mv` if you version it).
+Projects set up before 0.4 have `.relaylead/memoire.md` and `.relaylead/memoire-archive/`. Relaylead keeps using them as long as `memory.md` does not exist (when both exist, `memory.md` wins); nothing is renamed for you, and the git exclusion rules cover both names. To switch, rename the file yourself while no mission of the project runs (with `git mv` if you version it).
 
 - `memory.enabled` (`true`): `false` turns the memory off.
 - `memory.maxLines` (`200`, from 1 to 1000) and `memory.maxBytes` (`16384`, from 1024 to 65536): the ceilings. A memory over either is flagged when a lead starts (it must compact first), `relaylead doctor` warns about it, `memory show` prints only the start that fits, and a compaction over the ceiling is refused.
-- `memory.versioned` (`false`): by default the memory stays out of git through `.git/info/exclude` (your `.gitignore` is not touched). With `true` it stays visible to git and you commit it with the code; its archive stays excluded.
+- `memory.versioned` (`false`): by default the memory stays out of git through `.git/info/exclude` (your `.gitignore` is not touched). With `true` it stays visible to git and you commit it with the code: the exclusion becomes `.relaylead/*`, `!.relaylead/memory.md` and `!.relaylead/memoire.md`, and the archive stays excluded.
 
 `relaylead init` asks both questions (keep a memory; version it). `--yes` takes the defaults, `--no-memory` and `--versioned-memory` answer them.
 
@@ -273,6 +273,7 @@ Starts a mission with a lead and its crew, prints its name, and returns at once.
 - `--tasks <folder>`: the mission's task folder, inside the project (`source.dir`, `tasks` by default).
 - `--priority <value>`: `high`, `normal` (default) or `low`. Change it later with `relaylead priority`.
 - `--dir <path>`: the project folder (the current folder by default).
+- `--team <name>` and `--agent <name>`: the team and the agent (`code` and `claude`, the only built-in ones).
 - `--force`: launch even though a finished mission of this project, not merged yet, took its tasks from the same source (see below).
 
 Several missions of one project run side by side, each with its own integration branch and worktrees; their git operations on the repository take turns. Each mission needs tasks of its own:
@@ -286,7 +287,20 @@ relaylead launch --name frontend --tasks tasks/frontend --request "Build the pag
 
 - when the task folder is missing, holds no `.md` file, or has uncommitted changes; the message says which, with an example task;
 - while a mission of the same project that is not over takes its tasks from the same source (the same folder, or the same GitHub label);
-- when a mission of the same project that is done but not merged had the same source, since the new one would do the same tasks again: merge it (`relaylead merge <m>`), remove it (`relaylead remove <m>`), or pass `--force`.
+- when a mission of the same project that is done but not merged had the same source, since the new one would do the same tasks again: merge it (`relaylead merge <m>`), remove it (`relaylead remove <m>`), or pass `--force`. This does not apply to the `files` delivery, which has nothing to merge;
+- while the merge of such a mission is not over (a crew member resolving a conflict, or a question waiting): wait for it (see `relaylead brief`), or pass `--force`.
+
+For instance, with no task folder:
+
+```text
+$ relaylead launch --request "Carry out the tasks"
+relaylead launch: there is no task folder "tasks" in this project. Create it with one file per task, for instance tasks/hello.md:
+  ---
+  title: Say hello
+  ---
+  Create hello.txt that says hello.
+then commit it (git add tasks && git commit -m "tasks"): the crew works from commits
+```
 
 A launch that fails removes the integration branch and worktree it created. `launch` also starts the watcher's loop unless `watcher.autoStart` is `false`.
 
@@ -296,7 +310,16 @@ One line per mission: name, state, the lead's session, folder. The state may say
 
 ### `relaylead brief`
 
-What the console shows when a conversation opens, as a short text: installation problems (only when there are some), what happened since the last look, every open question in full (finished missions included), and one line per mission not over. After a mission is done, it names the next command, `relaylead merge <mission>`. Reads local files only; no model is called.
+What the console shows when a conversation opens, as a short text: installation problems (only when there are some), what happened since the last look, every open question in full (finished missions included), one line per mission not over, and a section *Done, not merged yet* with the command to run for each mission that can be merged. "Nothing new." is printed only when there is no news and no new question. It calls no model.
+
+```text
+$ relaylead brief
+Nothing new.
+No open question.
+No mission running.
+Done, not merged yet:
+  hello-api: relaylead merge hello-api
+```
 
 ### `relaylead answer <mission> <id> <choice>`
 
@@ -329,7 +352,12 @@ Changes a mission's priority, even while it runs: its usage thresholds and its r
 
 ### `relaylead show <mission>`
 
-Opens the lead's session in Claude Code so you can read it and write to it. For a finished mission, whose session is gone, it says so and how to read the conversation again (`claude --resume`).
+Opens the lead's session in Claude Code so you can read it and write to it. A finished mission has no session left:
+
+```text
+$ relaylead show hello-api
+mission hello-api is done: there is no session left to open; to read its work again, use claude --resume
+```
 
 ### `relaylead stop <mission>`
 
@@ -353,7 +381,7 @@ Writes one display setting in `~/.relaylead/config.json`: `display.pane` (`alway
 
 ### `relaylead init [--yes] [--api-key-env NAME] [--api-key-file PATH] [--no-memory] [--versioned-memory]`
 
-Sets up the machine once (`~/.relaylead/config.json`), then the current project (`.relaylead.json`, never overwritten). It must run at the root of a git repository. In a terminal it asks a few questions: the language (suggested from `LANG`), your Claude account or an API key, whether to run `install`, whether to keep a project memory and whether to version it. With `--yes`, or without a terminal, it takes the defaults. It ends with the next steps, among them the task folder to fill.
+Sets up the machine once (`~/.relaylead/config.json`), then the current project (`.relaylead.json`, never overwritten). It must run at the root of a git repository. In a terminal it asks a few questions: the language (`fr` suggested when `LANG` starts with `fr`, asked whenever the machine settings have no language yet), your Claude account or an API key, whether to run `install`, whether to keep a project memory and whether to version it. With `--yes`, or without a terminal, it takes the defaults, and still writes the language. Before `install` has run, it ends with the next steps: write your tasks in `tasks/` and commit them, then `relaylead install` and `relaylead doctor`. [Getting started](getting-started.md#a-complete-mission-from-the-terminal) shows a full run.
 
 ### `relaylead install`
 
@@ -376,7 +404,7 @@ Checks Node, Claude Code, git, the scheduler (and that the Node and `PATH` it wa
 
 ### `relaylead wait`
 
-- `wait --all [--timeout seconds] [--json]`: for the console. Waits until something you must know happens in any mission (a question, a failed task, a mission done or stopped, a merge), then prints one line per event, named by its mission. `--timeout 0` looks once. Each event is given once.
+- `wait --all [--timeout seconds] [--json]`: for the console. Waits until something you must know happens in any mission (a question, a failed task, a mission done or stopped, a merge), then prints one line per event, named by its mission. A done mission that can be merged comes with its next command: `[hello-api] mission done; bring its work into your branch with: relaylead merge hello-api`. `--timeout 0` looks once. Each event is given once.
 - `wait [--timeout seconds] [--mission name]`: *for sessions*. The lead waits until a task, a question or a message of its mission changes.
 
 ### `relaylead task`

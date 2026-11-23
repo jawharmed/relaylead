@@ -45,7 +45,7 @@ ok watcher: no pass recorded yet
 ok auth: login (the connected Claude account)
 ```
 
-Une ligne `warn` donne la commande à lancer ; une ligne `fail` dit ce qui manque. Vous pouvez relancer `relaylead doctor` à tout moment. Avec `"language": "fr"`, ces lignes s'affichent en français.
+Une ligne `warn` donne la commande à lancer ; une ligne `fail` dit ce qui manque. Vous pouvez relancer `relaylead doctor` à tout moment. Une fois la langue réglée sur `fr` (`relaylead init` vous la propose), le détail de chaque ligne s'affiche en français, par exemple `ok scheduler: installé et chargé` ; les noms des vérifications et `ok`, `warn`, `fail` restent tels quels.
 
 ## Étape 2 : faire confiance à votre projet dans Claude Code
 
@@ -115,17 +115,34 @@ cd ~/code/hello-api
 relaylead init
 ```
 
-La première fois sur un Mac, il pose quelques questions ; appuyez sur Entrée pour garder la valeur proposée entre crochets.
+La première fois sur un Mac, il pose quelques questions ; appuyez sur Entrée pour garder la valeur proposée entre crochets. Avec un `LANG` français, la langue proposée est `fr`, et la suite est en français :
+
+```text
+$ relaylead init
+Langue / Language (en, fr) [fr]
+Authentification : « login » (votre compte Claude) ou « api-key » ? [login]
+réglages de la machine écrits dans /Users/vous/.relaylead/config.json
+Lancer « relaylead install » maintenant (planificateur et plugin) ? [non]
+Tenir une mémoire de projet pour les leads (conventions, leçons) ? [oui]
+Versionner la mémoire du projet avec le code ? [non]
+réglages du projet écrits dans /Users/vous/code/hello-api/.relaylead.json
+si Claude Code n'a jamais tourné dans /Users/vous/code/hello-api, lancez `claude` une fois dans ce dossier et choisissez « Yes, I trust this folder », pour que les missions puissent démarrer
+Conseils d'accès : ne donnez aux sessions que l'accès dont elles ont besoin.
+Gardez les secrets (fichiers .env, clés) hors du dossier du projet quand c'est possible.
+Relisez ce qu'une mission a livré avant de la fusionner.
+```
+
+Ce que décide chaque question :
 
 | Question | Par défaut | Ce qu'elle décide |
 | --- | --- | --- |
 | Langue des messages | `fr` si votre `LANG` commence par `fr`, sinon `en` | La langue de tout ce qu'affiche Relaylead. |
 | Authentification | `login` | `login` utilise votre compte Claude connecté ; `api-key` copie une clé depuis une variable d'environnement. |
-| Lancer `relaylead install` maintenant ? | `no` | Inutile si vous l'avez déjà lancé à l'étape 1. |
-| Tenir une mémoire de projet pour les leads ? | `yes` | Un court fichier de conventions et de leçons que chaque lead lit en premier. |
-| Versionner la mémoire de projet avec le code ? | `no` | `yes` vous laisse la commiter ; `no` la garde hors de git. |
+| Lancer `relaylead install` maintenant ? | `non` | Inutile si vous l'avez déjà lancé à l'étape 1. |
+| Tenir une mémoire de projet pour les leads ? | `oui` | Un court fichier de conventions et de leçons que chaque lead lit en premier. |
+| Versionner la mémoire de projet avec le code ? | `non` | `oui` vous laisse la commiter ; `non` la garde hors de git. |
 
-Il écrit `~/.relaylead/config.json` (une fois par Mac) et `.relaylead.json` (une fois par projet), puis vous rappelle l'étape de confiance et quelques conseils d'accès. `relaylead init --yes` prend toutes les valeurs par défaut sans rien demander.
+Il écrit `~/.relaylead/config.json` (une fois par Mac) et `.relaylead.json` (une fois par projet), puis vous rappelle l'étape de confiance et quelques conseils d'accès. Sur un Mac déjà préparé, seules les questions du projet sont posées (et la langue, si vos réglages n'en ont pas encore). `relaylead init --yes` prend toutes les valeurs par défaut sans rien demander, langue comprise. Si vous n'avez pas encore lancé `relaylead install`, une dernière ligne vous rappelle d'écrire vos tâches, puis de lancer `install` et `doctor`.
 
 **2. Écrire les tâches.** Un fichier Markdown par tâche dans `tasks/`. Le nom du fichier est l'identifiant de la tâche.
 
@@ -205,6 +222,13 @@ Le lead est réveillé en quelques secondes et lance un équipier sur `license`.
 ```text
 $ relaylead list
 hello-api  done  hello-api/lead/1  /Users/vous/code/hello-api
+$ relaylead brief
+Nouveau :
+  [hello-api] mission terminée ; ramenez son travail dans votre branche avec : relaylead merge hello-api
+Aucune question ouverte.
+Aucune mission en cours.
+Terminées, pas encore fusionnées :
+  hello-api : relaylead merge hello-api
 ```
 
 **8. Relire, puis fusionner.**

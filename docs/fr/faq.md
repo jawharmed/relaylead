@@ -172,7 +172,18 @@ Commencez par `relaylead doctor` : chaque ligne `warn` ou `fail` dit quoi faire.
 
 ### `launch` dit que le dossier de tâches manque, est vide ou n'est pas commité
 
-Les équipiers partent des commits : le dossier de tâches doit exister, contenir au moins un fichier `.md`, et être commité.
+Les équipiers partent des commits : le dossier de tâches doit exister, contenir au moins un fichier `.md`, et être commité. Chaque cas a son message, avec un exemple de tâche, par exemple :
+
+```text
+relaylead launch: le dossier de tâches « tasks » ne contient aucun fichier .md. Ajoutez un fichier par tâche, par exemple tasks/hello.md :
+  ---
+  title: Dire bonjour
+  ---
+  Créer hello.txt qui dit bonjour.
+puis commitez-le (git add tasks && git commit -m "tâches")
+```
+
+La solution :
 
 ```sh
 mkdir -p tasks
@@ -184,7 +195,13 @@ Avec `--tasks <dossier>`, la même règle vaut pour ce dossier.
 
 ### `launch` dit qu'une autre mission prend déjà ses tâches à cette source
 
-Deux missions sur les mêmes tâches feraient le même travail. Si l'autre mission tourne encore, donnez à la nouvelle son propre dossier de tâches (`--tasks tasks/autre`) ou attendez. Si elle est terminée mais pas fusionnée, fusionnez-la (`relaylead merge <mission>`) ou retirez-la (`relaylead remove <mission>`) ; `--force` lance quand même.
+Deux missions sur les mêmes tâches feraient le même travail. Si l'autre mission tourne encore, donnez à la nouvelle son propre dossier de tâches (`--tasks tasks/autre`) ou attendez. Si elle est terminée mais pas fusionnée, le message dit quoi faire :
+
+```text
+relaylead launch: la mission « hello-api » de ce projet est terminée mais pas fusionnée, et elle prenait ses tâches à la même source (tasks-dir "tasks") : cette mission les referait. Fusionnez la mission terminée avec : relaylead merge hello-api ; ou jetez-la avec : relaylead remove hello-api ; ou lancez quand même avec --force
+```
+
+Si sa fusion est en cours (un équipier résout un conflit), attendez qu'elle se termine, ou passez `--force`.
 
 ### « une mission nommée … existe déjà »
 

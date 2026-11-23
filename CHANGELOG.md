@@ -18,8 +18,8 @@ Safety, a clearer command line, complete French, and documentation in English an
 ### Added
 
 - Help for each command: `relaylead help [command]` and `relaylead <command> --help`. `merge` is listed in the general help.
-- After a mission is done, `relaylead wait --all` and `relaylead brief` name the next command, `relaylead merge <mission>`.
-- `relaylead init` asks for the language of the messages, suggesting `fr` when `LANG` starts with `fr`, and writes it to the machine settings.
+- After a mission is done, `relaylead wait --all` names the next command, `relaylead merge <mission>`, when the mission can be merged, and `relaylead brief` lists it under *Done, not merged yet*.
+- `relaylead init` asks for the language of the messages, suggesting `fr` when `LANG` starts with `fr`, and writes it to the machine settings when they have none, also with `--yes`.
 - `relaylead launch --force`, to launch even though a finished, unmerged mission of the project took its tasks from the same source.
 - `relaylead doctor` checks the configuration (unknown keys, `language`, `permissionMode`, `parallel`, `maxSessions`) and that the Node and `PATH` saved in the launchd agent still exist.
 - Documentation in English and French: getting started, guide, how it works, safety, costs, FAQ. `SECURITY.md`, `CONTRIBUTING.md`, this changelog and `llms.txt`.
@@ -29,7 +29,7 @@ Safety, a clearer command line, complete French, and documentation in English an
 - **The project memory is now `.relaylead/memory.md`**, and its archive `.relaylead/memory-archive/`. Existing `memoire.md` files are not renamed: Relaylead keeps using `memoire.md` as long as `memory.md` does not exist, and the git exclusion rules cover both names.
 - **The panel command is `/pane`** (it was `/panneau`).
 - The messages, the help and `doctor` are complete in French.
-- `launch` refuses when a finished mission of the same project, not merged yet, took its tasks from the same source, instead of doing the same tasks again. The message offers `relaylead merge`, `relaylead remove` or `--force`.
+- `launch` refuses when a finished mission of the same project, not merged yet, took its tasks from the same source, instead of doing the same tasks again. The message offers `relaylead merge`, `relaylead remove` or `--force`. It also waits while such a mission's merge is not over. Neither applies to the `files` delivery.
 - `launch` gives three distinct messages for a missing task folder, a folder without `.md` files, and uncommitted changes, each with an example task. The last line of `init` mentions the task folder.
 - The console asks you to confirm before it sends *Allow once* or *Always allow* for a risky command, and points to `relaylead brief` or the web page for simply looking.
 - `list`, `brief` and `overview` show a mission whose files cannot be read as `unreadable`, with its path, instead of failing for every mission.
@@ -40,7 +40,7 @@ Safety, a clearer command line, complete French, and documentation in English an
 - `relaylead show` on a finished mission prints a clear message instead of Claude Code's raw error.
 - `relaylead brief` no longer prints "Nothing new." above a question marked new.
 - `relaylead question list <unknown mission>` is an error, like `show`.
-- Two timing tests no longer fail on a loaded machine.
+- Two timing tests no longer fail on a loaded machine (git's time limit in those tests goes from 1 s to 4 s).
 
 ### Updating to 0.4
 
