@@ -366,9 +366,11 @@ test('uninstall --purge stops the loop and waits for its end before deleting the
   await waitFor(() => watcher.watcherRunning().running, 10000, 'the loop to run', explain);
 
   const said = [];
-  await uninstall((key) => said.push(key), { purge: true });
+  // The mission watched is not over: --force stops it, once the loop has ended.
+  await uninstall((key) => said.push(key), { purge: true, force: true });
 
   assert.ok(said.includes('watcherStopped'), said.join(' '));
+  assert.ok(said.indexOf('watcherStopped') < said.indexOf('missionStopped'), said.join(' '));
   assert.strictEqual(fs.existsSync(home()), false);
   // Its file was removed on its way out: the process itself ends at once, and writes nothing more.
   await waitFor(() => loop.ended, 5000, 'the loop process to exit', explain);

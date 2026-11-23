@@ -61,12 +61,14 @@ async function uninstall(say, { purge = false, force = false } = {}) {
   assertSupported();
   const record = readJson(installFile(), null);
   if (purge && !isRelayleadHome(record)) throw codedError('purge-refused', { dir: home() });
-  if (purge) await stopActiveMissions(say, force);
+  const active = purge ? missionsNotOver(force) : [];
   if (watcherRunning().running) {
     const outcome = await stopWatcher({ waitMs: LOOP_END_WAIT_MS });
     if (outcome === 'requested') say('uninstall-warning', { step: 'watcher', detail: 'its loop is still in a pass', command: 'relaylead watcher stop' });
     else say('watcherStopped', {});
   }
+  // After the watcher's loop: no pass of it runs while the missions are stopped.
+  await stopMissions(active, say);
   if (!record) say('nothing-installed', {});
 
   if (!record || record.scheduler) {
@@ -95,13 +97,15 @@ function notOver(mission) {
   return !/^(done|stopped)/.test(mission.state) || mission.state.endsWith(', stopping');
 }
 
-// Refuses the purge while a mission is not over, unless `force`: then each one is stopped. A stop
-// that fails is a warning with the command to run by hand, and the purge goes on.
-async function stopActiveMissions(say, force) {
-  const active = listMissions().filter(notOver);
-  if (active.length === 0) return;
-  const names = active.map((mission) => mission.name);
-  if (!force) throw codedError('purge-active-missions', { missions: names.join(', '), dir: home() });
+// The names of the missions not over. Refused unless `force`: nothing is changed before that check.
+function missionsNotOver(force) {
+  const names = listMissions().filter(notOver).map((mission) => mission.name);
+  if (names.length > 0 && !force) throw codedError('purge-active-missions', { missions: names.join(', '), dir: home() });
+  return names;
+}
+
+// Stops each mission. A stop that fails is a warning with the command to run by hand, and the purge goes on.
+async function stopMissions(names, say) {
   for (const name of names) {
     try {
       await stopMission(name);
