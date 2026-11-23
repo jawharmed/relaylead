@@ -293,8 +293,10 @@ test('state set handover records who asked and starts a targeted pass', async (t
   assert.deepStrictEqual([state.state, state.note, state.by], ['handover', 'a delivered, b next', 'demo/lead/1']);
   assert.deepStrictEqual(calls, [['watcher', 'run', '--mission', 'demo']]);
   // Asked by the user.
-  assert.strictEqual(await run(['state', 'set', 'handover', '--mission', 'demo'], makeIo()), 0);
+  const asked = makeIo();
+  assert.strictEqual(await run(['state', 'set', 'handover', '--mission', 'demo'], asked), 0);
   assert.strictEqual(readJson(missionFile('state.json')).by, 'user');
+  assert.match(asked.out.text, /mission demo: state set to handover/);
 });
 
 test('a handover note is cut to one line of 500 characters', async (t) => {

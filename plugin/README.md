@@ -11,7 +11,7 @@ npm install -g relaylead
 relaylead install
 ```
 
-`relaylead install` sets up the background watcher and adds this plugin to Claude Code. To remove everything, run `relaylead uninstall`.
+`relaylead install` sets up the background watcher and adds this plugin to Claude Code. The marketplace it registers is called `relaylead-local`, so to add the plugin again by hand, run `/plugin install relaylead@relaylead-local` in Claude Code. To remove everything, run `relaylead uninstall`.
 
 ## The console
 

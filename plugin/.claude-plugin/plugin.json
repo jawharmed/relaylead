@@ -1,7 +1,7 @@
 {
   "name": "relaylead",
   "displayName": "Relaylead",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Slash commands for relaylead: launch and follow missions run by a team of Claude Code sessions",
   "author": {
     "name": "Lilia Digital"
@@ -11,6 +11,7 @@
   "documentationUrl": "https://github.com/jawharmed/relaylead/blob/main/docs/guide.md",
   "supportUrl": "https://github.com/jawharmed/relaylead/issues",
   "icon": "./icon.svg",
+  "network": { "hosts": [] },
   "license": "MIT",
   "keywords": ["claude-code", "agents", "missions", "automation", "github", "macos"]
 }

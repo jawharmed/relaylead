@@ -98,6 +98,14 @@ function refuseInSession(command, io) {
   if (io.env.RELAYLEAD_MISSION) throw codedError('not-from-a-session', { command });
 }
 
+// Claude Code sets CLAUDE_CODE_ENTRYPOINT in the environment of its tools: "sdk-cli" under `claude -p`
+// (observed, 2.1.330; the docs do not list this variable). Only that value: an app built on the Agent SDK
+// ("sdk-ts", "sdk-py") may be a long conversation that does get the end of a background command.
+const ONE_SHOT_MAX_WAIT = 60;
+function isOneShotSession(env) {
+  return env.CLAUDE_CODE_ENTRYPOINT === 'sdk-cli';
+}
+
 // A lead replaced by a relaunch or a handover may still run commands: those that drive the mission
 // are refused to it (currentLeadError). A crew member or the user is not checked.
 function refuseReplacedLead(mission, io) {
@@ -288,6 +296,7 @@ commands.state = async (args, io) => {
     // (--no-memory: a way out when the memory cannot be written); a replayed `done` has been through this already.
     if (state === 'done' && !options['no-memory'] && getState(mission) !== 'done') requireCompaction(mission);
     const outcome = await setState(mission, state, options.note, { by: io.env.RELAYLEAD_SESSION || 'user' });
+    io.out.write(t('missionStateSet', { mission, state }, language(io)));
     if (outcome === 'skipped') io.out.write(t('missionStopSkipped', { mission }, language(io)));
     // The watcher stops the old lead and starts the next one at once.
     if (state === 'handover') await startTargetedPass(mission);
@@ -352,6 +361,11 @@ commands.wait = async (args, io) => {
   if (options.all) {
     refuseInSession('wait --all', io);
     const lang = language(io);
+    // A one-shot session (`claude -p`) never gets a turn back: a long wait would keep it from ending.
+    if (isOneShotSession(io.env) && (timeout === undefined || timeout > ONE_SHOT_MAX_WAIT)) {
+      io.out.write(t('waitOneShot', {}, lang));
+      return 0;
+    }
     await waitForEvents(timeout, (events) => io.out.write(options.json ? JSON.stringify({ events }, null, 2) + '\n' : eventsText(events, lang)));
     return 0;
   }
