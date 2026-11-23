@@ -94,13 +94,13 @@
 <script>
 const TOKEN = "__TOKEN__";
 const TEXT = {
-  en: { missions: 'active missions', questions: 'questions waiting', none: 'No mission yet.', start: 'Start one from Claude Code with /relaylead:launch or from a terminal with',
+  en: { missions: 'active missions', question: 'question waiting', questions: 'questions waiting', none: 'No mission yet.', start: 'Start one from the /relaylead console in Claude Code, or from a terminal with',
         finished: 'Finished', tasks: 'Tasks', stop: 'Stop', confirmStop: 'Stop mission {name}?', recommended: 'recommended', other: 'Other answer…', send: 'Send', fiveHour: '5 h', sevenDay: '7 days',
         paused: 'paused until {time}', live: 'live', offline: 'no connection', updated: 'updated {time}', sent: 'Answer sent', stopped: 'Mission stopped',
         done: 'done', todo: 'to do', running: 'running', queued: 'queued', delivered: 'delivered', failed: 'failed', progress: 'tasks delivered: {n} of {total}', prio: { low: 'low priority', normal: 'normal priority', high: 'high priority' },
         reset: 'resets {time}',
         states: {} },
-  fr: { missions: 'missions actives', questions: 'questions en attente', none: 'Aucune mission pour l’instant.', start: 'Lancez-en une depuis Claude Code avec /relaylead:launch ou depuis un terminal avec',
+  fr: { missions: 'missions actives', question: 'question en attente', questions: 'questions en attente', none: 'Aucune mission pour l’instant.', start: 'Lancez-en une depuis la console /relaylead de Claude Code, ou depuis un terminal avec',
         finished: 'Terminées', tasks: 'Tâches', stop: 'Arrêter', confirmStop: 'Arrêter la mission {name} ?', recommended: 'recommandée', other: 'Autre réponse…', send: 'Envoyer', fiveHour: '5 h', sevenDay: '7 jours',
         paused: 'en pause jusqu’à {time}', live: 'en direct', offline: 'connexion perdue', updated: 'mis à jour {time}', sent: 'Réponse envoyée', stopped: 'Mission arrêtée',
         done: 'terminée', todo: 'à faire', running: 'en cours', queued: 'en file', delivered: 'livrée', failed: 'échec', progress: 'tâches livrées : {n} sur {total}', prio: { low: 'priorité basse', normal: 'priorité normale', high: 'priorité haute' },
@@ -212,6 +212,12 @@ function missionCard(mission) {
       el('li', {}, el('span', { class: 'dot t-' + task.state }), el('span', { class: 'name' }, task.title), el('span', { class: 'state' }, T[task.state] || task.state)))) : null);
 }
 
+// English: 1 question, 0 or 2 questions. French: 0 and 1 are singular.
+function pluralQuestions(n) {
+  const singular = T === TEXT.fr ? n === 0 || n === 1 : n === 1;
+  return singular ? T.question : T.questions;
+}
+
 function render(data) {
   T = TEXT[data.language] || TEXT.en;
   document.documentElement.lang = data.language === 'fr' ? 'fr' : 'en';
@@ -219,7 +225,7 @@ function render(data) {
   // A finished mission with a question still open (a merge conflict) stays among the active cards.
   const shown = data.missions.filter((mission) => mission.active || mission.questions.length > 0);
   const finished = data.missions.filter((mission) => !shown.includes(mission));
-  $('summary').replaceChildren(el('b', {}, String(active.length)), ' ' + T.missions + ' · ', el('b', {}, String(data.openQuestions)), ' ' + T.questions);
+  $('summary').replaceChildren(el('b', {}, String(active.length)), ' ' + T.missions + ' · ', el('b', {}, String(data.openQuestions)), ' ' + pluralQuestions(data.openQuestions));
   $('quota').replaceChildren(...[data.usage && meter(T.fiveHour, data.usage.fiveHour), data.usage && meter(T.sevenDay, data.usage.sevenDay)].filter(Boolean));
   const main = [];
   // Missions with a question come first: they wait for the person.

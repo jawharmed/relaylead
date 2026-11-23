@@ -228,6 +228,12 @@ function agents() {
 
 // `plugin marketplace add|remove|list`, `plugin install|uninstall|list`. Strict like Claude Code: adding
 // what is there, or removing what is not, fails. `plugin-install-fail` makes `plugin install` fail.
+// The version a plugin has in the folder its marketplace was added from (what install and update copy).
+function sourceVersion(state, id) {
+  const dir = (state.sources || {})[id.split('@')[1]];
+  return readJson(path.join(dir || '', '.claude-plugin', 'plugin.json'), { version: '0.1.0' }).version;
+}
+
 function plugin(args) {
   const file = path.join(STATE_DIR, 'plugins.json');
   const state = readJson(file, { marketplaces: [], plugins: [] });
@@ -238,31 +244,42 @@ function plugin(args) {
   };
   if (verb === 'marketplace') {
     if (args[1] === 'list') {
-      process.stdout.write(JSON.stringify(state.marketplaces.map((name) => ({ name }))) + '\n');
+      process.stdout.write(JSON.stringify(state.marketplaces.map((name) => ({ name, source: 'directory', path: (state.sources || {})[name] }))) + '\n');
       return 0;
     }
     if (args[1] === 'add') {
       const name = readJson(path.join(args[2], '.claude-plugin', 'marketplace.json'), { name: args[2] }).name;
       if (state.marketplaces.includes(name)) return fail(`marketplace ${name} already exists`);
       state.marketplaces.push(name);
+      state.sources = { ...state.sources, [name]: args[2] };
+    } else if (args[1] === 'update') {
+      if (!state.marketplaces.includes(args[2])) return fail(`marketplace ${args[2]} not found`);
     } else {
       if (!state.marketplaces.includes(args[2])) return fail(`marketplace ${args[2]} not found`);
       state.marketplaces = state.marketplaces.filter((known) => known !== args[2]);
+      delete state.sources[args[2]];
     }
   } else if (verb === 'install') {
     if (SCENARIO.has('plugin-install-fail')) return fail('could not install');
     if (state.plugins.includes(argument)) return fail(`${argument} is already installed`);
     state.plugins.push(argument);
+    state.versions = { ...state.versions, [argument]: sourceVersion(state, argument) };
+  } else if (verb === 'update') {
+    if (!state.plugins.includes(argument)) return fail(`${argument} is not installed`);
+    state.versions = { ...state.versions, [argument]: sourceVersion(state, argument) };
   } else if (verb === 'uninstall') {
     if (!state.plugins.includes(argument)) return fail(`${argument} is not installed`);
     state.plugins = state.plugins.filter((id) => id !== argument);
+    delete state.versions[argument];
   } else if (verb === 'list') {
     if (SCENARIO.has('plugin-fail')) return fail('plugin list failed');
-    process.stdout.write(JSON.stringify(state.plugins.map((id) => ({ id, version: '0.1.0', scope: 'user', enabled: true }))) + '\n');
+    process.stdout.write(JSON.stringify(state.plugins.map((id) => ({ id, version: (state.versions || {})[id] || '0.1.0', scope: 'user', enabled: true }))) + '\n');
     return 0;
   } else {
     return fail(`unexpected plugin arguments ${JSON.stringify(args)}`);
   }
+  // No empty maps, so a snapshot after uninstall equals the one before install.
+  for (const key of ['sources', 'versions']) if (state[key] && Object.keys(state[key]).length === 0) delete state[key];
   writeJson(file, state);
   process.stdout.write('ok\n');
   return 0;

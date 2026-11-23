@@ -54,10 +54,9 @@ function runRelaylead(args, { cwd, env }) {
 // What install changes outside the home: the LaunchAgents folder and the fake claude's plugins.
 function outsideSnapshot(env) {
   const plugins = path.join(env.FAKE_CLAUDE_STATE, 'plugins.json');
-  return {
-    agents: fs.readdirSync(env.RELAYLEAD_LAUNCHD_DIR),
-    plugins: fs.existsSync(plugins) ? JSON.parse(fs.readFileSync(plugins, 'utf8')) : { marketplaces: [], plugins: [] },
-  };
+  // Only what was added: the fake's sources and versions are its own bookkeeping.
+  const { marketplaces, plugins: added } = fs.existsSync(plugins) ? JSON.parse(fs.readFileSync(plugins, 'utf8')) : { marketplaces: [], plugins: [] };
+  return { agents: fs.readdirSync(env.RELAYLEAD_LAUNCHD_DIR), plugins: { marketplaces, plugins: added } };
 }
 
 module.exports = { installEnv, runRelaylead, outsideSnapshot };

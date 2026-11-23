@@ -69,6 +69,49 @@ test('installPlugin and uninstallPlugin call claude plugin with the right argume
   assert.strictEqual(pluginInstalled(), false);
 });
 
+test('installPlugin updates an older plugin with claude plugin update, and installs nothing again', (t) => {
+  const state = tmpDir('relaylead-fake-claude-');
+  const saved = { RELAYLEAD_CLAUDE: process.env.RELAYLEAD_CLAUDE, FAKE_CLAUDE_STATE: process.env.FAKE_CLAUDE_STATE };
+  process.env.RELAYLEAD_CLAUDE = FAKE;
+  process.env.FAKE_CLAUDE_STATE = state;
+  t.after(() => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  const calls = () =>
+    fs.readFileSync(path.join(state, 'calls.log'), 'utf8').trim().split('\n').map((line) => JSON.parse(line)).filter((args) => !args.includes('list'));
+  const stateFile = path.join(state, 'plugins.json');
+
+  assert.strictEqual(installPlugin(() => {}).updated, false);
+  // Already at the package's version: nothing to do.
+  assert.strictEqual(installPlugin(() => {}).updated, false);
+  assert.strictEqual(calls().length, 2);
+
+  // An older plugin, from this package's folder.
+  const saving = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+  saving.versions = { 'relaylead@relaylead-local': '0.0.1' };
+  fs.writeFileSync(stateFile, JSON.stringify(saving));
+  const result = installPlugin(() => {});
+  assert.deepStrictEqual(result, { updated: true, from: '0.0.1', to: pkg.version });
+  assert.deepStrictEqual(calls().slice(2), [
+    ['plugin', 'marketplace', 'update', 'relaylead-local'],
+    ['plugin', 'update', 'relaylead@relaylead-local'],
+  ]);
+  assert.strictEqual(JSON.parse(fs.readFileSync(stateFile, 'utf8')).versions['relaylead@relaylead-local'], pkg.version);
+
+  // A marketplace added from another folder (the package moved): added again from this one.
+  saving.versions = { 'relaylead@relaylead-local': pkg.version };
+  saving.sources = { 'relaylead-local': path.join(state, 'old-package') };
+  fs.writeFileSync(stateFile, JSON.stringify(saving));
+  installPlugin(() => {});
+  assert.deepStrictEqual(calls().slice(4, 6), [
+    ['plugin', 'marketplace', 'remove', 'relaylead-local'],
+    ['plugin', 'marketplace', 'add', PLUGIN_DIR],
+  ]);
+});
+
 test('the console skill stays short and keeps its rule on questions; no skill changes the model', () => {
   const consoleSkill = fs.readFileSync(path.join(PLUGIN_DIR, 'skills', 'relaylead', 'SKILL.md'), 'utf8');
   // The 0.3 target was less than half of the 0.2 skill (7490 bytes); this ceiling keeps it from growing back.
