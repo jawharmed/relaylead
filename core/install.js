@@ -10,6 +10,7 @@ const { installScheduler, uninstallScheduler, plistPath, LABEL } = require('./sc
 const { installPlugin, uninstallPlugin, removePluginCache, PLUGIN_ID, MARKETPLACE } = require('./plugin');
 const { codedError } = require('./messages');
 const { watcherRunning, stopWatcher } = require('./watcher');
+const { listMissions, stopMission } = require('./missions');
 
 // How long uninstall waits for the watcher's loop to end its pass.
 const LOOP_END_WAIT_MS = 120000;
@@ -49,13 +50,16 @@ function install(say) {
 
 // Undoes what install.json lists; without it, what is found (the plist, the plugin). Every step is
 // independent: a failure is a warning with the command to run by hand, and the next steps go on.
-// With `purge`, also deletes ~/.relaylead, but only if it is a relaylead folder (checked first).
+// With `purge`, also deletes ~/.relaylead, but only if it is a relaylead folder (checked first), and
+// only once every mission is over: their sessions would go on with no watcher and no guard. The
+// missions not over are named; with `force`, their sessions are stopped first.
 // First of all, the watcher's loop (started by launch) is stopped and waited for: left running, it
 // would go on from the package being removed, and write its file again in a purged home.
-async function uninstall(say, { purge = false } = {}) {
+async function uninstall(say, { purge = false, force = false } = {}) {
   assertSupported();
   const record = readJson(installFile(), null);
   if (purge && !isRelayleadHome(record)) throw codedError('purge-refused', { dir: home() });
+  if (purge) await stopActiveMissions(say, force);
   if (watcherRunning().running) {
     const outcome = await stopWatcher({ waitMs: LOOP_END_WAIT_MS });
     if (outcome === 'requested') say('uninstall-warning', { step: 'watcher', detail: 'its loop is still in a pass', command: 'relaylead watcher stop' });
@@ -80,6 +84,29 @@ async function uninstall(say, { purge = false } = {}) {
     removePluginCache();
     fs.rmSync(home(), { recursive: true, force: true });
     say('purged', { dir: home() });
+  }
+}
+
+// A mission is over once done or stopped, and its sessions stopped (not "done, stopping"). An
+// unreadable one may still run: it counts as not over.
+function notOver(mission) {
+  return !/^(done|stopped)/.test(mission.state) || mission.state.endsWith(', stopping');
+}
+
+// Refuses the purge while a mission is not over, unless `force`: then each one is stopped. A stop
+// that fails is a warning with the command to run by hand, and the purge goes on.
+async function stopActiveMissions(say, force) {
+  const active = listMissions().filter(notOver);
+  if (active.length === 0) return;
+  const names = active.map((mission) => mission.name);
+  if (!force) throw codedError('purge-active-missions', { missions: names.join(', '), dir: home() });
+  for (const name of names) {
+    try {
+      await stopMission(name);
+      say('missionStopped', { mission: name });
+    } catch (err) {
+      say('uninstall-warning', { step: `sessions of mission ${name}`, detail: err.message, command: `relaylead stop ${name}` });
+    }
   }
 }
 

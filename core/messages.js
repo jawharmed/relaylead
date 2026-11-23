@@ -265,6 +265,8 @@ const messages = {
     'nothing-installed': 'nothing to uninstall: relaylead install was not run\n',
     purged: 'deleted {dir}\n',
     'purge-refused': 'refusing to delete {dir}: it does not look like a relaylead folder (no install.json nor install marker, and not named .relaylead)',
+    'purge-active-missions':
+      'refusing to delete {dir}: these missions are not over: {missions}; stop them (relaylead stop <mission>), or run relaylead uninstall --purge --force to stop their sessions and delete everything',
     'node-too-old': 'Node.js {min} or later is needed, found {found}',
     'agent-missing': 'the agent "{agent}" was not found; install Claude Code, then run relaylead init again',
     'api-key-stored': 'API key stored in {file}, readable by you only\n',
@@ -610,6 +612,8 @@ const messages = {
     'plugin-removed': 'plugin retiré : {id}\n',
     'nothing-installed': 'rien à désinstaller : relaylead install n\'a pas été lancé\n',
     purged: '{dir} supprimé\n',
+    'purge-active-missions':
+      'refus de supprimer {dir} : ces missions ne sont pas finies : {missions} ; arrêtez-les (relaylead stop <mission>), ou lancez relaylead uninstall --purge --force pour arrêter leurs sessions et tout supprimer',
     'purge-refused': 'refus de supprimer {dir} : ce n\'est pas un dossier relaylead (ni install.json ni marqueur d\'installation, et il ne s\'appelle pas .relaylead)',
     'node-too-old': 'Node.js {min} ou plus récent est nécessaire, version trouvée : {found}',
     'agent-missing': 'l\'agent « {agent} » est introuvable ; installez Claude Code, puis relancez relaylead init',

@@ -170,3 +170,58 @@ test('uninstall --purge refuses a folder that does not look like relaylead\'s, a
   assert.match(result.err, /does not look like a relaylead folder/);
   assert.ok(fs.existsSync(path.join(env.RELAYLEAD_HOME, 'notes.txt')));
 });
+
+// --- uninstall --purge and the missions not over (lot H1) ---------------------------------------
+
+const { run: runCli } = require('../core/cli');
+const { listSessions, isAlive } = require('../core/sessions');
+const { makeIo, waitFor } = require('../fixtures/helpers');
+const { freshHome } = require('../fixtures/missions');
+
+// The variables of installEnv set in this process for the rest of test `t`, around a fresh home.
+function inProcessInstallEnv(t) {
+  freshHome(t);
+  const env = installEnv(t, { RELAYLEAD_HOME: process.env.RELAYLEAD_HOME });
+  const previous = {};
+  for (const key of ['RELAYLEAD_LAUNCHD_DIR', 'RELAYLEAD_LAUNCHCTL', 'FAKE_LAUNCHCTL_STATE', 'RELAYLEAD_CLAUDE', 'FAKE_CLAUDE_STATE', 'RELAYLEAD_PLATFORM', 'CLAUDE_CONFIG_DIR']) {
+    previous[key] = process.env[key];
+    process.env[key] = env[key];
+  }
+  t.after(() => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  // Marked as relaylead's, as install does.
+  fs.writeFileSync(path.join(env.RELAYLEAD_HOME, '.relaylead-home'), '');
+  return env;
+}
+
+async function cli(...args) {
+  const io = makeIo();
+  const code = await runCli(args, io);
+  return { code, out: io.out.text, err: io.err.text };
+}
+
+test('uninstall --purge refuses while a mission runs, and --force stops its sessions first', async (t) => {
+  const env = inProcessInstallEnv(t);
+  const dir = tmpDir('relaylead-project-');
+  const launched = await cli('launch', '--agent', 'fake', '--name', 'demo', '--dir', dir);
+  assert.strictEqual(launched.code, 0, launched.err);
+  await waitFor(() => listSessions('demo').length === 1, 30000, 'the lead to be recorded');
+  const [lead] = listSessions('demo');
+  assert.ok(isAlive(lead.pid));
+
+  const refused = await cli('uninstall', '--purge');
+  assert.strictEqual(refused.code, 1);
+  assert.ok(refused.err.includes(msg('purge-active-missions', { missions: 'demo', dir: env.RELAYLEAD_HOME })), refused.err);
+  assert.ok(fs.existsSync(path.join(env.RELAYLEAD_HOME, 'missions', 'demo')), 'nothing is deleted');
+  assert.ok(isAlive(lead.pid));
+
+  const forced = await cli('uninstall', '--purge', '--force');
+  assert.strictEqual(forced.code, 0, forced.err + forced.out);
+  assert.match(forced.out, /^mission demo stopped$/m);
+  assert.ok(!fs.existsSync(env.RELAYLEAD_HOME));
+  await waitFor(() => !isAlive(lead.pid), 10000, 'the lead process to end');
+});
