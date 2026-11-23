@@ -721,15 +721,16 @@ function checkToolUse({ tool_name, tool_input, cwd }, guard, stateDir = null, co
   }
   if (reason && irreversible) return { decision: 'deny', reason, irreversible: true };
   if (reason) return { decision: 'deny', reason };
-  let advised = null;
-  if (['Read', 'Grep', 'Glob'].includes(tool_name)) {
-    const places = tool_name === 'Read' ? [input.file_path] : [searched, tool_name === 'Glob' && input.pattern ? path.resolve(searched, expandHome(globBase(String(input.pattern)))) : null];
-    for (const place of places.filter(Boolean)) advised = advised || readRefusal(String(place), dir);
-    if (advised) return { decision: 'deny', reason: advised, advice: READ_ADVICE };
-  }
+  // The places a Read, Grep or Glob reads: the file, the folder searched, the folder part of the pattern.
+  const reads = [];
+  if (tool_name === 'Read' && input.file_path) reads.push(String(input.file_path));
+  if (tool_name === 'Grep' || tool_name === 'Glob') reads.push(searched);
+  if (tool_name === 'Glob' && input.pattern) reads.push(path.resolve(searched, expandHome(globBase(String(input.pattern)))));
+  const unreadable = reads.map((place) => readRefusal(place, dir)).find(Boolean);
+  if (unreadable) return { decision: 'deny', reason: unreadable, advice: READ_ADVICE };
   if (confine && WRITE_TOOLS.includes(tool_name) && input[field]) {
-    advised = writeRefusal(String(input[field]), dir, confine.workDir);
-    if (advised) return { decision: 'deny', reason: advised, advice: WRITE_ADVICE };
+    const outside = writeRefusal(String(input[field]), dir, confine.workDir);
+    if (outside) return { decision: 'deny', reason: outside, advice: WRITE_ADVICE };
   }
   return { decision: 'allow' };
 }
