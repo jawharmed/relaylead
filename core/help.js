@@ -180,8 +180,18 @@ const HELP = {
     fr: ['relaylead install', '', 'Enregistre le planificateur et le plugin Claude Code (macOS), puis lance doctor.'],
   },
   uninstall: {
-    en: ['relaylead uninstall [--purge]', '', 'Removes what install added. --purge also deletes ~/.relaylead.'],
-    fr: ['relaylead uninstall [--purge]', '', 'Retire ce que install a ajouté. --purge supprime aussi ~/.relaylead.'],
+    en: [
+      'relaylead uninstall [--purge [--force]]',
+      '',
+      'Removes what install added. --purge also deletes ~/.relaylead, once every mission is over;',
+      '--force first stops the sessions of the missions still running.',
+    ],
+    fr: [
+      'relaylead uninstall [--purge [--force]]',
+      '',
+      'Retire ce que install a ajouté. --purge supprime aussi ~/.relaylead, une fois toutes les missions finies ;',
+      '--force arrête d\'abord les sessions des missions encore en cours.',
+    ],
   },
   doctor: {
     en: ['relaylead doctor', '', 'Checks the prerequisites and the installation. Starts no session.'],
