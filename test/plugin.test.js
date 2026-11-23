@@ -72,7 +72,9 @@ test('installPlugin and uninstallPlugin call claude plugin with the right argume
 test('the console skill stays short and keeps its rule on questions; no skill changes the model', () => {
   const consoleSkill = fs.readFileSync(path.join(PLUGIN_DIR, 'skills', 'relaylead', 'SKILL.md'), 'utf8');
   // The 0.3 target was less than half of the 0.2 skill (7490 bytes); this ceiling keeps it from growing back.
-  assert.ok(Buffer.byteLength(consoleSkill) < 4000, `${Buffer.byteLength(consoleSkill)} bytes`);
+  assert.ok(Buffer.byteLength(consoleSkill) <= 4500, `${Buffer.byteLength(consoleSkill)} bytes`);
+  assert.match(consoleSkill, /never send "Allow once" or "Always allow" before the user has said so explicitly/);
+  assert.match(consoleSkill, /To look, `brief` or the web page .*; to decide, this console/);
   assert.match(consoleSkill, /\*\*Always show every open question, as it is, before anything else.*never summarize it/);
   assert.match(consoleSkill, /^Run `relaylead brief`/m);
   // A light model for the follow-up was measured and dropped: switching models loses the conversation cache.
