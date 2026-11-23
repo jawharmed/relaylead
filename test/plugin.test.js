@@ -75,7 +75,7 @@ test('the console skill stays short and keeps its rule on questions; no skill ch
   assert.ok(Buffer.byteLength(consoleSkill) < 4000, `${Buffer.byteLength(consoleSkill)} bytes`);
   assert.match(consoleSkill, /\*\*Always show every open question, as it is, before anything else.*never summarize it/);
   assert.match(consoleSkill, /^Run `relaylead brief`/m);
-  // A light model for the follow-up was measured and dropped (docs/manual-checks/v0-3-console-cout.md).
+  // A light model for the follow-up was measured and dropped: switching models loses the conversation cache.
   assert.deepStrictEqual(fs.readdirSync(path.join(PLUGIN_DIR, 'skills')), ['relaylead']);
   assert.doesNotMatch(consoleSkill, /^model:/m);
 });

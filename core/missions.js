@@ -546,8 +546,8 @@ async function spawnReaper(name, createdAt) {
 // The helper: waits until the lead has ended its last turn (10 min at most), then stops it. The turn
 // has ended when the lead is no longer working, or when the adapter says it is idle, with a process,
 // on two reads in a row: claude may leave a lead "working" and idle after its turn, and a single idle
-// read may be passing (spike, point 2g). A read without a pid does not count: after a relaunch by the
-// daemon, claude shows the lead working without a process for a few seconds (spike, point 4), and a
+// read may be passing (observed with Claude Code). A read without a pid does not count: after a relaunch by the
+// daemon, claude shows the lead working without a process for a few seconds (observed with Claude Code), and a
 // stop then could miss the relaunched lead. An unknown state counts as working, so a future state
 // that is idle with a process also stops the lead after two reads: acceptable once the lead is done.
 // An adapter that gives no `idle` is judged on its state alone. A failing list is tried again until
