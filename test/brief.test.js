@@ -8,7 +8,7 @@ const doctorCheck = require('../core/doctor');
 const { missionDir, home } = require('../core/paths');
 const { writeJson } = require('../core/store');
 const { askQuestion } = require('../core/questions');
-const { writePause, localTime } = require('../core/usage-pause');
+const { writePause, removePause, localTime } = require('../core/usage-pause');
 const { makeIo, tmpDir } = require('../fixtures/helpers');
 const { setupProject, writeMission } = require('../fixtures/missions');
 
@@ -111,6 +111,24 @@ test('brief says a queued task once, as waiting for a place, and a pause with it
   assert.strictEqual(line, `  demo: working · tasks 0/2 delivered · 1 waiting for a place · paused until ${localTime(new Date(resumeAt).toISOString())}`);
 });
 
+test('a usage pause is an event of wait --all and brief, and so is its end, in both languages', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  setState('demo', 'working');
+  doctorSays(t, []);
+  await relaylead(['wait', '--all', '--timeout', '0']);
+  const resumeAt = Date.now() + 3600 * 1000;
+  writePause('demo', { reason: 'five-hour 90% >= 85%', resumeAt });
+  const at = localTime(new Date(resumeAt).toISOString());
+  assert.strictEqual(await relaylead(['wait', '--all', '--timeout', '0']), `[demo] mission paused until ${at} (usage 90 %)\n`);
+  assert.strictEqual(await relaylead(['wait', '--all', '--timeout', '0']), 'Nothing new.\n');
+  removePause('demo');
+  assert.strictEqual(await relaylead(['wait', '--all', '--timeout', '0']), '[demo] mission resumed after its usage pause\n');
+  writePause('demo', { reason: 'rate_limit abc', resumeAt });
+  writeJson(path.join(home(), 'config.json'), { language: 'fr' });
+  assert.match(await relaylead(['brief']), new RegExp(`\\[demo\\] mission en pause jusqu'à ${at} \\(limite d'usage atteinte\\)`));
+});
+
 test('brief gives a mission over and a failed task once, in French when the project says so', async (t) => {
   const dir = setupProject(t, 'demo');
   fs.writeFileSync(path.join(dir, '.relaylead.json'), JSON.stringify({ language: 'fr' }));
@@ -124,7 +142,7 @@ test('brief gives a mission over and a failed task once, in French when the proj
   const text = await relaylead(['brief'], { cwd: dir });
   assert.strictEqual(
     text,
-    'Nouveau :\n  [demo] mission stopped\n  [demo] tâche a en échec (essai 1) : tests rouges\nAucune question ouverte.\nAucune mission en cours.\n',
+    'Nouveau :\n  [demo] mission arrêtée\n  [demo] tâche a en échec (essai 1) : tests rouges\nAucune question ouverte.\nAucune mission en cours.\n',
   );
   assert.match(await relaylead(['brief'], { cwd: dir }), /^Rien de nouveau\.\n/);
 });
@@ -187,4 +205,18 @@ test('an unreadable mission is shown as such in list, brief and overview, and hi
   ]);
   assert.strictEqual(view.missions[0].dir, missionDir('broken-mission'));
   assert.strictEqual(view.activeMissions, 1);
+});
+
+test('brief and list show the states and priorities in French, though they are typed in English', async (t) => {
+  const dir = setupProject(t, 'demo');
+  fs.writeFileSync(path.join(dir, '.relaylead.json'), JSON.stringify({ language: 'fr' }));
+  writeMission('demo', dir);
+  setState('demo', 'working');
+  writeJson(path.join(missionDir('demo'), 'tasks', 'a.json'), { id: 'a', profile: 'developer', attempt: 1, state: 'running', session: null });
+  const mission = path.join(missionDir('demo'), 'mission.json');
+  writeJson(mission, { ...JSON.parse(fs.readFileSync(mission, 'utf8')), priority: 'high' });
+  doctorSays(t, []);
+  const line = (await relaylead(['brief'], { cwd: dir })).split('\n').find((text) => text.startsWith('  demo'));
+  assert.match(line, /en cours · tâches 0\/2 livrées \(1 en cours\) · priorité haute$/);
+  assert.match(await relaylead(['list'], { cwd: dir }), /^demo {2}en cours /);
 });

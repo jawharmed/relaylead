@@ -187,6 +187,18 @@ test('uninstall --purge refuses a folder that does not look like relaylead\'s, a
   assert.ok(fs.existsSync(path.join(env.RELAYLEAD_HOME, 'notes.txt')));
 });
 
+test('uninstall --purge accepts a home that only init or launch created, and says its last line in the user\'s language', async (t) => {
+  const env = installEnv(t);
+  fs.writeFileSync(path.join(env.RELAYLEAD_HOME, 'config.json'), JSON.stringify({ language: 'fr' }));
+  const result = await run(env, 'uninstall', '--purge');
+  assert.strictEqual(result.code, 0, result.err + result.out);
+  assert.strictEqual(result.out.trim().split('\n').pop(), `${env.RELAYLEAD_HOME} supprimé`);
+  assert.ok(!fs.existsSync(env.RELAYLEAD_HOME));
+  const missions = installEnv(t);
+  fs.mkdirSync(path.join(missions.RELAYLEAD_HOME, 'missions'));
+  assert.strictEqual((await run(missions, 'uninstall', '--purge')).code, 0);
+});
+
 // --- uninstall --purge and the missions not over (lot H1) ---------------------------------------
 
 const { run: runCli } = require('../core/cli');
@@ -275,6 +287,16 @@ test('uninstall --purge refuses while a mission runs, and --force stops its sess
   assert.deepStrictEqual(atStop, { alive: false, home: true });
   assert.ok(!isAlive(lead.pid));
   assert.ok(!fs.existsSync(env.RELAYLEAD_HOME));
+});
+
+test('uninstall without --purge warns that a mission is still running, naming it', async (t) => {
+  const env = inProcessInstallEnv(t);
+  writeMission('demo', tmpDir('relaylead-project-'));
+  writeJson(path.join(env.RELAYLEAD_HOME, 'missions', 'demo', 'state.json'), { state: 'working' });
+  const result = await cli('uninstall');
+  assert.strictEqual(result.code, 0, result.err);
+  assert.ok(result.out.includes(msg('uninstall-active-missions', { missions: 'demo' })), result.out);
+  assert.ok(fs.existsSync(env.RELAYLEAD_HOME));
 });
 
 test('uninstall --purge is not refused by a mission that is over', async (t) => {

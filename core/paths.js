@@ -10,9 +10,11 @@ function missionDir(name) {
   return path.join(home(), 'missions', name);
 }
 
-// Lowercase, [a-z0-9-] only, merged dashes, 40 characters at most.
+// Lowercase, accents removed (é gives e), [a-z0-9-] only, merged dashes, 40 characters at most.
 function slug(text) {
   const result = String(text || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')

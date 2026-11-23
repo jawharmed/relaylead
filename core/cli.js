@@ -1,6 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { t, codedError } = require('./messages');
+const { t, codedError, shownWord } = require('./messages');
 const { loadConfig, watcherSettings, setConfigValue } = require('./config');
 const {
   createMission,
@@ -180,10 +180,10 @@ commands.list = async (args, io) => {
 // then its tasks waiting for a place, and whether it looks abandoned (core/abandon.js). Left alone once
 // the mission is done or stopped.
 function shownState(name, state, io) {
-  if (/^(done|stopped)/.test(state)) return state;
   const lang = language(io);
+  if (/^(done|stopped)/.test(state)) return shownWord(state, lang);
   const pause = readPause(name);
-  let shown = pause ? t('usagePausedState', { resumeAt: localTime(pause.resumeAt) }, lang) : state;
+  let shown = pause ? t('usagePausedState', { resumeAt: localTime(pause.resumeAt) }, lang) : shownWord(state, lang);
   const queued = queuedCount(name);
   if (queued > 0) shown += t('queuedMark', { n: queued }, lang);
   if (abandonment(name)) shown += t('abandonedMark', {}, lang);
@@ -199,7 +199,7 @@ commands.show = async (args, io) => {
   // The listed state carries the note of a stop by the watcher (billing, authentication, relaunches).
   const listed = listMissions().find((mission) => mission.name === name);
   const shown = shownState(name, listed ? listed.state : state, io);
-  if (shown !== state) io.out.write(`${name}  ${shown}\n`);
+  if (shown !== shownWord(state, language(io))) io.out.write(`${name}  ${shown}\n`);
   // A finished mission has no session left to open: the adapter's own error would say so badly.
   if (/^(done|stopped)/.test(state)) {
     io.out.write(t('showMissionOver', { mission: name, state }, language(io)));
@@ -252,7 +252,7 @@ commands.priority = async (args, io) => {
   const [name, priority] = parseArgs(args).positional;
   if (!name || !priority) throw codedError('usage', { usage: 'relaylead priority <mission> <high|normal|low>' });
   await setPriority(name, priority);
-  io.out.write(t('prioritySet', { mission: name, priority }, language(io)));
+  io.out.write(t('prioritySet', { mission: name, priority: shownWord(priority, language(io)) }, language(io)));
   await startTargetedPass(name);
   return 0;
 };
@@ -585,7 +585,9 @@ commands.install = async (args, io) => {
 commands.uninstall = async (args, io) => {
   refuseInSession('uninstall', io);
   const { options } = parseArgs(args);
-  await uninstall((key, vars) => io.out.write(t(key, vars, language(io))), { purge: options.purge === true, force: options.force === true });
+  // The language is read before --purge deletes the configuration that holds it.
+  const lang = language(io);
+  await uninstall((key, vars) => io.out.write(t(key, vars, lang)), { purge: options.purge === true, force: options.force === true });
   return 0;
 };
 

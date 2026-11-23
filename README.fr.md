@@ -1,8 +1,8 @@
 <p align="right"><a href="README.md">English</a> · <strong>Français</strong></p>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner-dark.svg">
-  <img alt="Relaylead : une équipe de sessions Claude Code qui travaille en arrière-plan sur votre Mac" src="docs/assets/banner-light.svg" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/jawharmed/relaylead/main/docs/assets/banner-dark.svg">
+  <img alt="Relaylead : une équipe de sessions Claude Code qui travaille en arrière-plan sur votre Mac" src="https://raw.githubusercontent.com/jawharmed/relaylead/main/docs/assets/banner-light.svg" width="100%">
 </picture>
 
 <p>
@@ -17,7 +17,7 @@
 
 ## Pourquoi Relaylead
 
-Mener plusieurs sessions Claude Code à la main, c'est les surveiller sans cesse : relancer celle qui est tombée, relancer celle qui s'est endormie, garder en tête qui fait quoi.
+Mener plusieurs sessions Claude Code à la main, c'est les surveiller sans cesse : relancer celle qui est tombée, réveiller celle qui s'est endormie, garder en tête qui fait quoi.
 
 Avec Relaylead, vous écrivez les tâches (ou la console les écrit avec vous), vous lancez la mission, et vous passez à autre chose :
 
@@ -68,7 +68,7 @@ relaylead merge mon-projet                       # une fois la mission terminée
 
 `relaylead dashboard` sert une page locale qui se met à jour toute seule. Ici, deux missions tournent en même temps, et l'une attend une réponse :
 
-<img alt="Le tableau de bord de Relaylead : deux missions avec leurs tâches, une question avec ses options, et l'usage sur 5 heures et 7 jours" src="docs/assets/dashboard.png" width="100%">
+<img alt="Le tableau de bord de Relaylead : deux missions avec leurs tâches, une question avec ses options, et l'usage sur 5 heures et 7 jours" src="https://raw.githubusercontent.com/jawharmed/relaylead/main/docs/assets/dashboard.png" width="100%">
 
 Le même état s'affiche dans la ligne d'état de Claude Code (`relaylead · 2 missions · ❓1 · quota 5 h 41 %`), dans un panneau à côté de la conversation (`/pane`), et dans le terminal :
 

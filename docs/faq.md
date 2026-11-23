@@ -145,7 +145,7 @@ A real mission with two small tasks cost about $0.60 at API list prices, three q
 
 ### Will Relaylead use up my weekly limit?
 
-It pauses a mission when your usage reaches its priority's threshold: 90 % of the week and 85 % of the 5-hour window for `normal`, 70 % and 80 % for `low`. The mission resumes by itself after the reset. See [Subscription usage](costs.md#subscription-usage-and-the-automatic-pause).
+It pauses a mission when your usage reaches its priority's threshold: 90 % of the week and 85 % of the 5-hour window for `normal`, 70 % and 80 % for `low`. The mission resumes by itself after the reset. You are told when it pauses (a macOS notification, and an event in the console). See [Subscription usage](costs.md#subscription-usage-and-the-automatic-pause).
 
 ### Why is the console more expensive than `relaylead brief`?
 

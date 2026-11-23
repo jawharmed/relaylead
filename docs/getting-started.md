@@ -127,7 +127,7 @@ Run "relaylead install" now (scheduler and plugin)? [no]
 Keep a project memory for the leads (conventions, lessons)? [yes]
 Version the project memory with the code? [no]
 project settings written to /Users/you/code/hello-api/.relaylead.json
-if Claude Code has never run in /Users/you/code/hello-api, run `claude` once there and accept the trust question, so missions can start
+if Claude Code has never run in /Users/you/code/hello-api, run `claude` once there and choose "Yes, I trust this folder" (the default, "No, exit", refuses), so missions can start
 Access tips: give the sessions only the access they need.
 Keep secrets (.env files, keys) out of the project folder when you can.
 Review what a mission delivered before you merge it.

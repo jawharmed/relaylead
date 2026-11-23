@@ -12,6 +12,7 @@ const { listMissions } = require('./missions');
 const { listTasks } = require('./tasks');
 const { listQuestions } = require('./questions');
 const { readMerge } = require('./merge');
+const { readPause, pausePercent } = require('./usage-pause');
 const { sleep } = require('./timing');
 
 const POLL_MS = 1000;
@@ -23,7 +24,7 @@ function snapshotFile() {
 
 // What the console follows in one mission, by key: question:<id> -> open|answered, task:<id> -> its
 // state and attempt, mission -> its state. Plus the events these states make now, by key.
-function viewOfMission(mission) {
+function viewOfMission(mission, known) {
   // "done, stopping" then "done": one state, so one event.
   const view = { mission: mission.state.replace(/, stopping$/, '') };
   const events = { mission: FINISHED.test(mission.state) ? { kind: 'mission', id: mission.name, state: mission.state } : null };
@@ -38,6 +39,11 @@ function viewOfMission(mission) {
   const merge = readMerge(mission.name);
   view.merge = merge ? merge.state : null;
   events.merge = merge && merge.state === 'merged' ? { kind: 'merge', id: mission.name, state: 'merged', target: merge.target } : null;
+  // The usage pause: an event while it lasts, and one when it is lifted (a pause seen in the last view).
+  const pause = FINISHED.test(mission.state) ? null : readPause(mission.name);
+  view.pause = pause ? pause.resumeAt : null;
+  if (pause) events.pause = { kind: 'pause', id: mission.name, resumeAt: pause.resumeAt, percent: pausePercent(pause.reason) };
+  else if (known && known.pause) events.pause = { kind: 'resume', id: mission.name };
   for (const task of listTasks(mission.name)) {
     view[`task:${task.id}`] = `${task.state}#${task.attempt}`;
     if (task.state === 'failed') {
@@ -55,7 +61,7 @@ function look(before) {
   for (const mission of listMissions()) {
     let seen;
     try {
-      seen = viewOfMission(mission);
+      seen = viewOfMission(mission, before && before[mission.name]);
     } catch {
       continue; // being written or removed: the next round reads it
     }
@@ -64,7 +70,7 @@ function look(before) {
     for (const [key, event] of Object.entries(seen.events)) {
       if (!event) continue;
       if (known && known[key] === seen.view[key]) continue;
-      if (!before && (key === 'mission' || key === 'merge')) continue;
+      if (!before && (key === 'mission' || key === 'merge' || event.kind === 'resume')) continue;
       events.push({ mission: mission.name, ...event });
     }
   }

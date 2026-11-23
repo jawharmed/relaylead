@@ -24,7 +24,7 @@ Relaylead n'emploie que ces termes. Le nom anglais, utilisé dans les commandes 
 
 | Terme | Sens |
 | --- | --- |
-| **Mission** (*mission*) | Un travail confié à une équipe sur un projet, avec un nom (celui du dossier du projet, sauf si vous passez `--name`). Son état est rangé dans `~/.relaylead/missions/<mission>/`. |
+| **Mission** (*mission*) | Un travail confié à une équipe sur un projet, avec un nom (celui du dossier du projet, sauf si vous passez `--name` ; les accents sont retirés, `Équipe` donne `equipe`, et un nom sans lettre latine ni chiffre demande `--name`). Son état est rangé dans `~/.relaylead/missions/<mission>/`. |
 | **Lead** (*lead*) | La session Claude Code qui mène une mission. Elle lit les tâches, lance les équipiers, livre leur travail, vous pose des questions et déclare la mission terminée. Elle ne touche jamais au code et ne lance que des commandes `relaylead`. |
 | **Équipier** (*crew member*) | Une session Claude Code éphémère qui réalise une tâche, dans son propre worktree git et sur sa propre branche, puis rend compte avec `relaylead task done` ou `task fail`. |
 | **Veilleur** (*watcher*) | Une petite boucle sans IA. Elle relance un lead arrêté, réveille celui qui a du nouveau, passe la main à un lead neuf quand le contexte se remplit, et lance les tâches en file d'attente. launchd la maintient en vie. |
@@ -70,7 +70,7 @@ Répondez par le numéro d'une option (les options sont numérotées à partir d
 
 ### Limite d'usage et pause automatique
 
-Relaylead lit votre usage Claude (fenêtres de 5 heures et de 7 jours) dans ce que Claude Code transmet aux sessions. Quand une mission atteint le seuil de sa priorité, ou quand Claude signale une limite d'usage, le veilleur met la mission en pause : ses sessions sont arrêtées et rien n'est relancé. Elle reprend toute seule à l'heure de réinitialisation (ou au bout de 15, 30, puis 60 minutes si aucune heure n'est donnée). `relaylead list` et `show` affichent `usage-pause (resume …)`, et `task start` et `task retry` sont refusés en attendant. Les questions vous sont toujours notifiées pendant une pause.
+Relaylead lit votre usage Claude (fenêtres de 5 heures et de 7 jours) dans ce que Claude Code transmet aux sessions. Quand une mission atteint le seuil de sa priorité, ou quand Claude signale une limite d'usage, le veilleur met la mission en pause : ses sessions sont arrêtées et rien n'est relancé. Elle reprend toute seule à l'heure de réinitialisation (ou au bout de 15, 30, puis 60 minutes si aucune heure n'est donnée). `relaylead list` et `show` affichent `usage-pause (resume …)`, et `task start` et `task retry` sont refusés en attendant. Les questions vous sont toujours notifiées pendant une pause. La pause elle-même est annoncée : une notification macOS, et un événement dans `relaylead wait --all` et `relaylead brief` (« mission en pause jusqu'à 14:05 (usage 90 %) »), puis un autre quand la mission reprend.
 
 Seuils en pourcentage, par priorité :
 

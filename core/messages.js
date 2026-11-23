@@ -265,7 +265,7 @@ const messages = {
     'plugin-removed': 'plugin removed: {id}\n',
     'nothing-installed': 'nothing to uninstall: relaylead install was not run\n',
     purged: 'deleted {dir}\n',
-    'purge-refused': 'refusing to delete {dir}: it does not look like a relaylead folder (no install.json nor install marker, and not named .relaylead)',
+    'purge-refused': 'refusing to delete {dir}: it does not look like a relaylead folder (no install.json, install marker, config.json or missions folder, and not named .relaylead)',
     'purge-active-missions':
       'refusing to delete {dir}: these missions may still have sessions running: {missions}; stop them (relaylead stop <mission>), or run relaylead uninstall --purge --force to stop their sessions and delete everything',
     'purge-stop-failed':
@@ -280,13 +280,14 @@ const messages = {
     'init-project-written': 'project settings written to {file}\n',
     'init-project-kept': 'project settings kept as they are ({file})\n',
     'init-trust-hint':
-      'if Claude Code has never run in {dir}, run `claude` once there and accept the trust question, so missions can start\n',
+      'if Claude Code has never run in {dir}, run `claude` once there and choose "Yes, I trust this folder" (the default, "No, exit", refuses), so missions can start\n',
     'init-advice': [
       'Access tips: give the sessions only the access they need.',
       'Keep secrets (.env files, keys) out of the project folder when you can.',
       'Review what a mission delivered before you merge it.',
       '',
     ].join('\n'),
+    'uninstall-active-missions': 'warning: mission(s) still running: {missions}. Without the watcher they will not be watched, and a paused one will not resume. Stop them with relaylead stop <mission>, or install again.\n',
     'uninstall-warning': 'warning: could not remove the {step} ({detail}); do it by hand with: {command}\n',
     'init-next':
       'next: write your tasks in the tasks/ folder (one file tasks/<id>.md per task) and commit them; then relaylead install (scheduler and plugin) and relaylead doctor\n',
@@ -298,6 +299,8 @@ const messages = {
     'init-ask-versioned': 'Version the project memory with the code?',
     'init-yes': 'yes',
     'init-no': 'no',
+    'mission-name-empty':
+      'cannot build a mission name from "{text}" (no letter or digit a-z, 0-9): give one with --name <name>',
     'mission-usage-paused':
       'mission "{mission}" is paused by the usage limit until {resumeAt}; it resumes by itself then, and starts no session before',
     usagePausedState: 'usage-pause (resume {resumeAt})',
@@ -318,7 +321,15 @@ const messages = {
     briefPriority: 'priority {priority}',
     eventTaskFailed: '[{mission}] task {id} failed (attempt {attempt}): {summary}\n',
     eventMission: '[{mission}] mission {state}\n',
+    hookQuestionContext: 'Tool {tool}, session {session}, in {cwd}: {reason}',
+    hookAllowOnce: 'Allow once',
+    hookAlwaysAllow: 'Always allow in this mission',
+    hookRefuse: 'Refuse',
     eventMerged: '[{mission}] merged into {target}\n',
+    eventPaused: '[{mission}] mission paused until {at} ({why})\n',
+    eventResumed: '[{mission}] mission resumed after its usage pause\n',
+    pauseUsagePercent: 'usage {n} %',
+    pauseUsageLimit: 'usage limit hit',
     eventMissionDone: '[{mission}] mission done; bring its work into your branch with: relaylead merge {mission}\n',
     briefToMerge: 'Done, not merged yet:\n',
     briefToMergeLine: '  {mission}: relaylead merge {mission}\n',
@@ -631,7 +642,7 @@ const messages = {
       'refus de supprimer {dir} : ces missions ont peut-être encore des sessions : {missions} ; arrêtez-les (relaylead stop <mission>), ou lancez relaylead uninstall --purge --force pour arrêter leurs sessions et tout supprimer',
     'purge-stop-failed':
       'impossible d\'arrêter les sessions de : {missions} ; rien n\'a été supprimé dans {dir}, et le planificateur et le plugin restent installés ; arrêtez ces sessions, puis relancez relaylead uninstall --purge',
-    'purge-refused': 'refus de supprimer {dir} : ce n\'est pas un dossier relaylead (ni install.json ni marqueur d\'installation, et il ne s\'appelle pas .relaylead)',
+    'purge-refused': 'refus de supprimer {dir} : ce n\'est pas un dossier relaylead (ni install.json, ni marqueur d\'installation, ni config.json, ni dossier missions, et il ne s\'appelle pas .relaylead)',
     'node-too-old': 'Node.js {min} ou plus récent est nécessaire, version trouvée : {found}',
     'agent-missing': 'l\'agent « {agent} » est introuvable ; installez Claude Code, puis relancez relaylead init',
     'api-key-stored': 'clé d\'API enregistrée dans {file}, lisible par vous seul\n',
@@ -642,13 +653,14 @@ const messages = {
     'init-project-written': 'réglages du projet écrits dans {file}\n',
     'init-project-kept': 'réglages du projet laissés tels quels ({file})\n',
     'init-trust-hint':
-      'si Claude Code n\'a jamais tourné dans {dir}, lancez `claude` une fois dans ce dossier et choisissez « Yes, I trust this folder », pour que les missions puissent démarrer\n',
+      'si Claude Code n\'a jamais tourné dans {dir}, lancez `claude` une fois dans ce dossier et choisissez « Yes, I trust this folder » (le choix par défaut, « No, exit », refuse), pour que les missions puissent démarrer\n',
     'init-advice': [
       'Conseils d\'accès : ne donnez aux sessions que l\'accès dont elles ont besoin.',
       'Gardez les secrets (fichiers .env, clés) hors du dossier du projet quand c\'est possible.',
       'Relisez ce qu\'une mission a livré avant de la fusionner.',
       '',
     ].join('\n'),
+    'uninstall-active-missions': 'attention : mission(s) en cours : {missions}. Sans le veilleur, elles ne seront plus surveillées, et une mission en pause ne reprendra pas. Arrêtez-les avec relaylead stop <mission>, ou réinstallez.\n',
     'uninstall-warning': 'attention : impossible de retirer « {step} » ({detail}) ; faites-le à la main avec : {command}\n',
     'init-next': 'prochaine étape : écrivez vos tâches dans le dossier tasks/ (un fichier tasks/<id>.md par tâche) et commitez-les ; puis relaylead install (planificateur et plugin) et relaylead doctor\n',
     'init-ask-language': 'Langue / Language (en, fr)',
@@ -659,6 +671,8 @@ const messages = {
     'init-ask-versioned': 'Versionner la mémoire du projet avec le code ?',
     'init-yes': 'oui',
     'init-no': 'non',
+    'mission-name-empty':
+      'impossible de former un nom de mission à partir de « {text} » (aucune lettre ni chiffre a-z, 0-9) : donnez-en un avec --name <nom>',
     'mission-usage-paused':
       'la mission « {mission} » est en pause (limite d\'usage) jusqu\'à {resumeAt} ; elle reprendra seule à cette heure, et ne lance aucune session d\'ici là',
     usagePausedState: 'usage-pause (reprise {resumeAt})',
@@ -679,7 +693,15 @@ const messages = {
     briefPriority: 'priorité {priority}',
     eventTaskFailed: '[{mission}] tâche {id} en échec (essai {attempt}) : {summary}\n',
     eventMission: '[{mission}] mission {state}\n',
+    hookQuestionContext: 'Outil {tool}, session {session}, dans {cwd} : {reason}',
+    hookAllowOnce: 'Autoriser une fois',
+    hookAlwaysAllow: 'Toujours autoriser dans cette mission',
+    hookRefuse: 'Refuser',
     eventMerged: '[{mission}] fusionnée dans {target}\n',
+    eventPaused: '[{mission}] mission en pause jusqu\'à {at} ({why})\n',
+    eventResumed: '[{mission}] mission reprise après sa pause d\'usage\n',
+    pauseUsagePercent: 'usage {n} %',
+    pauseUsageLimit: 'limite d\'usage atteinte',
     eventMissionDone: '[{mission}] mission terminée ; ramenez son travail dans votre branche avec : relaylead merge {mission}\n',
     briefToMerge: 'Terminées, pas encore fusionnées :\n',
     briefToMergeLine: '  {mission} : relaylead merge {mission}\n',
@@ -735,6 +757,32 @@ function t(key, vars, lang) {
   return template.replace(/\{(\w+)\}/g, (_, name) => String(vars && vars[name]));
 }
 
+// The words of the states and priorities, shown in French; they are still written and typed in English.
+const WORDS_FR = {
+  starting: 'démarrage',
+  working: 'en cours',
+  waiting: 'en attente',
+  handover: 'relève',
+  done: 'terminée',
+  stopped: 'arrêtée',
+  todo: 'à faire',
+  running: 'en cours',
+  queued: 'en file',
+  delivered: 'livrée',
+  failed: 'en échec',
+  blocked: 'bloquée',
+  high: 'haute',
+  normal: 'normale',
+  low: 'basse',
+};
+
+// A state or a priority as the user reads it. In a state with a note ("done, stopping", "stopped: why"),
+// only the first word is translated.
+function shownWord(text, lang) {
+  if (lang !== 'fr') return text;
+  return String(text).replace(/^[a-z]+/, (word) => WORDS_FR[word] || word);
+}
+
 // An expected error: its text comes from the messages, so the CLI can print it in the user's language.
 function codedError(code, vars) {
   const err = new Error(t(code, vars));
@@ -743,4 +791,4 @@ function codedError(code, vars) {
   return err;
 }
 
-module.exports = { t, codedError };
+module.exports = { t, codedError, shownWord };

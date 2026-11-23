@@ -267,6 +267,22 @@ test('permission hook allows a listed command and denies the rest', () => {
   );
 });
 
+test('the questions of the hooks are in French when the mission is, and a French answer is honoured', () => {
+  const home = missionHome({});
+  const file = path.join(home, 'missions', 'demo', 'mission.json');
+  writeJson(file, { ...JSON.parse(fs.readFileSync(file, 'utf8')), config: { ...structuredClone(DEFAULTS), language: 'fr' } });
+  const env = { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'demo' };
+  const cwd = tmpDir();
+  const decide = () => JSON.parse(runHook(PERMISSION, { session_id: 's1', tool_name: 'Bash', tool_input: { command: 'make lint' }, cwd }, env)).hookSpecificOutput.decision.behavior;
+  assert.strictEqual(decide(), 'deny');
+  const [name] = questionFiles(home);
+  const question = readQuestion(home, name);
+  assert.deepStrictEqual([...question.options].sort(), ['Autoriser une fois', 'Refuser', 'Toujours autoriser dans cette mission']);
+  assert.match(question.context, /^Outil Bash, session s1, dans /);
+  answer(home, name.replace(/\.json$/, ''), 'Autoriser une fois');
+  assert.deepStrictEqual([decide(), decide()], ['allow', 'deny']);
+});
+
 test('permission hook follows the user\'s answer to its question', () => {
   const home = missionHome({});
   const env = { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'demo' };

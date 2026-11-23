@@ -4,7 +4,7 @@
 
 Cette page vous mène de zéro à une première mission fusionnée dans votre branche. Comptez une dizaine de minutes, plus le temps de la mission (une minute ou deux pour le petit exemple ci-dessous).
 
-Si un mot vous est inconnu (mission, lead, équipier, veilleur), le [glossaire](guide.md#glossaire) en donne une ligne chacun.
+Si un mot vous est inconnu (mission, lead, équipier, veilleur), le [glossaire](guide.md#glossaire) les définit chacun en une ligne.
 
 ## Avant de commencer
 
@@ -127,7 +127,7 @@ Lancer « relaylead install » maintenant (planificateur et plugin) ? [non]
 Tenir une mémoire de projet pour les leads (conventions, leçons) ? [oui]
 Versionner la mémoire du projet avec le code ? [non]
 réglages du projet écrits dans /Users/vous/code/hello-api/.relaylead.json
-si Claude Code n'a jamais tourné dans /Users/vous/code/hello-api, lancez `claude` une fois dans ce dossier et choisissez « Yes, I trust this folder », pour que les missions puissent démarrer
+si Claude Code n'a jamais tourné dans /Users/vous/code/hello-api, lancez `claude` une fois dans ce dossier et choisissez « Yes, I trust this folder » (le choix par défaut, « No, exit », refuse), pour que les missions puissent démarrer
 Conseils d'accès : ne donnez aux sessions que l'accès dont elles ont besoin.
 Gardez les secrets (fichiers .env, clés) hors du dossier du projet quand c'est possible.
 Relisez ce qu'une mission a livré avant de la fusionner.

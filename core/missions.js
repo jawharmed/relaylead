@@ -166,10 +166,19 @@ async function setPriority(name, priority) {
 
 // `tasks`: the task folder of this mission (`--tasks`), in place of source.dir. `onWarning(err)` gets
 // each warning of the delivery's preparation (a coded error that does not stop the launch).
+// The name of a mission from a text; a text with no letter or digit we know (日本) gives an error that proposes --name.
+function missionSlug(text) {
+  try {
+    return slug(text);
+  } catch {
+    throw codedError('mission-name-empty', { text });
+  }
+}
+
 async function createMission({ name, dir, request, team, priority, agent, tasks, params, force = false, onWarning = () => {} }) {
   // The native version also gives the real letter case (macOS, Windows): CaseProj and caseproj are one folder.
   const realDir = fs.realpathSync.native(dir);
-  const missionName = slug(name || path.basename(realDir));
+  const missionName = missionSlug(name || path.basename(realDir));
   if (priority !== undefined) checkPriority(priority);
   const config = loadConfig({ dir: realDir, params });
   if (tasks !== undefined) config.source.dir = tasksFolder(realDir, tasks);

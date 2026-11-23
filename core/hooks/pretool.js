@@ -8,28 +8,29 @@
 const { checkToolUse, actionText, actionHash, denyMessage, loadMissionGuard, readHookInput, writeJournal } = require('../guard');
 const { askQuestion } = require('../questions');
 const { consumeGrant } = require('../grants');
+const { t } = require('../messages');
 
 // The decision for an irreversible action: allowed once by the user's answer, or refused with a
 // question to the user (asking again gives the same question: never a second one). Without a
 // mission, or when the question cannot be written, refused as it is.
-function irreversibleDecision(mission, input, result) {
+function irreversibleDecision(mission, input, result, language) {
   if (!mission) return result;
   try {
     const text = actionText(input);
     const key = `irr-${actionHash(input.tool_name, text)}`;
     const id = `q-${key}`;
-    const grant = consumeGrant(mission, id, { kind: 'irreversible', once: ['Allow once'] });
+    const grant = consumeGrant(mission, id, { kind: 'irreversible', once: ['hookAllowOnce'] });
     if (grant.allowed) return { decision: 'allow', grantedBy: id };
     if (grant.reason === 'used' || grant.reason === 'refused') return { ...result, question: id, answered: true };
-    const context = `Tool ${input.tool_name}, session ${input.session_id || 'unknown'}, in ${input.cwd || 'unknown'}: ${result.reason}`;
-    askQuestion(mission, { key, kind: 'irreversible', text, context, options: ['Allow once', 'Refuse'], recommended: 2 });
+    const context = t('hookQuestionContext', { tool: input.tool_name, session: input.session_id || 'unknown', cwd: input.cwd || 'unknown', reason: result.reason }, language);
+    askQuestion(mission, { key, kind: 'irreversible', text, context, options: [t('hookAllowOnce', {}, language), t('hookRefuse', {}, language)], recommended: 2 });
     return { ...result, question: id };
   } catch {
     return result;
   }
 }
 
-const { mission, guard, stateDir, workDir, keyFile } = loadMissionGuard();
+const { mission, guard, stateDir, workDir, keyFile, language } = loadMissionGuard();
 const input = readHookInput();
 if (!input) {
   writeJournal(mission, 'unknown', 'unreadable hook input');
@@ -41,7 +42,7 @@ if (!input) {
     // A crashing hook would let the action through: refuse what the guard cannot judge.
     result = { decision: 'deny', reason: 'guard error' };
   }
-  if (result.irreversible) result = irreversibleDecision(mission, input, result);
+  if (result.irreversible) result = irreversibleDecision(mission, input, result, language);
   if (result.decision === 'deny') {
     const output = {
       hookSpecificOutput: {

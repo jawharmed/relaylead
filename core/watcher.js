@@ -15,7 +15,7 @@ const { spawnDetached } = require('./detached');
 const { listSessions, recordSession, isAlive } = require('./sessions');
 const { readReadings } = require('./readings');
 const { readUsage } = require('./usage');
-const { readPause, writePause, removePause } = require('./usage-pause');
+const { readPause, writePause, removePause, localTime, pausePercent } = require('./usage-pause');
 const missions = require('./missions');
 const { stopSessionsAndWait, launchLead, launchWhileOpen, writeState } = missions;
 const { listTasks, markFailed, startQueued } = require('./tasks');
@@ -255,6 +255,9 @@ async function act(name, action, watch) {
     } else if (action.type === 'pause-mission') {
       logLine(name, action.log);
       writePause(name, action);
+      const percent = pausePercent(action.reason);
+      const why = percent === null ? 'usage limit hit' : `usage ${percent} %`;
+      notify({ title: `Relaylead: ${name}`, text: `Mission paused until ${localTime(action.resumeAt)} (${why})` });
       if (action.wake) await wakeLead(name, ['usage'], watch, USAGE_TEXT);
     } else if (action.type === 'resume-mission') {
       logLine(name, action.log);

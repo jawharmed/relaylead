@@ -23,6 +23,8 @@ Safety, a clearer command line, complete French, and documentation in English an
 - `relaylead launch --force`, to launch even though a finished, unmerged mission of the project took its tasks from the same source.
 - `relaylead doctor` checks the configuration (unknown settings, `language`, `permissionMode`, `parallel`, `maxSessions`), and that the Node and the script saved in the launchd agent still exist and that `claude` is on the `PATH` it saved.
 - `relaylead install` updates the Claude Code plugin when the one installed is from another version.
+- A usage pause is announced: a macOS notification when the watcher pauses a mission, and an event in `relaylead wait --all` and `relaylead brief` ("mission paused until 14:05 (usage 90 %)"), with another when the mission resumes.
+- `relaylead uninstall` without `--purge` warns, naming the missions still running: nothing will watch them, and a paused one will not resume.
 - Documentation in English and French: getting started, guide, how it works, safety, costs, FAQ. `SECURITY.md`, `CONTRIBUTING.md`, this changelog and `llms.txt`.
 
 ### Changed
@@ -37,6 +39,13 @@ Safety, a clearer command line, complete French, and documentation in English an
 
 ### Fixed
 
+- Mission names lose their accents instead of their letters: `Équipe-essai` gives `equipe-essai` (it gave `quipe-essai`). A folder name with no usable letter or digit gives an error that proposes `--name`.
+- The questions of the hooks (options and context), the states in `brief` and `list` (`working`, `done`...) and the priorities are shown in French when the language is French; they are still typed in English.
+- The last line of `uninstall --purge` is in the user's language.
+- The console confirms a risky command by repeating the action, and the number or the label of the option is enough; it no longer promises to require exact words.
+- `relaylead init` names the choice to make in Claude Code's trust question, *Yes, I trust this folder*, and warns that the default, *No, exit*, refuses.
+- `uninstall --purge` accepts a custom `RELAYLEAD_HOME` that holds a `config.json` or a `missions` folder, even if `install` never ran; a folder that looks like nothing known is still refused.
+- Wording of the French documentation, and absolute image URLs in the French README, as in the English one.
 - A failed launch removes the integration branch and worktree it created.
 - `relaylead show` on a finished mission prints a clear message instead of Claude Code's raw error.
 - `relaylead brief` no longer prints "Nothing new." above a question marked new.
