@@ -24,7 +24,7 @@ Relaylead n'emploie que ces termes. Le nom anglais, utilisé dans les commandes 
 
 | Terme | Sens |
 | --- | --- |
-| **Mission** (*mission*) | Un travail confié à une équipe sur un projet, avec un nom (celui du dossier du projet, sauf si vous passez `--name`). Son état est rangé dans `~/.relaylead/missions/<mission>/`. |
+| **Mission** (*mission*) | Un travail confié à une équipe sur un projet, avec un nom (celui du dossier du projet, sauf si vous passez `--name` ; les accents sont retirés, `Équipe` donne `equipe`, et un nom sans lettre latine ni chiffre demande `--name`). Son état est rangé dans `~/.relaylead/missions/<mission>/`. |
 | **Lead** (*lead*) | La session Claude Code qui mène une mission. Elle lit les tâches, lance les équipiers, livre leur travail, vous pose des questions et déclare la mission terminée. Elle ne touche jamais au code et ne lance que des commandes `relaylead`. |
 | **Équipier** (*crew member*) | Une session Claude Code éphémère qui réalise une tâche, dans son propre worktree git et sur sa propre branche, puis rend compte avec `relaylead task done` ou `task fail`. |
 | **Veilleur** (*watcher*) | Une petite boucle sans IA. Elle relance un lead arrêté, réveille celui qui a du nouveau, passe la main à un lead neuf quand le contexte se remplit, et lance les tâches en file d'attente. launchd la maintient en vie. |

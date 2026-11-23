@@ -298,6 +298,8 @@ const messages = {
     'init-ask-versioned': 'Version the project memory with the code?',
     'init-yes': 'yes',
     'init-no': 'no',
+    'mission-name-empty':
+      'cannot build a mission name from "{text}" (no letter or digit a-z, 0-9): give one with --name <name>',
     'mission-usage-paused':
       'mission "{mission}" is paused by the usage limit until {resumeAt}; it resumes by itself then, and starts no session before',
     usagePausedState: 'usage-pause (resume {resumeAt})',
@@ -319,6 +321,10 @@ const messages = {
     eventTaskFailed: '[{mission}] task {id} failed (attempt {attempt}): {summary}\n',
     eventMission: '[{mission}] mission {state}\n',
     eventMerged: '[{mission}] merged into {target}\n',
+    eventPaused: '[{mission}] mission paused until {at} ({why})\n',
+    eventResumed: '[{mission}] mission resumed after its usage pause\n',
+    pauseUsagePercent: 'usage {n} %',
+    pauseUsageLimit: 'usage limit hit',
     eventMissionDone: '[{mission}] mission done; bring its work into your branch with: relaylead merge {mission}\n',
     briefToMerge: 'Done, not merged yet:\n',
     briefToMergeLine: '  {mission}: relaylead merge {mission}\n',
@@ -659,6 +665,8 @@ const messages = {
     'init-ask-versioned': 'Versionner la mémoire du projet avec le code ?',
     'init-yes': 'oui',
     'init-no': 'non',
+    'mission-name-empty':
+      'impossible de former un nom de mission à partir de « {text} » (aucune lettre ni chiffre a-z, 0-9) : donnez-en un avec --name <nom>',
     'mission-usage-paused':
       'la mission « {mission} » est en pause (limite d\'usage) jusqu\'à {resumeAt} ; elle reprendra seule à cette heure, et ne lance aucune session d\'ici là',
     usagePausedState: 'usage-pause (reprise {resumeAt})',
@@ -680,6 +688,10 @@ const messages = {
     eventTaskFailed: '[{mission}] tâche {id} en échec (essai {attempt}) : {summary}\n',
     eventMission: '[{mission}] mission {state}\n',
     eventMerged: '[{mission}] fusionnée dans {target}\n',
+    eventPaused: '[{mission}] mission en pause jusqu\'à {at} ({why})\n',
+    eventResumed: '[{mission}] mission reprise après sa pause d\'usage\n',
+    pauseUsagePercent: 'usage {n} %',
+    pauseUsageLimit: 'limite d\'usage atteinte',
     eventMissionDone: '[{mission}] mission terminée ; ramenez son travail dans votre branche avec : relaylead merge {mission}\n',
     briefToMerge: 'Terminées, pas encore fusionnées :\n',
     briefToMergeLine: '  {mission} : relaylead merge {mission}\n',

@@ -24,7 +24,7 @@ These are the only terms Relaylead uses. The French documentation uses the words
 
 | Term | Meaning |
 | --- | --- |
-| **Mission** (*mission*) | One run of a team on a project, with a name (the project folder's name unless you pass `--name`). Its state lives in `~/.relaylead/missions/<mission>/`. |
+| **Mission** (*mission*) | One run of a team on a project, with a name (the project folder's name unless you pass `--name`; accents are removed, so `Équipe` gives `equipe`, and a name with no Latin letter or digit needs `--name`). Its state lives in `~/.relaylead/missions/<mission>/`. |
 | **Lead** (*lead*) | The Claude Code session that drives a mission. It reads the tasks, starts crew members, delivers their work, asks you questions and declares the mission done. It never edits code and only runs `relaylead` commands. |
 | **Crew member** (*équipier*) | A short-lived Claude Code session that carries out one task, in its own git worktree and on its own branch, then reports with `relaylead task done` or `task fail`. |
 | **Watcher** (*veilleur*) | A small loop with no AI. It restarts a lead that stopped, wakes one that has news, hands over to a fresh lead when the context fills up, and starts queued tasks. launchd keeps it alive. |

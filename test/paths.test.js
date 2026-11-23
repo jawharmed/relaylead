@@ -13,6 +13,12 @@ test('slug merges dashes, limits length and rejects empty text', () => {
   assert.throws(() => slug(''));
 });
 
+test('slug removes accents instead of dropping the letters', () => {
+  assert.strictEqual(slug('Équipe-essai'), 'equipe-essai');
+  assert.strictEqual(slug('été'), 'ete');
+  assert.strictEqual(slug('thé'), 'the');
+});
+
 test('home follows RELAYLEAD_HOME at call time', () => {
   const before = process.env.RELAYLEAD_HOME;
   process.env.RELAYLEAD_HOME = path.join('some', 'dir');

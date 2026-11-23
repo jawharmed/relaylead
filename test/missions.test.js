@@ -32,6 +32,17 @@ async function cli(args, ioOverrides) {
   return { code, out: io.out.text, err: io.err.text };
 }
 
+test('launch in a folder with no usable letter asks for --name, in both languages', async (t) => {
+  freshHome(t);
+  const dir = path.join(tmpDir('relaylead-project-'), '日本');
+  fs.mkdirSync(dir);
+  const english = await cli(['launch', '--agent', 'fake', '--dir', dir]);
+  assert.notStrictEqual(english.code, 0);
+  assert.ok(english.err.includes('--name'), english.err);
+  assert.ok(!english.err.includes('empty text'), english.err);
+  assert.ok(msg('mission-name-empty', { text: 'x' }, 'fr').includes('--name'));
+});
+
 // Runs bin/relaylead.js in its own process.
 function cliProcess(args) {
   return new Promise((resolve, reject) => {
