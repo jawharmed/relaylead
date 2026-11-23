@@ -99,10 +99,11 @@ function refuseInSession(command, io) {
 }
 
 // Claude Code sets CLAUDE_CODE_ENTRYPOINT in the environment of its tools: "sdk-cli" under `claude -p`
-// (observed, 2.1.330; the docs do not list this variable), "sdk-ts" or "sdk-py" under the Agent SDK.
+// (observed, 2.1.330; the docs do not list this variable). Only that value: an app built on the Agent SDK
+// ("sdk-ts", "sdk-py") may be a long conversation that does get the end of a background command.
 const ONE_SHOT_MAX_WAIT = 60;
 function isOneShotSession(env) {
-  return /^sdk/.test(env.CLAUDE_CODE_ENTRYPOINT || '');
+  return env.CLAUDE_CODE_ENTRYPOINT === 'sdk-cli';
 }
 
 // A lead replaced by a relaunch or a handover may still run commands: those that drive the mission
