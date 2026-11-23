@@ -265,7 +265,7 @@ const messages = {
     'plugin-removed': 'plugin removed: {id}\n',
     'nothing-installed': 'nothing to uninstall: relaylead install was not run\n',
     purged: 'deleted {dir}\n',
-    'purge-refused': 'refusing to delete {dir}: it does not look like a relaylead folder (no install.json nor install marker, and not named .relaylead)',
+    'purge-refused': 'refusing to delete {dir}: it does not look like a relaylead folder (no install.json, install marker, config.json or missions folder, and not named .relaylead)',
     'purge-active-missions':
       'refusing to delete {dir}: these missions may still have sessions running: {missions}; stop them (relaylead stop <mission>), or run relaylead uninstall --purge --force to stop their sessions and delete everything',
     'purge-stop-failed':
@@ -287,6 +287,7 @@ const messages = {
       'Review what a mission delivered before you merge it.',
       '',
     ].join('\n'),
+    'uninstall-active-missions': 'warning: mission(s) still running: {missions}. Without the watcher they will not be watched, and a paused one will not resume. Stop them with relaylead stop <mission>, or install again.\n',
     'uninstall-warning': 'warning: could not remove the {step} ({detail}); do it by hand with: {command}\n',
     'init-next':
       'next: write your tasks in the tasks/ folder (one file tasks/<id>.md per task) and commit them; then relaylead install (scheduler and plugin) and relaylead doctor\n',
@@ -637,7 +638,7 @@ const messages = {
       'refus de supprimer {dir} : ces missions ont peut-être encore des sessions : {missions} ; arrêtez-les (relaylead stop <mission>), ou lancez relaylead uninstall --purge --force pour arrêter leurs sessions et tout supprimer',
     'purge-stop-failed':
       'impossible d\'arrêter les sessions de : {missions} ; rien n\'a été supprimé dans {dir}, et le planificateur et le plugin restent installés ; arrêtez ces sessions, puis relancez relaylead uninstall --purge',
-    'purge-refused': 'refus de supprimer {dir} : ce n\'est pas un dossier relaylead (ni install.json ni marqueur d\'installation, et il ne s\'appelle pas .relaylead)',
+    'purge-refused': 'refus de supprimer {dir} : ce n\'est pas un dossier relaylead (ni install.json, ni marqueur d\'installation, ni config.json, ni dossier missions, et il ne s\'appelle pas .relaylead)',
     'node-too-old': 'Node.js {min} ou plus récent est nécessaire, version trouvée : {found}',
     'agent-missing': 'l\'agent « {agent} » est introuvable ; installez Claude Code, puis relancez relaylead init',
     'api-key-stored': 'clé d\'API enregistrée dans {file}, lisible par vous seul\n',
@@ -655,6 +656,7 @@ const messages = {
       'Relisez ce qu\'une mission a livré avant de la fusionner.',
       '',
     ].join('\n'),
+    'uninstall-active-missions': 'attention : mission(s) en cours : {missions}. Sans le veilleur, elles ne seront plus surveillées, et une mission en pause ne reprendra pas. Arrêtez-les avec relaylead stop <mission>, ou réinstallez.\n',
     'uninstall-warning': 'attention : impossible de retirer « {step} » ({detail}) ; faites-le à la main avec : {command}\n',
     'init-next': 'prochaine étape : écrivez vos tâches dans le dossier tasks/ (un fichier tasks/<id>.md par tâche) et commitez-les ; puis relaylead install (planificateur et plugin) et relaylead doctor\n',
     'init-ask-language': 'Langue / Language (en, fr)',

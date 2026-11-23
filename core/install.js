@@ -68,6 +68,10 @@ async function uninstall(say, { purge = false, force = false } = {}) {
   const record = readJson(installFile(), null);
   if (purge && !isRelayleadHome(record)) throw codedError('purge-refused', { dir: home() });
   if (purge && !force) refuseWhileRunning();
+  if (!purge) {
+    const active = missionsToStop().map((mission) => mission.name);
+    if (active.length > 0) say('uninstall-active-missions', { missions: active.join(', ') });
+  }
   if (watcherRunning().running) {
     const outcome = await stopWatcher({ waitMs: LOOP_END_WAIT_MS });
     if (outcome === 'requested') say('uninstall-warning', { step: 'watcher', detail: 'its loop is still in a pass', command: 'relaylead watcher stop' });
@@ -149,11 +153,13 @@ async function stopListedSessions(name) {
   if (failed.length > 0 || alive.length > 0) throw error || new Error(`${alive.length} session(s) still running`);
 }
 
-// A relaylead folder: the default one, one install marked, or one with an install.json.
+// A relaylead folder: the default one, one install marked, one with an install.json, or one that
+// holds what init or launch alone create (config.json, missions/).
 function isRelayleadHome(record) {
   const dir = home();
   if (!path.isAbsolute(dir) || dir === os.homedir() || dir === path.parse(dir).root) return false;
-  return path.basename(dir) === '.relaylead' || Boolean(record) || fs.existsSync(path.join(dir, MARKER));
+  if (path.basename(dir) === '.relaylead' || Boolean(record)) return true;
+  return [MARKER, 'config.json', 'missions'].some((name) => fs.existsSync(path.join(dir, name)));
 }
 
 module.exports = { install, uninstall, plistPath };

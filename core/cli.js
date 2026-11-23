@@ -585,7 +585,9 @@ commands.install = async (args, io) => {
 commands.uninstall = async (args, io) => {
   refuseInSession('uninstall', io);
   const { options } = parseArgs(args);
-  await uninstall((key, vars) => io.out.write(t(key, vars, language(io))), { purge: options.purge === true, force: options.force === true });
+  // The language is read before --purge deletes the configuration that holds it.
+  const lang = language(io);
+  await uninstall((key, vars) => io.out.write(t(key, vars, lang)), { purge: options.purge === true, force: options.force === true });
   return 0;
 };
 
