@@ -30,8 +30,16 @@ function makeAsker(options, io) {
   };
 }
 
+// The language of the machine: fr when LANG starts with fr, en otherwise, unless the user says another.
+async function chooseLanguage(asker, env) {
+  const fallback = /^fr/i.test(env.LANG || '') ? 'fr' : 'en';
+  const answer = await asker.ask(t('init-ask-language', {}, fallback), fallback);
+  return answer.toLowerCase().startsWith('fr') ? 'fr' : 'en';
+}
+
 // The authentication chosen: { auth } to merge into the configuration, or null to leave it as it is.
-async function chooseAuth(options, asker, env, say) {
+// `ask(key)` is a question in the user's language.
+async function chooseAuth(options, asker, env, say, ask) {
   if (options['api-key-env']) {
     const file = importApiKey(options['api-key-env'], env, path.join(home(), 'api-key'));
     say('api-key-stored', { file });
@@ -40,21 +48,33 @@ async function chooseAuth(options, asker, env, say) {
   if (options['api-key-file']) {
     return { mode: 'api-key', keyFile: path.resolve(options['api-key-file']) };
   }
-  const mode = await asker.ask('Authentication: "login" (your Claude account) or "api-key"?', 'login');
+  const mode = await asker.ask(ask('init-ask-auth'), 'login');
   if (mode !== 'api-key') return { mode: 'login', keyFile: null };
-  const name = await asker.ask('Name of the environment variable that holds the key', 'ANTHROPIC_API_KEY');
+  const name = await asker.ask(ask('init-ask-env'), 'ANTHROPIC_API_KEY');
   const file = importApiKey(name, env, path.join(home(), 'api-key'));
   say('api-key-stored', { file });
   return { mode: 'api-key', keyFile: null };
 }
 
-// Returns true when the user said yes to running install.
-async function setUpMachine(options, asker, io, say) {
+// Returns true when the user said yes to running install. `current.lang` is the language of what is
+// said from now on: the one just chosen, written to the configuration when it has none.
+async function setUpMachine(options, asker, io, say, current) {
   const file = path.join(home(), 'config.json');
   const existing = readJson(file, null);
   const authGiven = options['api-key-env'] || options['api-key-file'];
+  const ask = (key) => t(key, {}, current.lang);
+  let language = null;
+  if (!existing || !existing.language) {
+    language = await chooseLanguage(asker, io.env);
+    current.lang = language;
+  }
   if (existing && !authGiven) {
-    say('init-machine-kept', { file });
+    if (language) {
+      writeJson(file, { ...existing, language });
+      say('init-machine-written', { file });
+    } else {
+      say('init-machine-kept', { file });
+    }
     return false;
   }
   if (!existing) {
@@ -66,21 +86,23 @@ async function setUpMachine(options, asker, io, say) {
       throw err;
     }
   }
-  const auth = await chooseAuth(options, asker, io.env, say);
+  const auth = await chooseAuth(options, asker, io.env, say, ask);
   const wanted = { agent: DEFAULTS.agent, permissionMode: DEFAULTS.permissionMode };
   // What is already in the file wins, except the authentication the user has just chosen.
   const merged = deepMerge(deepMerge(wanted, existing || {}), { auth });
+  if (language) merged.language = language;
   if (!existing || JSON.stringify(merged) !== JSON.stringify(existing)) writeJson(file, merged);
   say('init-machine-written', { file });
   if (auth.mode === 'api-key') say('api-key-helper-hint', {});
-  if (!existing && asker.interactive) return (await asker.ask('Run "relaylead install" now (scheduler and plugin)?', 'no')).toLowerCase().startsWith('y');
+  if (!existing && asker.interactive) return isYes(await asker.ask(ask('init-ask-install'), ask('init-no')));
   return false;
 }
 
 // yes / no answers: anything that starts with y (or o, for "oui") is a yes.
 const isYes = (answer) => /^(y|o)/i.test(answer);
 
-async function setUpProject(dir, options, asker, say) {
+async function setUpProject(dir, options, asker, say, current) {
+  const ask = (key) => t(key, {}, current.lang);
   try {
     const top = runFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
     if (fs.realpathSync.native(top) !== fs.realpathSync.native(dir)) throw new Error('not the root');
@@ -91,9 +113,9 @@ async function setUpProject(dir, options, asker, say) {
   if (fs.existsSync(file)) {
     say('init-project-kept', { file });
   } else {
-    const enabled = options['no-memory'] ? false : isYes(await asker.ask('Keep a project memory for the leads (conventions, lessons)?', 'yes'));
+    const enabled = options['no-memory'] ? false : isYes(await asker.ask(ask('init-ask-memory'), ask('init-yes')));
     // Versioned: committed with the code. Otherwise it stays out of git (.git/info/exclude).
-    const versioned = enabled && (options['versioned-memory'] || isYes(await asker.ask('Version the project memory with the code?', 'no')));
+    const versioned = enabled && (options['versioned-memory'] || isYes(await asker.ask(ask('init-ask-versioned'), ask('init-no'))));
     writeJson(file, { team: 'code', method: DEFAULTS.method, source: DEFAULTS.source, delivery: DEFAULTS.delivery, memory: { enabled, versioned } });
     say('init-project-written', { file });
     if (enabled) updateExclude(dir, versioned);
@@ -103,11 +125,12 @@ async function setUpProject(dir, options, asker, say) {
 }
 
 async function init(options, io, lang) {
-  const say = (key, vars) => io.out.write(t(key, vars, lang));
+  const current = { lang };
+  const say = (key, vars) => io.out.write(t(key, vars, current.lang));
   const asker = makeAsker(options, io);
   try {
-    const wantsInstall = await setUpMachine(options, asker, io, say);
-    await setUpProject(io.cwd, options, asker, say);
+    const wantsInstall = await setUpMachine(options, asker, io, say, current);
+    await setUpProject(io.cwd, options, asker, say, current);
     if (wantsInstall) install(say);
     else if (!fs.existsSync(path.join(home(), 'install.json'))) say('init-next', {});
   } finally {

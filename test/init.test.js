@@ -21,6 +21,7 @@ test('init --yes in a repository writes the machine and the project files, and a
     agent: 'claude',
     permissionMode: 'allowlist',
     auth: { mode: 'login', keyFile: null },
+    language: 'en',
   });
   const config = JSON.parse(read(project));
   assert.strictEqual(config.team, 'code');
@@ -52,11 +53,48 @@ test('init reminds of relaylead install only while it has not been run', async (
   const env = installEnv(t);
   const repo = gitRepo({ 'README.md': 'toy\n' });
   const before = await runRelaylead(['init', '--yes'], { cwd: repo, env });
-  assert.match(before.out, /next: relaylead install/);
+  assert.match(before.out, /next: write your tasks in the tasks\/ folder .*then relaylead install/);
   assert.strictEqual((await runRelaylead(['install'], { cwd: repo, env })).code, 0);
   const after = await runRelaylead(['init', '--yes'], { cwd: repo, env });
   assert.strictEqual(after.code, 0, after.err);
-  assert.doesNotMatch(after.out, /next: relaylead install/);
+  assert.doesNotMatch(after.out, /next: /);
+});
+
+test('init proposes the language from LANG, writes it when the configuration has none, and speaks it', async (t) => {
+  const env = installEnv(t, { LANG: 'fr_FR.UTF-8' });
+  const repo = gitRepo({ 'README.md': 'toy\n' });
+  const machine = path.join(env.RELAYLEAD_HOME, 'config.json');
+  const first = await runRelaylead(['init', '--yes'], { cwd: repo, env });
+  assert.strictEqual(first.code, 0, first.err);
+  assert.strictEqual(JSON.parse(read(machine)).language, 'fr');
+  assert.match(first.out, /réglages de la machine écrits dans/);
+  assert.match(first.out, /prochaine étape : écrivez vos tâches dans le dossier tasks\//);
+
+  // A configuration that already has a language keeps it, whatever LANG says.
+  const second = await runRelaylead(['init', '--yes'], { cwd: repo, env: { ...env, LANG: 'en_US.UTF-8' } });
+  assert.strictEqual(JSON.parse(read(machine)).language, 'fr');
+  assert.match(second.out, /laissés tels quels/);
+
+  // A configuration without one gets it; what it has stays.
+  const other = installEnv(t, { LANG: 'fr_FR.UTF-8' });
+  fs.writeFileSync(path.join(other.RELAYLEAD_HOME, 'config.json'), JSON.stringify({ parallel: 2 }));
+  const third = await runRelaylead(['init', '--yes'], { cwd: gitRepo({ 'README.md': 'toy\n' }), env: other });
+  assert.strictEqual(third.code, 0, third.err);
+  assert.deepStrictEqual(JSON.parse(read(path.join(other.RELAYLEAD_HOME, 'config.json'))), { parallel: 2, language: 'fr' });
+});
+
+test('doctor, install and the unknown command speak French when the language is fr', async (t) => {
+  const env = installEnv(t);
+  fs.writeFileSync(path.join(env.RELAYLEAD_HOME, 'config.json'), JSON.stringify({ language: 'fr' }));
+  const repo = gitRepo({ 'README.md': 'toy\n' });
+  const doctor = await runRelaylead(['doctor'], { cwd: repo, env });
+  assert.match(doctor.out, /^warn scheduler: pas installé ; lancez : relaylead install$/m);
+  assert.match(doctor.out, /^ok git: trouvé$/m);
+  assert.match(doctor.out, /^ok auth: connexion \(le compte Claude connecté\)$/m);
+  const installed = await runRelaylead(['install'], { cwd: repo, env });
+  assert.match(installed.out, /planificateur installé/);
+  assert.match(installed.out, /plugin installé/);
+  assert.match((await runRelaylead(['uninstall'], { cwd: repo, env })).out, /planificateur retiré/);
 });
 
 test('init --api-key-file records the path as given', async (t) => {

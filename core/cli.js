@@ -37,6 +37,7 @@ const { buildOverview } = require('./overview');
 const { queuedCount } = require('./places');
 const { abandonment } = require('./abandon');
 const { startDashboard } = require('./dashboard');
+const { commandHelp } = require('./help');
 const pkg = require('../package.json');
 
 // Options that take no value.
@@ -140,6 +141,7 @@ commands.launch = async (args, io) => {
     priority: options.priority,
     agent: options.agent,
     tasks: options.tasks,
+    force: options.force === true,
     onWarning: (warning) => io.err.write(`relaylead launch: ${t(warning.code, warning.vars, language(io))}\n`),
   });
   io.out.write(mission.name + '\n');
@@ -196,6 +198,11 @@ commands.show = async (args, io) => {
   const listed = listMissions().find((mission) => mission.name === name);
   const shown = shownState(name, listed ? listed.state : state, io);
   if (shown !== state) io.out.write(`${name}  ${shown}\n`);
+  // A finished mission has no session left to open: the adapter's own error would say so badly.
+  if (/^(done|stopped)/.test(state)) {
+    io.out.write(t('showMissionOver', { mission: name, state }, language(io)));
+    return 0;
+  }
   return attachLead(name);
 };
 
@@ -404,6 +411,7 @@ commands.question = async (args, io) => {
     io.out.write(id + '\n');
   } else if (action === 'list') {
     const name = mission || missionName(options, io);
+    readMission(name); // mission-unknown, as for show
     const questions = listQuestions(name, options.all ? {} : { state: 'open' });
     io.out.write(JSON.stringify(questions, null, 2) + '\n');
   } else {
@@ -586,7 +594,7 @@ commands.doctor = async (args, io) => {
 
 // One line per check: "ok|warn|fail <name>: <detail>". Exit 1 when a check failed.
 async function printDoctor(io) {
-  const lines = await doctor(io.cwd);
+  const lines = await doctor(io.cwd, language(io));
   for (const line of lines) io.out.write(`${line.level} ${line.name}: ${line.detail}\n`);
   return lines.some((line) => line.level === 'fail') ? 1 : 0;
 }
@@ -663,6 +671,23 @@ function openInBrowser(url) {
   }
 }
 
+// `relaylead help [command]`: the list of commands, or the help of one.
+commands.help = async (args, io) => {
+  const lang = language(io);
+  const [name] = parseArgs(args).positional;
+  if (name === undefined) {
+    io.out.write(t('help', {}, lang));
+    return 0;
+  }
+  const text = commandHelp(name, lang);
+  if (!text) {
+    io.err.write(t('unknownCommand', { command: name }, lang) + t('help', {}, lang));
+    return 2;
+  }
+  io.out.write(text);
+  return 0;
+};
+
 // Internal, not in the help: started by `state set done`, it stops the lead once its turn is over.
 // The createdAt of its mission (absent when started by an older relaylead) keeps it off a newer
 // mission of the same name.
@@ -684,12 +709,18 @@ async function run(argv, io) {
     io.out.write(pkg.version + '\n');
     return 0;
   }
-  if (first === undefined || wantsHelp([first, ...args])) {
-    io.out.write(t('help'));
+  const known = Object.prototype.hasOwnProperty.call(commands, first || '');
+  // `relaylead <command> --help`: the help of that command; anywhere else, the general help.
+  if (known && wantsHelp(args)) {
+    io.out.write(commandHelp(first, language(io)) || t('help', {}, language(io)));
     return 0;
   }
-  if (!Object.prototype.hasOwnProperty.call(commands, first)) {
-    io.err.write(t('unknownCommand', { command: first }) + t('help'));
+  if (first === undefined || wantsHelp([first, ...args])) {
+    io.out.write(t('help', {}, language(io)));
+    return 0;
+  }
+  if (!known) {
+    io.err.write(t('unknownCommand', { command: first }, language(io)) + t('help', {}, language(io)));
     return 2;
   }
   try {

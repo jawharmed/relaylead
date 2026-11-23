@@ -33,7 +33,7 @@ test('each command only allows the relaylead command it runs; the plugin has one
     assert.match(text, new RegExp(`^allowed-tools: Bash\\(relaylead ${name} \\*\\)$`, 'm'));
   }
   assert.deepStrictEqual(fs.readdirSync(PLUGIN_DIR).sort(), ['.claude-plugin', 'README.md', 'commands', 'hooks', 'icon.svg', 'skills', 'types']);
-  // The mod (status line entry, pane, /panneau) is checked by `claude plugin validate plugin`, which CI has no claude to run.
+  // The mod (status line entry, pane, /pane) is checked by `claude plugin validate plugin`, which CI has no claude to run.
   const hooks = JSON.parse(fs.readFileSync(path.join(PLUGIN_DIR, 'hooks', 'hooks.json'), 'utf8'));
   assert.deepStrictEqual(hooks, { modules: ['./register.tsx'] });
   assert.ok(fs.existsSync(path.join(PLUGIN_DIR, 'hooks', 'register.tsx')));
@@ -72,7 +72,9 @@ test('installPlugin and uninstallPlugin call claude plugin with the right argume
 test('the console skill stays short and keeps its rule on questions; no skill changes the model', () => {
   const consoleSkill = fs.readFileSync(path.join(PLUGIN_DIR, 'skills', 'relaylead', 'SKILL.md'), 'utf8');
   // The 0.3 target was less than half of the 0.2 skill (7490 bytes); this ceiling keeps it from growing back.
-  assert.ok(Buffer.byteLength(consoleSkill) < 4000, `${Buffer.byteLength(consoleSkill)} bytes`);
+  assert.ok(Buffer.byteLength(consoleSkill) <= 4500, `${Buffer.byteLength(consoleSkill)} bytes`);
+  assert.match(consoleSkill, /never send "Allow once" or "Always allow" before the user has said so explicitly/);
+  assert.match(consoleSkill, /To look, `brief` or the web page .*; to decide, this console/);
   assert.match(consoleSkill, /\*\*Always show every open question, as it is, before anything else.*never summarize it/);
   assert.match(consoleSkill, /^Run `relaylead brief`/m);
   // A light model for the follow-up was measured and dropped: switching models loses the conversation cache.

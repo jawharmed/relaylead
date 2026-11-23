@@ -94,7 +94,7 @@ function merge(dir, branch) {
 
 test('prepareMission creates the integration worktree without touching the user checkout', async (t) => {
   freshHome(t);
-  const dir = userRepo({ 'tasks/.gitkeep': '' }); // a committed task folder, no task: the lead idles
+  const dir = userRepo({ 'tasks/finished.md': '---\ntitle: Finished\nstate: done\n---\n' }); // a committed task folder whose only task is done: the lead idles
   const before = checkoutState(dir);
 
   const launched = await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir]);
@@ -470,7 +470,100 @@ test('refuses tasks not committed in the user checkout', async (t) => {
 
   const missing = userRepo({});
   writeMission('demo', missing);
-  assert.throws(() => localMerge.prepareMission(readMission('demo')), { code: 'tasks-not-committed' });
+  assert.throws(() => localMerge.prepareMission(readMission('demo')), { code: 'tasks-folder-missing' });
+});
+
+test('a missing, an empty and an uncommitted task folder each have their own message, with an example', async (t) => {
+  freshHome(t);
+  const missing = userRepo({});
+  const refusedMissing = await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', missing]);
+  assert.strictEqual(refusedMissing.code, 1);
+  assert.match(refusedMissing.err, /there is no task folder "tasks"/);
+  assert.match(refusedMissing.err, /tasks\/hello\.md/);
+
+  const empty = userRepo({ 'tasks/notes.txt': 'not a task\n' });
+  const refusedEmpty = await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', empty]);
+  assert.match(refusedEmpty.err, /the task folder "tasks" has no \.md file/);
+  assert.match(refusedEmpty.err, /tasks\/hello\.md/);
+
+  const uncommitted = userRepo({ 'tasks/a.md': TASK_A });
+  fs.writeFileSync(path.join(uncommitted, 'tasks', 'b.md'), TASK_B);
+  const refusedUncommitted = await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', uncommitted]);
+  assert.match(refusedUncommitted.err, /has changes not committed/);
+  assert.strictEqual(fs.existsSync(missionDir('demo')), false);
+});
+
+test('a launch refused before anything is made leaves the worktrees of the user alone', async (t) => {
+  freshHome(t);
+  const dir = userRepo({});
+  const elsewhere = path.join(tmpDir('relaylead-elsewhere-'), 'wt');
+  git(dir, 'worktree', 'add', '-q', '-b', 'mine', elsewhere);
+  fs.rmSync(elsewhere, { recursive: true, force: true }); // a worktree whose folder is gone (a disk not plugged in)
+  const refused = await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir]);
+  assert.strictEqual(refused.code, 1);
+  assert.match(refused.err, /there is no task folder/);
+  assert.match(git(dir, 'worktree', 'list', '--porcelain'), /wt\b/); // not pruned
+});
+
+test('a launch that fails after the preparation removes the branch and the worktree it made', async (t) => {
+  freshHome(t);
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  const launch = fake.launch;
+  fake.launch = async () => {
+    throw new Error('the agent refused to start');
+  };
+  t.after(() => {
+    fake.launch = launch;
+  });
+
+  const failed = await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir]);
+  assert.strictEqual(failed.code, 1);
+  assert.match(failed.err, /the agent refused to start/);
+  assert.strictEqual(git(dir, 'branch', '--list', 'relaylead/*'), '');
+  assert.strictEqual(fs.existsSync(integrationDir(dir)), false);
+  assert.strictEqual(git(dir, 'worktree', 'list', '--porcelain').split('\n').filter((line) => line.startsWith('worktree ')).length, 1);
+  assert.strictEqual(fs.existsSync(missionDir('demo')), false);
+});
+
+test('a launch is refused while a done mission of the project, not merged, has the same tasks; --force goes on', async (t) => {
+  freshHome(t);
+  t.after(async () => {
+    for (const session of listSessions('second')) await fake.stop(session);
+  });
+  const dir = userRepo({ 'tasks/a.md': TASK_A });
+  assert.strictEqual((await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir])).code, 0);
+  writeJson(path.join(missionDir('demo'), 'state.json'), { state: 'done', note: 'finished', updatedAt: new Date().toISOString() });
+
+  const refused = await cli(['launch', '--agent', 'fake', '--name', 'second', '--dir', dir]);
+  assert.strictEqual(refused.code, 1);
+  assert.match(refused.err, /relaylead merge demo/);
+  assert.match(refused.err, /relaylead remove demo/);
+  assert.match(refused.err, /--force/);
+  assert.strictEqual(fs.existsSync(missionDir('second')), false);
+
+  const forced = await cli(['launch', '--agent', 'fake', '--name', 'second', '--dir', dir, '--force']);
+  assert.strictEqual(forced.code, 0, forced.err);
+});
+
+test('a merge being resolved, or a merge done, or another task folder: the first blocks the launch, the others do not', async (t) => {
+  freshHome(t);
+  t.after(async () => {
+    for (const name of ['second', 'third']) for (const session of listSessions(name)) await fake.stop(session);
+  });
+  const dir = userRepo({ 'tasks/a.md': TASK_A, 'other/b.md': TASK_B });
+  assert.strictEqual((await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir])).code, 0);
+  writeJson(path.join(missionDir('demo'), 'state.json'), { state: 'done', updatedAt: new Date().toISOString() });
+  writeJson(path.join(missionDir('demo'), 'merge.json'), { state: 'resolving', target: 'main', at: new Date().toISOString() });
+  const refused = await cli(['launch', '--agent', 'fake', '--name', 'second', '--dir', dir]);
+  assert.strictEqual(refused.code, 1);
+  assert.match(refused.err, /its merge is not over/);
+
+  const otherFolder = await cli(['launch', '--agent', 'fake', '--name', 'second', '--dir', dir, '--tasks', 'other']);
+  assert.strictEqual(otherFolder.code, 0, otherFolder.err);
+
+  writeJson(path.join(missionDir('demo'), 'merge.json'), { state: 'merged', target: 'main', at: new Date().toISOString() });
+  const merged = await cli(['launch', '--agent', 'fake', '--name', 'third', '--dir', dir]);
+  assert.strictEqual(merged.code, 0, merged.err);
 });
 
 // A git hook of the user's repository, shared by all its worktrees. POSIX sh: Git for Windows runs
@@ -653,7 +746,7 @@ test('a launch refused for missing tasks works once they are committed', async (
   freshHome(t);
   const dir = userRepo({});
   writeMission('demo', dir);
-  assert.throws(() => localMerge.prepareMission(readMission('demo')), { code: 'tasks-not-committed' });
+  assert.throws(() => localMerge.prepareMission(readMission('demo')), { code: 'tasks-folder-missing' });
   assert.strictEqual(git(dir, 'branch', '--list', 'relaylead/*'), '');
   assert.strictEqual(fs.existsSync(path.join(dir, '.relaylead')), false);
 
@@ -829,7 +922,7 @@ test('a git command that does not end fails the delivery in time', { skip: proce
 
 // Puts on the PATH a git that hangs on each call whose arguments contain `call`, once it has run
 // `before` (shell, where $GIT is the real git); the other calls run the real git. Git's timeout
-// is 1 s. Returns a function that puts back the real git and its timeout, as is done after the
+// is 4 s: an ordinary git call, on a loaded machine, must not reach it. Returns a function that puts back the real git and its timeout, as is done after the
 // test. POSIX only (a shell script).
 function hangingGit(t, call, before) {
   const bin = tmpDir('relaylead-git-');
@@ -841,7 +934,7 @@ function hangingGit(t, call, before) {
   );
   const { PATH } = process.env;
   process.env.PATH = bin + path.delimiter + PATH;
-  process.env.RELAYLEAD_GIT_TIMEOUT_MS = '1000';
+  process.env.RELAYLEAD_GIT_TIMEOUT_MS = '4000';
   const restore = () => {
     process.env.PATH = PATH;
     delete process.env.RELAYLEAD_GIT_TIMEOUT_MS;
@@ -862,7 +955,7 @@ test('a merge that does not end is cancelled', { skip: process.platform === 'win
 
   const failed = await deliver('a');
   assert.notStrictEqual(failed.code, 0);
-  assert.match(failed.err, /did not end within 1 s; the merge was cancelled/);
+  assert.match(failed.err, /did not end within 4 s; the merge was cancelled/);
   realGit();
   const integration = integrationDir(dir);
   assert.strictEqual(git(integration, 'status', '--porcelain'), '');
@@ -884,7 +977,7 @@ test('a state line commit that does not end leaves no index.lock behind', { skip
 
   const delivered = await deliver('a');
   assert.strictEqual(delivered.code, 0, delivered.err);
-  assert.match(delivered.err, /did not end within 1 s/);
+  assert.match(delivered.err, /did not end within 4 s/);
   realGit();
   const integration = integrationDir(dir);
   assert.strictEqual(fs.existsSync(path.resolve(integration, git(integration, 'rev-parse', '--git-path', 'index.lock'))), false);
@@ -1137,7 +1230,7 @@ test('stop keeps the worktree of a crew session whose stop failed, and cleans th
 
 test('a session still alive after the wait keeps the folder', async (t) => {
   freshHome(t);
-  const dir = userRepo({ 'tasks/.gitkeep': '' }); // no task: the lead idles
+  const dir = userRepo({ 'tasks/finished.md': '---\ntitle: Finished\nstate: done\n---\n' }); // its only task is done: the lead idles
   assert.strictEqual((await cli(['launch', '--agent', 'fake', '--name', 'demo', '--dir', dir])).code, 0);
   await waitFor(() => getState('demo') === 'working', 30000, 'the lead to be working');
   const crew = await crewIn(taskWithWork(readMission('demo'), 'a', { committed: true }), 1);

@@ -72,11 +72,76 @@ test('a crew member finishes only its own task and drives no task', async () => 
   await assert.rejects(commands.task(['done', 'a'], makeIo(env)), { code: 'mission-unknown' });
 });
 
-test('--help after a command prints the help', async () => {
+test('--help after a command prints the help of that command', async () => {
+  process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
   const io = makeIo();
   assert.strictEqual(await run(['stop', '--help'], io), 0);
-  assert.match(io.out.text, /^Usage: relaylead/);
-  assert.match(io.out.text, /stop +stop a mission\n/);
+  assert.match(io.out.text, /^relaylead stop <mission>\n/);
+  assert.doesNotMatch(io.out.text, /^Usage: relaylead/);
+});
+
+test('every command has its help, in both languages, by --help and by help <command>', async () => {
+  process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-'); // English, whatever the machine's own configuration
+  const { helpCommands, commandHelp } = require('../core/help');
+  // The commands the general help lists, plus help itself: none lacks a text.
+  const commandLines = require('../core/messages').t('help', {}, 'en').split('Options:')[0];
+  const listed = [...commandLines.matchAll(/^ {2}(\S+) /gm)].map((match) => match[1]);
+  for (const name of listed) assert.ok(helpCommands.includes(name), `no help for ${name}`);
+  assert.ok(listed.includes('merge'));
+  for (const name of helpCommands) {
+    for (const lang of ['en', 'fr']) assert.ok(commandHelp(name, lang).startsWith('relaylead ' + name), `${name} ${lang}`);
+    assert.notStrictEqual(commandHelp(name, 'en'), commandHelp(name, 'fr'), `${name} is not translated`);
+    const viaOption = makeIo();
+    assert.strictEqual(await run([name, '--help'], viaOption), 0);
+    const viaHelp = makeIo();
+    assert.strictEqual(await run(['help', name], viaHelp), 0);
+    assert.strictEqual(viaOption.out.text, viaHelp.out.text);
+  }
+  const general = makeIo();
+  assert.strictEqual(await run(['help'], general), 0);
+  assert.match(general.out.text, /^Usage: relaylead/);
+  const unknown = makeIo();
+  assert.strictEqual(await run(['help', 'frobnicate'], unknown), 2);
+  assert.match(unknown.err.text, /unknown command "frobnicate"/);
+});
+
+test('the help is in French when the language is fr', async () => {
+  const home = tmpDir('relaylead-home-');
+  process.env.RELAYLEAD_HOME = home;
+  writeJson(path.join(home, 'config.json'), { language: 'fr' });
+  const general = makeIo();
+  assert.strictEqual(await run(['--help'], general), 0);
+  assert.match(general.out.text, /^Usage : relaylead <commande>/);
+  assert.match(general.out.text, / merge {5}ramener le travail/);
+  const merge = makeIo();
+  assert.strictEqual(await run(['merge', '--help'], merge), 0);
+  assert.match(merge.out.text, /Ramène le travail d'une mission terminée/);
+  const unknown = makeIo();
+  assert.strictEqual(await run(['frobnicate'], unknown), 2);
+  assert.match(unknown.err.text, /commande inconnue « frobnicate »/);
+});
+
+test('every English message has its French text', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'core', 'messages.js'), 'utf8');
+  const { messages } = new Function('require', 'module', source.replace('module.exports = { t, codedError };', 'return { messages };') + '')(require, { exports: {} });
+  const missing = Object.keys(messages.en).filter((key) => !(key in messages.fr));
+  assert.deepStrictEqual(missing, []);
+});
+
+test('show on a finished mission says it has no session left, not the error of the agent', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  writeJson(path.join(missionDir('demo'), 'state.json'), { state: 'done', updatedAt: new Date().toISOString() });
+  const io = makeIo();
+  assert.strictEqual(await run(['show', 'demo'], io), 0);
+  assert.match(io.out.text, /mission demo is done: there is no session left to open; to read its work again, use claude --resume/);
+});
+
+test('question list on an unknown mission is an error, like show', async () => {
+  process.env.RELAYLEAD_HOME = tmpDir('relaylead-home-');
+  const io = makeIo();
+  assert.strictEqual(await run(['question', 'list', 'nope'], io), 1);
+  assert.match(io.err.text, /no mission named "nope"/);
 });
 
 test('an option value --help is not a request for help', async () => {

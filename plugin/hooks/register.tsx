@@ -144,14 +144,14 @@ async function choose($: any, choice: 'always' | 'once' | 'never') {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'panneau', description: 'Open or close the Relaylead panel (missions, tasks, questions)' })
+    await $.command.register({ name: 'pane', description: 'Open or close the Relaylead panel (missions, tasks, questions)' })
     void refresh($)
     $.clock.every(EVERY_MS, () => void refresh($))
 
     return next(e)
   })
 
-  on('command.run', { command: 'panneau' }, async $ => {
+  on('command.run', { command: 'pane' }, async $ => {
     const w = words((await read($, overview))?.language)
     if ((await $.ui.panes()).some((pane: { id: string }) => pane.id === PANE)) {
       await $.ui.close({ id: PANE })
