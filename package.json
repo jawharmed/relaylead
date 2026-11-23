@@ -1,20 +1,28 @@
 {
   "name": "relaylead",
   "version": "0.3.0",
-  "description": "Run a team of Claude Code sessions in the background on a mission, with a watcher, guardrails and questions only before the irreversible (macOS)",
+  "description": "Run a team of Claude Code sessions in the background on macOS: a lead splits the work into tasks, crew members carry them out on their own git branches, a watcher keeps them going, and you answer only before the irreversible",
   "license": "MIT",
   "author": {
     "name": "Lilia Digital"
   },
   "keywords": [
     "claude-code",
+    "claude",
+    "anthropic",
     "ai-agents",
-    "agents",
-    "automation",
+    "background-agents",
+    "multi-agent",
+    "agent-orchestration",
+    "orchestration",
+    "coding-agent",
     "cli",
+    "git-worktree",
     "github-issues",
     "pull-request",
-    "macos"
+    "automation",
+    "macos",
+    "launchd"
   ],
   "repository": {
     "type": "git",
@@ -37,7 +45,10 @@
     "plugin",
     "LICENSE",
     "README.md",
-    "docs/guide.md"
+    "README.fr.md",
+    "CHANGELOG.md",
+    "docs/*.md",
+    "docs/fr/*.md"
   ],
   "engines": {
     "node": ">=18"

@@ -1,74 +1,157 @@
-# Relaylead
+<p align="right"><strong>English</strong> · <a href="README.fr.md">Français</a></p>
 
-Relaylead runs a team of Claude Code sessions in the background on a mission: a lead splits the work, crew members do it, and you hear from them only when something cannot be undone.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/jawharmed/relaylead/main/docs/assets/banner-dark.svg">
+  <img alt="Relaylead: a team of Claude Code sessions, working in the background on your Mac" src="https://raw.githubusercontent.com/jawharmed/relaylead/main/docs/assets/banner-light.svg" width="100%">
+</picture>
 
-> **macOS only for now.** The scheduler (`relaylead install`) uses launchd, and the project is tested on macOS alone.
+<p>
+  <a href="https://www.npmjs.com/package/relaylead"><img alt="npm version" src="https://img.shields.io/npm/v/relaylead"></a>
+  <a href="https://github.com/jawharmed/relaylead/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/jawharmed/relaylead/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
+  <img alt="Node.js 18 or newer" src="https://img.shields.io/badge/node-%3E%3D18-339933">
+  <img alt="macOS only" src="https://img.shields.io/badge/platform-macOS-lightgrey">
+</p>
 
-## Why
+**Relaylead is an open-source command-line tool and Claude Code plugin for macOS that runs a team of Claude Code sessions in the background on a mission.** A lead session splits the work into tasks, crew sessions carry them out, each on its own git branch, and a watcher with no AI restarts or wakes whatever stops. You are asked a question only before something that cannot be undone, and nothing reaches your branch until you merge it.
 
-- **Without Relaylead**, you watch your sessions by hand: you restart the one that died, nudge the one that stalled, and review each result as it lands.
-- **With Relaylead**, a team moves on its own. A lead hands out the tasks, a developer session works on each one on its own branch, and a watcher (no AI) restarts or wakes what stops. The lead asks you a question only before something irreversible, such as a failed delivery or a task that must be confirmed first.
+## Why Relaylead
+
+Running several Claude Code sessions by hand means babysitting them: you restart the one that died, nudge the one that stalled, and keep track of who does what.
+
+With Relaylead you write the tasks (or let the console write them with you), launch the mission, and go do something else:
+
+- **A lead plans and delivers.** It starts one crew member per task, retries a failure, merges each finished task into the mission's own integration branch, and tells you when the mission is done.
+- **Crew members work apart.** Each one has its own git worktree and branch, so they never step on each other or on your checkout.
+- **A watcher keeps it moving.** A small loop with no AI, kept alive by launchd, restarts a lead that stopped, wakes one that has news waiting, and hands over to a fresh lead when the context fills up.
+- **You decide what cannot be undone.** A failed delivery, a task marked "ask first", a risky command: the lead asks, with numbered options, and waits. You get a Mac notification.
+- **Usage limits are respected.** Relaylead reads your 5-hour and 7-day Claude usage and pauses a mission before it eats the rest of your week.
 
 ## Quick start
 
+You need a Mac, Node.js 18 or newer, `git`, and Claude Code signed in. [Requirements](#requirements) has the details.
+
+1. **Install Relaylead.**
+
+   ```sh
+   npm install -g relaylead
+   relaylead install        # the background watcher and the Claude Code plugin
+   ```
+
+2. **Open Claude Code in your project and trust the folder.**
+
+   ```sh
+   cd ~/code/my-project     # the root of a git repository
+   claude
+   ```
+
+   Claude Code asks whether you trust the folder. Choose **Yes, I trust this folder**. The default answer, *No, exit*, refuses, and missions cannot start in a folder Claude Code does not trust.
+
+3. **Type `/relaylead` and say what you want.** For example: `/relaylead add a health check endpoint and a LICENSE file`. The conversation becomes the console: it sets the project up the first time, writes one task file per piece of work with you, commits them, and launches the mission.
+
+4. **Answer the questions, then merge.** Each question the lead asks shows up in the conversation as it was asked, with the mission's name. When the mission is done, the console asks whether to merge the work into your branch, and merges only on your yes.
+
+Prefer the terminal? The same mission without Claude Code open:
+
 ```sh
-npm install -g relaylead     # the relaylead command
-relaylead install            # launchd watcher and the Claude Code plugin
+relaylead init                                   # once per machine, then once per project
+mkdir -p tasks && $EDITOR tasks/health.md        # one Markdown file per task
+git add tasks && git commit -m "Add tasks"       # crew members work from commits
+relaylead launch --request "Carry out the tasks" # prints the mission's name
+relaylead brief                                  # questions and progress, no AI involved
+relaylead merge my-project                       # once the mission is done
 ```
 
-Then open Claude Code in your project and type `/relaylead` (or say "use relaylead to ..."). The conversation becomes the console: it sets the project up if needed, writes the mission with you, launches it, shows each question the lead asks as it comes (with the mission's name), sends your answers, and passes on what you tell the lead ("tell the lead of X to ..."). A new conversation starts by listing the open questions and the missions still running. Several missions can run at once.
+[Getting started](docs/getting-started.md) walks through a complete mission, with every command and what it prints.
 
-Without Claude Code open, the command line does the same:
+## See it work
 
-```sh
-relaylead init               # machine settings, then this project's .relaylead.json
-relaylead launch --request "Carry out the tasks"
-relaylead list               # follow the missions
+`relaylead dashboard` serves a local page that refreshes on its own. Here, two missions run at once; one waits for an answer:
+
+<img alt="The Relaylead dashboard: two missions with their tasks, a question with its options, and the 5-hour and 7-day usage" src="https://raw.githubusercontent.com/jawharmed/relaylead/main/docs/assets/dashboard.png" width="100%">
+
+The same state is in the Claude Code status line (`relaylead · 2 missions · ❓1 · quota 5 h 41 %`), in a panel next to the conversation (`/pane`), and in the terminal:
+
+```text
+$ relaylead brief
+Nothing new.
+Open questions (1):
+[shop-api] q-openapi: Publish the OpenAPI description at /docs, or keep it internal?
+  Task "openapi" asks first. /docs would be public on the production server.
+  1. Keep it internal (recommended)
+  2. Publish it at /docs
+Missions not over:
+  landing: working · tasks 1/3 delivered (1 running, 1 done) · priority high
+  shop-api: working · tasks 1/3 delivered (1 running)
 ```
 
-As the lead asks questions:
+## What it costs
 
-```sh
-relaylead question list <mission>
-relaylead answer <mission> <question id> <choice>
-relaylead tell <mission> "Use the v2 API"   # tell the lead something
-relaylead show <mission>     # open the lead's session
-```
+Relaylead itself is free. The sessions use your Claude plan or your API key, like any Claude Code session.
 
-See everything at once: a panel and a status line inside Claude Code, or `relaylead dashboard` for a local web page (see the guide, "Displays").
+- **The lead runs on Opus, crew members on Sonnet**, both at medium effort. The watcher uses no model at all.
+- **Measured:** a real mission with two small tasks used about **$0.60 at API list prices**, three quarters of it for the lead (Opus 5.5 and Sonnet 5.5, November 2026). On a subscription, it counts toward your 5-hour and 7-day usage instead, and Relaylead pauses missions before your limits.
+- **Look for free, decide in the console.** `relaylead brief`, the web page and the status line read local files and cost nothing. The `/relaylead` console is a Claude conversation: opening one costs about $0.30 to $0.46 at Opus API prices, most of it Claude Code's own start-up. Use it to write missions and answer questions, not to check progress.
 
-`launch` prints the mission's name. The work lands on the mission's own branch, `relaylead/<mission>/integration`; your own checkout is never changed. Once the mission is done, `relaylead merge <mission>` merges it into your branch (the console asks you first; it is never automatic). On a conflict nothing is left half done: a crew member resolves it, and if it cannot, you are asked. Once merged, Relaylead removes the mission's state by itself.
+Details and the method behind these numbers: [Costs](docs/costs.md).
 
-At most 4 crew members work at a time on the machine (`maxSessions`); past it, tasks wait in a queue, the most urgent mission first: `relaylead priority <mission> high|normal|low`. Several missions can run in the same project at once, each with its own name and its own tasks: `relaylead launch --name backend --tasks tasks/backend`, then `relaylead launch --name frontend --tasks tasks/frontend`.
+## Safety, honestly
 
-By default the tasks are the Markdown files of the `tasks/` folder, one per task, with a small header (`title`, and optionally `depends` and `ask`). They can also be GitHub issues delivered as pull requests: see the guide.
+Sessions run with nobody watching, so Relaylead puts guardrails around them:
+
+- a crew member's file tools write only inside its own worktree, and cannot open SSH keys, cloud credentials, your Relaylead settings or the missions' state;
+- pushes to protected branches (`main`, `master`), forced pushes, commits on protected branches and secret files (`.env` and friends) are refused in every permission mode;
+- irreversible commands (`git reset --hard`, a recursive delete outside the worktree) wait for your answer;
+- crew members get only the commands of their profile, and the work stays on Relaylead's branches until you run `relaylead merge`.
+
+**These guardrails stop the mistakes of an agent acting in good faith. They do not stop an agent that has been hijacked**, for example by instructions hidden in a GitHub issue. A crew member may run `node`, `git` and your test scripts, and any of those can reach past a rule written for Claude Code's own tools. The dashboard's token can be read by any process on your Mac. To work on issues written by strangers, use a macOS account or a machine that holds no secrets.
+
+Read [Safety](docs/safety.md) for the full threat model and what remains possible.
+
+## What Relaylead writes on your machine
+
+| Where | What | In git? |
+| --- | --- | --- |
+| `~/.relaylead/` | Machine settings, the state of each mission, logs, the API key file if you use one. Private to your account. | No, it is outside your project. |
+| `.relaylead.json` | The project's settings, written by `init`. No secret goes in it. | Your choice: commit it to share the settings with your team. |
+| `.relaylead/` | Worktrees of the running tasks, and the project memory (`memory.md`). | No: Relaylead adds it to `.git/info/exclude`. Your `.gitignore` is never touched. |
+| `relaylead/<mission>/…` branches | One branch per task, and `relaylead/<mission>/integration` with the delivered work. | Local branches. Task branches go away once delivered. |
+| `~/Library/LaunchAgents/dev.relaylead.watcher.plist` | The launchd agent of the watcher, added by `relaylead install`. | No. |
+
+Your checkout is never changed by a mission: the work lands on the integration branch, and only `relaylead merge` brings it into your branch.
 
 ## Requirements
 
-- macOS
-- Node.js 18 or newer
-- Claude Code (2.1.325 or newer), signed in. Run `claude` once in your project folder and trust it.
-- `git`
-- `gh` (the GitHub CLI), signed in, only for the GitHub issues source and pull request delivery
+- **macOS.** The watcher relies on launchd, and Relaylead is tested on macOS only.
+- **Node.js 18 or newer** and **`git`**.
+- **Claude Code 2.1.325 or newer**, signed in with a plan that includes Claude Code (Pro, Max, Team or Enterprise), or set up with an Anthropic API key (`relaylead init --api-key-env NAME`).
+- **`gh`**, the GitHub CLI, signed in, only to take tasks from GitHub issues and deliver pull requests.
 
-`relaylead doctor` checks all of this.
-
-## Safety
-
-- **Guardrails.** Sessions run with nobody watching, so some actions are refused whatever the permission mode: pushes to protected branches (`main` and `master` by default), forced pushes, commits on a protected branch, secret files (`.env` and friends) and the mission's own state folder. Crew sessions only get the commands their profile allows.
-- **Questions before the irreversible.** The lead never decides alone on what cannot be undone: a delivery that failed, a task set to ask first, a failed task. It asks you, with options, and waits for your answer.
-- **A project memory, kept short.** Leads read `.relaylead/memoire.md` at the start and compact it (200 lines at most) before finishing; it stays out of git unless you choose otherwise.
-- **Your checkout stays yours.** Work happens in separate worktrees and branches; nothing is merged into your branch until you run `relaylead merge`.
-- **API key never shown.** With `relaylead init --api-key-env NAME`, the key is copied to a file readable by you alone; Relaylead never prints it, and it is not stored in the configuration, a log or a launchd file. The sessions get it through Claude Code's `apiKeyHelper` setting, and `relaylead doctor` checks that Claude Code picks it over your signed-in account.
+`relaylead doctor` checks all of this and says what to fix.
 
 ## Documentation
 
-- [User guide](docs/guide.md): concepts, configuration, every command, troubleshooting, uninstalling.
+| Page | For |
+| --- | --- |
+| [Getting started](docs/getting-started.md) | Your first mission, step by step, with what you will see. |
+| [Guide](docs/guide.md) | The reference: glossary, every command and option, every setting. |
+| [How it works](docs/how-it-works.md) | Diagrams of a mission, the roles, git branches and the console. |
+| [Safety](docs/safety.md) | What the guardrails stop, what they do not, and how to set up safely. |
+| [Costs](docs/costs.md) | Which models run, measured costs, how to spend less. |
+| [FAQ](docs/faq.md) | Common questions and troubleshooting. |
+| [Changelog](CHANGELOG.md) | What changed in each version, and how to update. |
 
-## Develop
+## Uninstall
 
-`npm test` runs the test suite (Node.js 18 or newer, no dependency to install).
+```sh
+relaylead uninstall --purge   # watcher, plugin and ~/.relaylead (refused while a mission is running)
+npm uninstall -g relaylead
+```
 
-## License
+Branches and worktrees in your projects stay. The [guide](docs/guide.md#uninstalling) explains how to remove them too.
 
-MIT
+## Contributing and license
+
+Bug reports and pull requests are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md). Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+
+MIT license, by Lilia Digital.
