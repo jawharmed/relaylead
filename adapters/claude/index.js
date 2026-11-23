@@ -1,4 +1,4 @@
-// Claude adapter: runs each session as a background `claude --bg` session (recipes: docs/spike-results.md).
+// Claude adapter: runs each session as a background `claude --bg` session.
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
@@ -150,7 +150,7 @@ async function findRow(shortId) {
 }
 
 // Read on the raw row: mapState takes an unknown state for working. A prompt swallowed by an
-// option leaves the session "blocked" and "idle" (spike, point 2g).
+// option leaves the session "blocked" and "idle" (observed with Claude Code).
 function hasStarted(row) {
   return ['working', 'done', 'failed'].includes(row.state) || row.status === 'busy';
 }
@@ -276,7 +276,7 @@ async function attach(session) {
   });
 }
 
-// Resuming a session whose process still runs, or with any option, starts a copy (spike): so stop,
+// Resuming a session whose process still runs, or with any option, starts a copy (observed): so stop,
 // wait for the session to end, then resume with nothing but the message, from the session folder.
 async function wake(session, message) {
   checkPrompt(message, 'message');

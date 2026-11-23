@@ -64,7 +64,6 @@ By default the tasks are the Markdown files of the `tasks/` folder, one per task
 ## Documentation
 
 - [User guide](docs/guide.md): concepts, configuration, every command, troubleshooting, uninstalling.
-- [Design](docs/specs/2026-11-14-relaylead-design.md) (in French).
 
 ## Develop
 

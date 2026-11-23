@@ -1,4 +1,4 @@
-// Picks the adapter that runs the agent sessions (contract: docs/plans/2026-11-15-lot-1-squelette.md).
+// Picks the adapter that runs the agent sessions.
 const fake = require('./fake');
 const claude = require('./claude');
 

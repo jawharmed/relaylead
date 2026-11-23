@@ -14,7 +14,7 @@ function hookCommand(packageDir, script) {
   return nodeCommand(path.join(packageDir, 'core', 'hooks', `${script}.js`));
 }
 
-// Same shape as the spike settings (no matcher).
+// Hooks without a matcher.
 function hookEntry(packageDir, script) {
   return [{ hooks: [{ type: 'command', command: hookCommand(packageDir, script) }] }];
 }
