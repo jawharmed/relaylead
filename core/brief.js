@@ -51,7 +51,9 @@ function eventsText(events, lang) {
 }
 
 // One line for a mission not over: its state, its tasks delivered, then what else there is to say.
+// An unreadable one gives its state folder instead.
 function missionLine(mission, lang) {
+  if (mission.unreadable) return `  ${mission.name}: ${mission.state} · ${mission.dir}\n`;
   const counts = {};
   for (const task of mission.tasks) counts[task.state] = (counts[task.state] || 0) + 1;
   let tasks = t('briefTasks', { delivered: counts.delivered || 0, total: mission.tasks.length }, lang);
@@ -80,7 +82,7 @@ function briefText({ problems, events, overview }, lang) {
     mission.questions.map((question) => questionText(mission.name, question, fresh.has(`${mission.name} ${question.id}`), lang)),
   );
   text += questions.length > 0 ? t('briefQuestions', { n: questions.length }, lang) + questions.join('') : t('briefNoQuestion', {}, lang);
-  const running = overview.missions.filter((mission) => mission.active);
+  const running = overview.missions.filter((mission) => mission.active || mission.unreadable);
   text += running.length > 0 ? t('briefMissions', {}, lang) + running.map((mission) => missionLine(mission, lang)).join('') : t('briefNoMission', {}, lang);
   const toMerge = overview.missions.filter((mission) => mission.toMerge);
   if (toMerge.length > 0) text += t('briefToMerge', {}, lang) + toMerge.map((mission) => t('briefToMergeLine', { mission: mission.name }, lang)).join('');

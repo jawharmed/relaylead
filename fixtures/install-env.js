@@ -9,8 +9,16 @@ const BIN = path.join(__dirname, '..', 'bin', 'relaylead.js');
 
 function installEnv(t, extra = {}) {
   const claudeState = tmpDir('relaylead-fake-claude-');
+  // The PATH the plist freezes holds a `claude`, as on a real machine (doctor checks it). An empty
+  // file, never run: RELAYLEAD_CLAUDE names the fake claude.
+  const pathDir = tmpDir('relaylead-path-');
+  fs.writeFileSync(path.join(pathDir, 'claude'), '');
+  const base = userEnv();
+  // On Windows the variable may be spelled Path: that spelling is kept.
+  const pathKey = Object.keys(base).find((key) => key.toUpperCase() === 'PATH') || 'PATH';
   const env = {
-    ...userEnv(),
+    ...base,
+    [pathKey]: pathDir + path.delimiter + (base[pathKey] || ''),
     // init proposes the language from LANG: fixed, so a test does not depend on the machine's.
     LANG: 'en_US.UTF-8',
     RELAYLEAD_HOME: tmpDir('relaylead-home-'),

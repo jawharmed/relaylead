@@ -9,6 +9,7 @@ const { writeJson } = require('../core/store');
 const { sendMail, readMail } = require('../core/mailbox');
 const { readReadings } = require('../core/readings');
 const { DEFAULTS } = require('../core/config');
+const layout = require('../core/layout');
 const { tmpDir } = require('../fixtures/helpers');
 const { gitRepo } = require('../fixtures/git');
 
@@ -111,6 +112,49 @@ test('pretool hook refuses the mission state folder', () => {
   const file = path.join(home, 'missions', 'demo', 'mission.json');
   const out = runHook(PRETOOL, { tool_name: 'Write', tool_input: { file_path: file, content: '{}' }, cwd: tmpDir() }, env);
   assert.match(JSON.parse(out).hookSpecificOutput.permissionDecisionReason, /access to the mission state folder/);
+});
+
+// A crew member's session of mission demo, whose project is `project` and delivery `delivery`.
+function crewHome(project, delivery) {
+  const home = tmpDir('relaylead home-');
+  writeJson(path.join(home, 'missions', 'demo', 'mission.json'), {
+    name: 'demo',
+    format: layout.FORMAT,
+    dir: project,
+    config: { ...structuredClone(DEFAULTS), delivery: { type: delivery } },
+  });
+  return home;
+}
+
+test('pretool hook keeps the writes of a crew member in its working folder', () => {
+  const project = tmpDir('relaylead-project-');
+  const outside = path.join(tmpDir('relaylead-outside-'), 'proof.txt');
+  const mission = { name: 'demo', format: layout.FORMAT, dir: project };
+  for (const [delivery, workDir] of [
+    ['local-merge', layout.taskDir(mission, 'note')],
+    ['files', layout.outDir(mission, 'note')],
+  ]) {
+    const home = crewHome(project, delivery);
+    const env = { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'demo', RELAYLEAD_TASK: 'note' };
+    const write = (file_path) => runHook(PRETOOL, { tool_name: 'Write', tool_input: { file_path, content: 'x' }, cwd: workDir }, env);
+    assert.strictEqual(write(path.join(workDir, 'note.md')), '');
+    const reason = JSON.parse(write(outside)).hookSpecificOutput.permissionDecisionReason;
+    assert.strictEqual(
+      reason,
+      `Blocked by Relaylead: write outside the working folder ${workDir}. Continue with the rest of the task, one command per call. ` +
+        'Do not look for a way around it: finish what you can in your folder and say in your summary what you could not write.',
+    );
+    assert.match(journal(home), new RegExp(`Write write outside the working folder`));
+  }
+});
+
+test('pretool hook lets a lead write nowhere and read no key', () => {
+  const project = tmpDir('relaylead-project-');
+  const home = crewHome(project, 'local-merge');
+  const env = { RELAYLEAD_HOME: home, RELAYLEAD_MISSION: 'demo' };
+  const decide = (tool_name, tool_input) => JSON.parse(runHook(PRETOOL, { tool_name, tool_input, cwd: project }, env)).hookSpecificOutput;
+  assert.match(decide('Write', { file_path: path.join(project, 'a.txt') }).permissionDecisionReason, /write by a session that has no working folder/);
+  assert.match(decide('Read', { file_path: path.join(home, 'config.json') }).permissionDecisionReason, /read of sensitive location .*config\.json\. .*say in your summary what you could not read\.$/);
 });
 
 function questionFiles(home) {

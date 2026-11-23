@@ -16,7 +16,7 @@ function watchLog(mission, action, detail) {
   try {
     const text = `${action}${detail ? ` ${detail}` : ''}`.replace(/\s+/g, ' ').trim();
     const line = `${new Date().toISOString()} ${mission || '-'} ${text}\n`;
-    fs.mkdirSync(home(), { recursive: true });
+    fs.mkdirSync(home(), { recursive: true, mode: 0o700 }); // for the user alone, as core/store.js makes it
     withWindowsRetry(() => fs.appendFileSync(watchLogFile(), line));
   } catch {
     // ignored on purpose

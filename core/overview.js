@@ -40,8 +40,15 @@ function attempt(action, fallback) {
   }
 }
 
+// A mission whose files cannot be read (core/missions.js, listMissions): its name, the state
+// 'unreadable' and its state folder as `dir`, nothing else.
+function unreadableView({ name, dir }) {
+  return { name, dir, priority: 'normal', state: 'unreadable', unreadable: true, active: false, pausedUntil: null, queued: 0, tasks: [], questions: [] };
+}
+
 function missionView(listed) {
   const { name } = listed;
+  if (listed.unreadable) return unreadableView(listed);
   const mission = attempt(() => readMission(name), null);
   if (!mission) return null;
   const finished = FINISHED.test(listed.state);

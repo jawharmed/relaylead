@@ -152,3 +152,39 @@ test('task list --short prints one line per task', async (t) => {
     'a  failed#2  First task — no tests\nb  todo#0  Second task\n',
   );
 });
+
+test('an unreadable mission is shown as such in list, brief and overview, and hides no other (lot H1)', async (t) => {
+  const dir = setupProject(t, 'good');
+  writeMission('good', dir);
+  writeMission('broken-state', dir);
+  writeMission('broken-mission', dir);
+  setState('good', 'working');
+  fs.writeFileSync(path.join(missionDir('broken-state'), 'state.json'), '{ half written');
+  fs.writeFileSync(path.join(missionDir('broken-mission'), 'mission.json'), '');
+  // Valid JSON that is not this folder's mission.
+  fs.mkdirSync(missionDir('empty-mission'), { recursive: true });
+  fs.writeFileSync(path.join(missionDir('empty-mission'), 'mission.json'), '{}');
+  fs.mkdirSync(missionDir('list-mission'), { recursive: true });
+  fs.writeFileSync(path.join(missionDir('list-mission'), 'mission.json'), '[1]');
+  doctorSays(t, []);
+
+  const list = await relaylead(['list']);
+  assert.match(list, /^good {2}working {2}- {2}/m);
+  assert.ok(list.includes(`broken-state  unreadable  -  ${missionDir('broken-state')}\n`), list);
+  assert.ok(list.includes(`broken-mission  unreadable  -  ${missionDir('broken-mission')}\n`), list);
+
+  const brief = await relaylead(['brief']);
+  assert.match(brief, /^ {2}good: working · /m);
+  assert.ok(brief.includes(`  broken-state: unreadable · ${missionDir('broken-state')}\n`), brief);
+
+  const view = JSON.parse(await relaylead(['overview', '--json']));
+  assert.deepStrictEqual(view.missions.map((mission) => [mission.name, mission.state]), [
+    ['broken-mission', 'unreadable'],
+    ['broken-state', 'unreadable'],
+    ['empty-mission', 'unreadable'],
+    ['good', 'working'],
+    ['list-mission', 'unreadable'],
+  ]);
+  assert.strictEqual(view.missions[0].dir, missionDir('broken-mission'));
+  assert.strictEqual(view.activeMissions, 1);
+});
