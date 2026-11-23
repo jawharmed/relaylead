@@ -11,6 +11,8 @@ function installEnv(t, extra = {}) {
   const claudeState = tmpDir('relaylead-fake-claude-');
   const env = {
     ...userEnv(),
+    // init proposes the language from LANG: fixed, so a test does not depend on the machine's.
+    LANG: 'en_US.UTF-8',
     RELAYLEAD_HOME: tmpDir('relaylead-home-'),
     RELAYLEAD_LAUNCHD_DIR: tmpDir('relaylead-agents-'),
     RELAYLEAD_LAUNCHCTL: path.join(__dirname, 'launchctl', 'fake-launchctl.js'),
