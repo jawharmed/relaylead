@@ -38,7 +38,7 @@ function project(t) {
   t.after(async () => {
     for (const session of listSessions('demo')) await fake.stop(session);
   });
-  const dir = gitRepo({ 'README.md': 'A test project.\n', 'greet.txt': 'hello\n', 'tasks/.keep': '' });
+  const dir = gitRepo({ 'README.md': 'A test project.\n', 'greet.txt': 'hello\n', 'tasks/placeholder.md': '---\ntitle: Placeholder\n---\nNothing to do.\n' });
   writeMission('demo', dir);
   const mission = readMission('demo');
   localMerge.prepareMission(mission);

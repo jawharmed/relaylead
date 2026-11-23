@@ -113,6 +113,30 @@ function sourceTakenBy(realDir, source) {
   return allMissions().find((mission) => mission.dir === realDir && sourceText(mission.config.source) === text && isActive(mission)) || null;
 }
 
+// Whether the mission is done but its work was not brought into the user's branch: `relaylead merge`
+// is the next step. A delivery that has nothing to merge (files) never waits for it; a merge being
+// resolved by the crew or asked about is not waiting for the user to start it.
+function awaitsMerge(mission) {
+  if (!getDelivery(mission.config.delivery.type).mergeIntoTarget) return false;
+  const record = readStateRecord(mission.name);
+  if (record.state !== 'done' || record.stopping) return false;
+  let merge = null;
+  try {
+    merge = readJson(missionFile(mission.name, 'merge.json'), null);
+  } catch {
+    // being written: the merge is on its way
+    return false;
+  }
+  return !merge || merge.state === 'paused';
+}
+
+// A mission of the project `realDir`, done and not merged yet, that took its tasks from the same source,
+// or null: launching again would do the same tasks twice.
+function deliveredSourceHolder(realDir, source) {
+  const text = sourceText(source);
+  return allMissions().find((mission) => mission.dir === realDir && sourceText(mission.config.source) === text && awaitsMerge(mission)) || null;
+}
+
 // The task folder given with `relaylead launch --tasks`, relative to the project, with / separators.
 // A folder outside the project is refused: the tasks must be committed in the repository.
 function tasksFolder(realDir, folder) {
@@ -139,7 +163,7 @@ async function setPriority(name, priority) {
 
 // `tasks`: the task folder of this mission (`--tasks`), in place of source.dir. `onWarning(err)` gets
 // each warning of the delivery's preparation (a coded error that does not stop the launch).
-async function createMission({ name, dir, request, team, priority, agent, tasks, params, onWarning = () => {} }) {
+async function createMission({ name, dir, request, team, priority, agent, tasks, params, force = false, onWarning = () => {} }) {
   // The native version also gives the real letter case (macOS, Windows): CaseProj and caseproj are one folder.
   const realDir = fs.realpathSync.native(dir);
   const missionName = slug(name || path.basename(realDir));
@@ -171,13 +195,17 @@ async function createMission({ name, dir, request, team, priority, agent, tasks,
   }
   const sharing = sourceTakenBy(realDir, config.source);
   if (sharing) throw codedError('source-taken', { mission: sharing.name, source: sourceText(config.source) });
+  const delivered = force ? null : deliveredSourceHolder(realDir, config.source);
+  if (delivered) throw codedError('source-delivered', { mission: delivered.name, source: sourceText(config.source) });
   reserveName(missionName);
+  // What prepareMission creates (the integration branch and its worktree): a launch that fails removes it.
+  const created = {};
   try {
     // Under the mission lock until mission.json is written: a removal of the folder waits for it.
     await withMissionLock(missionName, 'launch', async () => {
       // Before the lead starts: the integration worktree is where the lead reads the tasks.
       const warnings = await withRepoLock(realDir, 'launch', () => {
-        const prepared = delivery.prepareMission(mission);
+        const prepared = delivery.prepareMission(mission, created);
         // Where `relaylead merge` brings the work back, and the commit the integration branch starts from.
         if (delivery.launchInfo) Object.assign(mission, delivery.launchInfo(mission));
         return prepared;
@@ -191,6 +219,13 @@ async function createMission({ name, dir, request, team, priority, agent, tasks,
     // A lead launched, then failed, was stopped by launchLead. Retries: it may still be finishing a
     // write in the folder.
     fs.rmSync(missionDir(missionName), { recursive: true, force: true, maxRetries: 5 });
+    if (delivery.undoPrepare) {
+      try {
+        await withRepoLock(realDir, 'launch', () => delivery.undoPrepare(mission, created));
+      } catch {
+        // what was made stays; the error of the launch is the one to report
+      }
+    }
     throw err;
   }
 }
@@ -845,6 +880,7 @@ module.exports = {
   reapLead,
   markReaperEnded,
   attachLead,
+  awaitsMerge,
   lockFile,
   releaseLock,
 };

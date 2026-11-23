@@ -152,8 +152,9 @@ function excludeRelaylead(dir) {
 // Checks everything before changing anything. Then creates the integration branch from the user's
 // current branch, with its worktree; or, when a former mission made them, brings the user's commits
 // made since into the integration branch, so this mission sees its new tasks.
-// Returns the warnings for the user (oldIntegrationWarnings).
-function prepareMission(mission) {
+// Returns the warnings for the user (oldIntegrationWarnings). `created` gets branch and worktree set to
+// true as they are made, so a launch that fails afterwards can remove them (undoPrepare).
+function prepareMission(mission, created = {}) {
   const { branch } = mission.config.delivery;
   if (mission.config.guard.protectedBranches.includes(branch)) {
     throw codedError('protected-branch', { branch });
@@ -164,6 +165,7 @@ function prepareMission(mission) {
   // The crew members work from commits: uncommitted tasks would not reach them. Tasks of another
   // source (GitHub issues) are not files in the repository: there is nothing to check.
   const tasksInRepo = mission.config.source.type === 'tasks-dir';
+  if (tasksInRepo) checkTasksFolder(mission);
   if (tasksInRepo && git(mission.dir, ['status', '--porcelain', '--', sourceDir(mission)]) !== '') {
     throw codedError('tasks-not-committed', { dir: sourceDir(mission), branch });
   }
@@ -189,8 +191,14 @@ function prepareMission(mission) {
 
   excludeRelaylead(mission.dir);
   // `git branch` does not check the branch out: the user's checkout stays as it is.
-  if (isNew) git(mission.dir, ['branch', branch]);
-  if (!fs.existsSync(integration)) git(mission.dir, ['worktree', 'add', integration, branch]);
+  if (isNew) {
+    git(mission.dir, ['branch', branch]);
+    created.branch = true;
+  }
+  if (!fs.existsSync(integration)) {
+    git(mission.dir, ['worktree', 'add', integration, branch]);
+    created.worktree = true;
+  }
   if (!isNew) {
     updateIntegration(mission);
     if (tasksInRepo && !refHas(mission.dir, branch, sourceDir(mission))) {
@@ -198,6 +206,30 @@ function prepareMission(mission) {
     }
   }
   return oldIntegrationWarnings(mission);
+}
+
+// The task folder must exist and hold at least one .md file: three different messages, so a beginner
+// knows what to create. Uncommitted changes are checked after.
+function checkTasksFolder(mission) {
+  const dir = sourceDir(mission);
+  const folder = path.join(mission.dir, dir);
+  if (!fs.existsSync(folder)) throw codedError('tasks-folder-missing', { dir });
+  if (!fs.readdirSync(folder).some((name) => name.endsWith('.md'))) throw codedError('tasks-folder-empty', { dir });
+}
+
+// Removes what a launch that failed made: the integration worktree and branch that prepareMission
+// created (`created`). What existed before is left alone. Never throws more than git does.
+function undoPrepare(mission, created) {
+  const branch = mission.config.delivery.branch;
+  const integration = integrationDir(mission);
+  if (created.worktree && fs.existsSync(integration)) removeWorktree(mission, integration);
+  git(mission.dir, ['worktree', 'prune']);
+  if (created.branch && branchExists(mission.dir, branch)) git(mission.dir, ['branch', '-D', branch]);
+  try {
+    fs.rmdirSync(layout.worktreesDir(mission));
+  } catch {
+    // not empty, or already gone
+  }
 }
 
 // The integration branch of relaylead 0.1, shared by the missions of then. Since 0.2, a mission starts
@@ -727,6 +759,7 @@ module.exports = {
   mergeIntoTarget,
   integrationState,
   prepareMission,
+  undoPrepare,
   prepareTask,
   checkDone,
   deliver,
