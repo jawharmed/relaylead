@@ -24,22 +24,59 @@ function claudePlugin(args) {
   }
 }
 
-function marketplaceKnown() {
-  return JSON.parse(claudePlugin(['marketplace', 'list', '--json'])).some((market) => market.name === MARKETPLACE);
+// The marketplace as `claude plugin marketplace list` shows it, or undefined.
+function findMarketplace() {
+  return JSON.parse(claudePlugin(['marketplace', 'list', '--json'])).find((market) => market.name === MARKETPLACE);
 }
 
-// Whether the plugin is installed. Throws when `claude plugin list` fails.
+function marketplaceKnown() {
+  return Boolean(findMarketplace());
+}
+
+// The plugin as `claude plugin list` shows it ({ id, version, ... }), or undefined. Throws when it fails.
+function findPlugin() {
+  return JSON.parse(claudePlugin(['list', '--json'])).find((plugin) => plugin.id === PLUGIN_ID);
+}
+
 function pluginInstalled() {
-  return JSON.parse(claudePlugin(['list', '--json'])).some((plugin) => plugin.id === PLUGIN_ID);
+  return Boolean(findPlugin());
+}
+
+// The version this package ships, from its plugin.json.
+function packageVersion() {
+  return JSON.parse(fs.readFileSync(path.join(PLUGIN_DIR, '.claude-plugin', 'plugin.json'), 'utf8')).version;
+}
+
+// A directory marketplace that points at another folder than this package's (the package moved, for
+// instance a new global install): Claude Code would go on reading the old folder.
+function marketplaceMoved(market) {
+  return market.source === 'directory' && typeof market.path === 'string' && path.resolve(market.path) !== path.resolve(PLUGIN_DIR);
 }
 
 // Each step is skipped when already done, and reported to `done(step)` once it has worked, so a failure
-// halfway leaves a record of what was added.
+// halfway leaves a record of what was added. A plugin already installed in another version than the
+// package's (or from a marketplace that moved) is updated with `claude plugin update`, never removed.
+// Returns { updated, from, to }: `updated` is true when an older plugin was brought up to date.
 function installPlugin(done) {
-  if (!marketplaceKnown()) claudePlugin(['marketplace', 'add', PLUGIN_DIR]);
+  let market = findMarketplace();
+  if (market && marketplaceMoved(market)) {
+    // The source of a marketplace cannot be changed: it is added again, from this package's folder.
+    claudePlugin(['marketplace', 'remove', MARKETPLACE]);
+    market = undefined;
+  }
+  if (!market) claudePlugin(['marketplace', 'add', PLUGIN_DIR]);
   done('marketplace');
-  if (!pluginInstalled()) claudePlugin(['install', PLUGIN_ID]);
+  const installed = findPlugin();
+  const to = packageVersion();
+  let updated = false;
+  if (!installed) claudePlugin(['install', PLUGIN_ID]);
+  else if (installed.version !== to) {
+    claudePlugin(['marketplace', 'update', MARKETPLACE]);
+    claudePlugin(['update', PLUGIN_ID]);
+    updated = true;
+  }
   done('plugin');
+  return { updated, from: installed && installed.version, to };
 }
 
 // Each step on its own: one that fails does not stop the other. Returns the failures

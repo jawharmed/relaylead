@@ -43,11 +43,12 @@ function install(say) {
   say('scheduler-installed', { file });
 
   try {
-    installPlugin((step) => {
+    const result = installPlugin((step) => {
       record.plugin = { ...record.plugin, ...(step === 'marketplace' ? { marketplace: MARKETPLACE } : { id: PLUGIN_ID }) };
       save();
     });
-    say('plugin-installed', { id: PLUGIN_ID });
+    if (result.updated) say('plugin-updated', { id: PLUGIN_ID, from: result.from, to: result.to });
+    else say('plugin-installed', { id: PLUGIN_ID });
   } catch (err) {
     if (err.code !== 'claude-not-found') throw err;
     say('plugin-skipped', {});

@@ -47,6 +47,21 @@ test('install twice leaves one plist; uninstall --purge deletes the home', async
   assert.deepStrictEqual(fs.readdirSync(cache), ['other-market'], 'only the plugin cache of relaylead-local goes');
 });
 
+test('install updates a plugin left in an older version', async (t) => {
+  const env = installEnv(t);
+  await run(env, 'install');
+  const file = path.join(env.FAKE_CLAUDE_STATE, 'plugins.json');
+  const state = JSON.parse(fs.readFileSync(file, 'utf8'));
+  state.versions = { 'relaylead@relaylead-local': '0.0.1' };
+  fs.writeFileSync(file, JSON.stringify(state));
+  const updated = await run(env, 'install');
+  assert.strictEqual(updated.code, 0, updated.err);
+  assert.ok(updated.out.includes(msg('plugin-updated', { id: 'relaylead@relaylead-local', from: '0.0.1', to: require('../package.json').version })), updated.out);
+  assert.match(msg('plugin-updated', { id: 'x', from: 'a', to: 'b' }), /restart Claude Code/);
+  const again = await run(env, 'install');
+  assert.match(again.out, /plugin installed/);
+});
+
 test('uninstall without install.json does not fail', async (t) => {
   const env = installEnv(t);
   const result = await run(env, 'uninstall');
@@ -152,7 +167,7 @@ test('a plugin install that fails halfway is noted, and uninstall removes the ma
   env.FAKE_CLAUDE_SCENARIO = 'normal';
   const again = await run(env, 'install');
   assert.strictEqual(again.code, 0, again.err + again.out);
-  assert.deepStrictEqual(fakePlugins(env), { marketplaces: ['relaylead-local'], plugins: ['relaylead@relaylead-local'] });
+  assert.deepStrictEqual(outsideSnapshot(env).plugins, { marketplaces: ['relaylead-local'], plugins: ['relaylead@relaylead-local'] });
 
   // And a half install is undone by uninstall.
   await run(env, 'uninstall');
