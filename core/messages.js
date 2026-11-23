@@ -757,6 +757,32 @@ function t(key, vars, lang) {
   return template.replace(/\{(\w+)\}/g, (_, name) => String(vars && vars[name]));
 }
 
+// The words of the states and priorities, shown in French; they are still written and typed in English.
+const WORDS_FR = {
+  starting: 'démarrage',
+  working: 'en cours',
+  waiting: 'en attente',
+  handover: 'relève',
+  done: 'terminée',
+  stopped: 'arrêtée',
+  todo: 'à faire',
+  running: 'en cours',
+  queued: 'en file',
+  delivered: 'livrée',
+  failed: 'en échec',
+  blocked: 'bloquée',
+  high: 'haute',
+  normal: 'normale',
+  low: 'basse',
+};
+
+// A state or a priority as the user reads it. In a state with a note ("done, stopping", "stopped: why"),
+// only the first word is translated.
+function shownWord(text, lang) {
+  if (lang !== 'fr') return text;
+  return String(text).replace(/^[a-z]+/, (word) => WORDS_FR[word] || word);
+}
+
 // An expected error: its text comes from the messages, so the CLI can print it in the user's language.
 function codedError(code, vars) {
   const err = new Error(t(code, vars));
@@ -765,4 +791,4 @@ function codedError(code, vars) {
   return err;
 }
 
-module.exports = { t, codedError };
+module.exports = { t, codedError, shownWord };

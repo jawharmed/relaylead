@@ -123,7 +123,7 @@ test('the help is in French when the language is fr', async () => {
 
 test('every English message has its French text', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'core', 'messages.js'), 'utf8');
-  const { messages } = new Function('require', 'module', source.replace('module.exports = { t, codedError };', 'return { messages };') + '')(require, { exports: {} });
+  const { messages } = new Function('require', 'module', source.replace('module.exports = { t, codedError, shownWord };', 'return { messages };') + '')(require, { exports: {} });
   const missing = Object.keys(messages.en).filter((key) => !(key in messages.fr));
   assert.deepStrictEqual(missing, []);
 });

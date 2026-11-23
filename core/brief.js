@@ -6,7 +6,7 @@ const doctorCheck = require('./doctor');
 const { waitForEvents } = require('./console-wait');
 const { buildOverview } = require('./overview');
 const { localTime } = require('./usage-pause');
-const { t } = require('./messages');
+const { t, shownWord } = require('./messages');
 const { readMission, awaitsMerge } = require('./missions');
 
 // A question as it is, with its mission and id: text, context, then the options numbered from 1,
@@ -44,7 +44,7 @@ function eventText(event, lang) {
   // A done mission says what to run next: its work is still to be merged.
   // Only when the mission can be merged now (not a delivery of files, not still stopping, not removed).
   if (/^done/.test(event.state) && mergeable(event.mission)) return t('eventMissionDone', { mission: event.mission }, lang);
-  return t('eventMission', { mission: event.mission, state: event.state }, lang);
+  return t('eventMission', { mission: event.mission, state: shownWord(event.state, lang) }, lang);
 }
 
 // The output of `wait --all`: the events, the questions in full.
@@ -64,11 +64,11 @@ function missionLine(mission, lang) {
   let tasks = t('briefTasks', { delivered: counts.delivered || 0, total: mission.tasks.length }, lang);
   // Queued tasks are said once, below, as waiting for a place.
   const others = Object.keys(counts).filter((state) => !['todo', 'delivered', 'queued'].includes(state));
-  if (others.length > 0) tasks += ` (${others.map((state) => `${counts[state]} ${state}`).join(', ')})`;
-  const parts = [mission.state, tasks];
+  if (others.length > 0) tasks += ` (${others.map((state) => `${counts[state]} ${shownWord(state, lang)}`).join(', ')})`;
+  const parts = [shownWord(mission.state, lang), tasks];
   if (mission.queued > 0) parts.push(t('briefQueued', { n: mission.queued }, lang));
   if (mission.pausedUntil) parts.push(t('briefPaused', { at: localTime(mission.pausedUntil) }, lang));
-  if (mission.priority !== 'normal') parts.push(t('briefPriority', { priority: mission.priority }, lang));
+  if (mission.priority !== 'normal') parts.push(t('briefPriority', { priority: shownWord(mission.priority, lang) }, lang));
   return `  ${mission.name}: ${parts.join(' · ')}\n`;
 }
 
