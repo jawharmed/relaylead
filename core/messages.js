@@ -266,7 +266,9 @@ const messages = {
     purged: 'deleted {dir}\n',
     'purge-refused': 'refusing to delete {dir}: it does not look like a relaylead folder (no install.json nor install marker, and not named .relaylead)',
     'purge-active-missions':
-      'refusing to delete {dir}: these missions are not over: {missions}; stop them (relaylead stop <mission>), or run relaylead uninstall --purge --force to stop their sessions and delete everything',
+      'refusing to delete {dir}: these missions may still have sessions running: {missions}; stop them (relaylead stop <mission>), or run relaylead uninstall --purge --force to stop their sessions and delete everything',
+    'purge-stop-failed':
+      'could not stop the sessions of: {missions}; nothing was deleted from {dir}, and the scheduler and plugin are still installed; stop those sessions, then run relaylead uninstall --purge again',
     'node-too-old': 'Node.js {min} or later is needed, found {found}',
     'agent-missing': 'the agent "{agent}" was not found; install Claude Code, then run relaylead init again',
     'api-key-stored': 'API key stored in {file}, readable by you only\n',
@@ -624,7 +626,9 @@ const messages = {
     'nothing-installed': 'rien à désinstaller : relaylead install n\'a pas été lancé\n',
     purged: '{dir} supprimé\n',
     'purge-active-missions':
-      'refus de supprimer {dir} : ces missions ne sont pas finies : {missions} ; arrêtez-les (relaylead stop <mission>), ou lancez relaylead uninstall --purge --force pour arrêter leurs sessions et tout supprimer',
+      'refus de supprimer {dir} : ces missions ont peut-être encore des sessions : {missions} ; arrêtez-les (relaylead stop <mission>), ou lancez relaylead uninstall --purge --force pour arrêter leurs sessions et tout supprimer',
+    'purge-stop-failed':
+      'impossible d\'arrêter les sessions de : {missions} ; rien n\'a été supprimé dans {dir}, et le planificateur et le plugin restent installés ; arrêtez ces sessions, puis relancez relaylead uninstall --purge',
     'purge-refused': 'refus de supprimer {dir} : ce n\'est pas un dossier relaylead (ni install.json ni marqueur d\'installation, et il ne s\'appelle pas .relaylead)',
     'node-too-old': 'Node.js {min} ou plus récent est nécessaire, version trouvée : {found}',
     'agent-missing': 'l\'agent « {agent} » est introuvable ; installez Claude Code, puis relancez relaylead init',
