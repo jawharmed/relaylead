@@ -543,7 +543,7 @@ function isStalePassLock() {
 // created again for a moment (EPERM): it counts as still held.
 function tryCreatePassLock(lock) {
   try {
-    fs.mkdirSync(home(), { recursive: true });
+    fs.mkdirSync(home(), { recursive: true, mode: 0o700 }); // for the user alone, as core/store.js makes it
     fs.writeFileSync(passLockFile(), JSON.stringify(lock), { flag: 'wx' });
     return true;
   } catch (err) {

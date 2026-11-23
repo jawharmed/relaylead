@@ -161,6 +161,11 @@ test('an unreadable mission is shown as such in list, brief and overview, and hi
   setState('good', 'working');
   fs.writeFileSync(path.join(missionDir('broken-state'), 'state.json'), '{ half written');
   fs.writeFileSync(path.join(missionDir('broken-mission'), 'mission.json'), '');
+  // Valid JSON that is not this folder's mission.
+  fs.mkdirSync(missionDir('empty-mission'), { recursive: true });
+  fs.writeFileSync(path.join(missionDir('empty-mission'), 'mission.json'), '{}');
+  fs.mkdirSync(missionDir('list-mission'), { recursive: true });
+  fs.writeFileSync(path.join(missionDir('list-mission'), 'mission.json'), '[1]');
   doctorSays(t, []);
 
   const list = await relaylead(['list']);
@@ -176,7 +181,9 @@ test('an unreadable mission is shown as such in list, brief and overview, and hi
   assert.deepStrictEqual(view.missions.map((mission) => [mission.name, mission.state]), [
     ['broken-mission', 'unreadable'],
     ['broken-state', 'unreadable'],
+    ['empty-mission', 'unreadable'],
     ['good', 'working'],
+    ['list-mission', 'unreadable'],
   ]);
   assert.strictEqual(view.missions[0].dir, missionDir('broken-mission'));
   assert.strictEqual(view.activeMissions, 1);

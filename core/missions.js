@@ -707,6 +707,11 @@ function allMissions(onUnreadable = () => {}) {
       onUnreadable(entry.name);
       continue; // unreadable: it does not hide the other missions
     }
+    // Valid JSON, but not the mission of this folder (`{}`, a list, another name): unreadable too.
+    if (mission !== null && (typeof mission !== 'object' || mission.name !== entry.name)) {
+      onUnreadable(entry.name);
+      continue;
+    }
     if (mission) missions.push(mission); // none: still being created
   }
   return missions;
