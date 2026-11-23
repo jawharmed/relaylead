@@ -139,14 +139,13 @@ async function doctor(dir, lang) {
 
 // What the plist froze at install must still be there: the Node that runs the watcher and the
 // relaylead script (a Node updated by nvm, a package moved), and claude on its PATH, which the
-// watcher uses to wake the leads. RELAYLEAD_CLAUDE (a claude chosen by hand) skips the last check.
+// watcher uses to wake the leads (the plist passes no RELAYLEAD_CLAUDE).
 function checkPlist(add, say) {
   const frozen = readPlist();
   if (!frozen) return;
   for (const file of [frozen.node, frozen.bin]) {
     if (file && !fs.existsSync(file)) add('warn', 'scheduler', say('doctor-plist-missing', { file }));
   }
-  if (process.env.RELAYLEAD_CLAUDE) return;
   const found = frozen.path.split(path.delimiter).some((folder) => folder && fs.existsSync(path.join(folder, 'claude')));
   if (!found) add('warn', 'scheduler', say('doctor-plist-no-claude', { path: frozen.path }));
 }
