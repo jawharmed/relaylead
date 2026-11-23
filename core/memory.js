@@ -1,7 +1,9 @@
-// The project memory: `<project>/.relaylead/memoire.md`, kept by the lead (conventions of the project, one
+// The project memory: `<project>/.relaylead/memory.md`, kept by the lead (conventions of the project, one
 // line per past mission, lessons). Always in the project folder of the mission (the main repository, an
 // absolute path), never in a worktree. Only the lead of a mission reads and replaces it; the previous
-// version goes to `.relaylead/memoire-archive/`, which nobody reads again.
+// version goes to `.relaylead/memory-archive/`, which nobody reads again. Before 0.4 the names were
+// `memoire.md` and `memoire-archive/`: a project that only has `memoire.md` keeps using it (nothing is
+// renamed), and the exclusion rules cover both names.
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
@@ -13,8 +15,11 @@ const { tryCreateLock, isStaleLock, removeQuietly, takeOverStaleLock } = require
 const { runFileSync } = require('./run-file');
 const { sleep } = require('./timing');
 
-const MEMORY_PATH = '.relaylead/memoire.md';
-const ARCHIVE_PATH = '.relaylead/memoire-archive/';
+const MEMORY_PATH = '.relaylead/memory.md';
+const ARCHIVE_PATH = '.relaylead/memory-archive/';
+// The names of relaylead before 0.4.
+const OLD_MEMORY_PATH = '.relaylead/memoire.md';
+const OLD_ARCHIVE_PATH = '.relaylead/memoire-archive/';
 // Like the other git calls of relaylead: git starts no background maintenance that would hold a lock.
 const NO_MAINTENANCE = ['-c', 'gc.auto=0', '-c', 'maintenance.auto=false'];
 const LOCK_WAIT_MS = 10 * 1000;
@@ -33,12 +38,20 @@ function projectRoot(dir) {
   }
 }
 
+// Whether the project still keeps its memory under the old name: only memoire.md exists.
+function usesOldName(root) {
+  const folder = path.join(root, '.relaylead');
+  return fs.existsSync(path.join(folder, 'memoire.md')) && !fs.existsSync(path.join(folder, 'memory.md'));
+}
+
 function memoryFile(dir) {
-  return path.join(projectRoot(dir), '.relaylead', 'memoire.md');
+  const root = projectRoot(dir);
+  return path.join(root, '.relaylead', usesOldName(root) ? 'memoire.md' : 'memory.md');
 }
 
 function archiveDir(dir) {
-  return path.join(projectRoot(dir), '.relaylead', 'memoire-archive');
+  const root = projectRoot(dir);
+  return path.join(root, '.relaylead', usesOldName(root) ? 'memoire-archive' : 'memory-archive');
 }
 
 // { enabled, maxLines, versioned } of a project, the defaults for what is missing or not valid.
@@ -93,8 +106,9 @@ function readMemory(dir) {
 
 // Keeps .git/info/exclude right for the memory, the .gitignore never touched. Not versioned: the memory
 // and its archive are excluded. Versioned: everything under .relaylead/ is excluded except the memory
-// (`.relaylead/*` then `!.relaylead/memoire.md`: git cannot re-include a file of an excluded folder, hence
-// the `/*`), and the archive stays excluded. Does nothing outside a git repository.
+// (`.relaylead/*` then `!.relaylead/memory.md`: git cannot re-include a file of an excluded folder, hence
+// the `/*`), and the archive stays excluded. Both names of the memory are covered, the old one too.
+// Does nothing outside a git repository.
 function updateExclude(dir, versioned) {
   dir = projectRoot(dir);
   let file;
@@ -112,8 +126,12 @@ function updateExclude(dir, versioned) {
   }
   const before = text.split('\n').map((line) => line.trim()).filter((line) => line !== '');
   // The lines of an earlier choice go; the ones that stay in either mode are kept as they are.
-  const dropped = versioned ? ['.relaylead/', MEMORY_PATH] : ['!' + MEMORY_PATH, '.relaylead/*'];
-  const wanted = versioned ? ['.relaylead/*', '!' + MEMORY_PATH] : [MEMORY_PATH, ARCHIVE_PATH];
+  const dropped = versioned
+    ? ['.relaylead/', MEMORY_PATH, OLD_MEMORY_PATH]
+    : ['!' + MEMORY_PATH, '!' + OLD_MEMORY_PATH, '.relaylead/*'];
+  const wanted = versioned
+    ? ['.relaylead/*', '!' + MEMORY_PATH, '!' + OLD_MEMORY_PATH]
+    : [MEMORY_PATH, OLD_MEMORY_PATH, ARCHIVE_PATH, OLD_ARCHIVE_PATH];
   const lines = before.filter((line) => !dropped.includes(line));
   for (const line of wanted) if (!lines.includes(line)) lines.push(line);
   if (lines.join('\n') === before.join('\n')) return;

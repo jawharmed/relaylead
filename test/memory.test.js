@@ -90,14 +90,17 @@ test('the memory is excluded from git, without touching .gitignore, unless it is
   const dir = project(t);
   await writeMemory('demo', 'one', dir);
   await writeMemory('demo', 'two', dir);
-  assert.strictEqual(exclude(dir).split('\n').filter((line) => line === '.relaylead/memoire.md').length, 1);
+  assert.strictEqual(exclude(dir).split('\n').filter((line) => line === '.relaylead/memory.md').length, 1);
+  assert.match(exclude(dir), /^\.relaylead\/memory-archive\/$/m);
+  // The old names stay covered, for a project that still has its memory in memoire.md.
+  assert.match(exclude(dir), /^\.relaylead\/memoire\.md$/m);
   assert.match(exclude(dir), /^\.relaylead\/memoire-archive\/$/m);
   assert.ok(!fs.existsSync(path.join(dir, '.gitignore')));
 
   const versioned = project(t, { memory: { versioned: true } });
   await writeMemory('demo', 'one', versioned);
-  assert.match(exclude(versioned), /^\.relaylead\/\*\n!\.relaylead\/memoire\.md$/m);
-  assert.doesNotMatch(exclude(versioned), /^\.relaylead\/memoire\.md$/m);
+  assert.match(exclude(versioned), /^\.relaylead\/\*\n!\.relaylead\/memory\.md\n!\.relaylead\/memoire\.md$/m);
+  assert.doesNotMatch(exclude(versioned), /^\.relaylead\/memo(ire|ry)\.md$/m);
 });
 
 test('a text over the ceiling is refused, and a memory over it is flagged by show', async (t) => {
@@ -149,17 +152,17 @@ test('init --yes takes the defaults: memory on, out of git; the flags answer the
   const result = await runRelaylead(['init', '--yes'], { cwd: repo, env });
   assert.strictEqual(result.code, 0, result.err);
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(repo, '.relaylead.json'), 'utf8')).memory, { enabled: true, versioned: false });
-  assert.match(exclude(repo), /^\.relaylead\/memoire\.md$/m);
+  assert.match(exclude(repo), /^\.relaylead\/memory\.md$/m);
 
   const other = gitRepo({ 'README.md': 'toy\n' });
   await runRelaylead(['init', '--yes', '--versioned-memory'], { cwd: other, env });
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(other, '.relaylead.json'), 'utf8')).memory, { enabled: true, versioned: true });
-  assert.match(exclude(other), /^!\.relaylead\/memoire\.md$/m);
+  assert.match(exclude(other), /^!\.relaylead\/memory\.md$/m);
 
   const off = gitRepo({ 'README.md': 'toy\n' });
   await runRelaylead(['init', '--yes', '--no-memory'], { cwd: off, env });
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(off, '.relaylead.json'), 'utf8')).memory, { enabled: false, versioned: false });
-  assert.doesNotMatch(exclude(off), /memoire/);
+  assert.doesNotMatch(exclude(off), /memo(ire|ry)/);
 });
 
 test('the lead profile and its first message tell it to read and compact the memory', () => {
@@ -179,14 +182,14 @@ test('the memory of a mission started in a worktree or a sub-folder is the main 
   writeMission('demo', linked);
   await writeMemory('demo', 'shared', main);
   assert.strictEqual(fs.readFileSync(memoryFile(main), 'utf8'), 'shared\n');
-  assert.ok(!fs.existsSync(path.join(linked, '.relaylead', 'memoire.md')));
-  assert.match(exclude(main), /^\.relaylead\/memoire\.md$/m);
+  assert.ok(!fs.existsSync(path.join(linked, '.relaylead', 'memory.md')));
+  assert.match(exclude(main), /^\.relaylead\/memory\.md$/m);
 });
 
 test('a versioned memory stays visible to git after the delivery excluded .relaylead/', async (t) => {
   const dir = project(t, { memory: { versioned: true } });
   excludeRelaylead(dir); // what the first delivery does: before, it excluded the whole folder
-  fs.writeFileSync(path.join(dir, '.git', 'info', 'exclude'), '.relaylead/\n.relaylead/memoire.md\n');
+  fs.writeFileSync(path.join(dir, '.git', 'info', 'exclude'), '.relaylead/\n.relaylead/memory.md\n');
   await writeMemory('demo', 'one', dir);
   await writeMemory('demo', 'two', dir); // archives the first
   excludeRelaylead(dir);
@@ -198,10 +201,45 @@ test('a versioned memory stays visible to git after the delivery excluded .relay
       return false;
     }
   };
+  assert.strictEqual(ignored('.relaylead/memory.md'), false);
   assert.strictEqual(ignored('.relaylead/memoire.md'), false);
   assert.strictEqual(ignored('.relaylead/worktrees/a/file'), true);
+  assert.strictEqual(ignored('.relaylead/memory-archive/x.md'), true);
   assert.strictEqual(ignored('.relaylead/memoire-archive/x.md'), true);
-  assert.match(runFileSync('git', ['status', '--porcelain', '-uall'], { cwd: dir, encoding: 'utf8' }), /\.relaylead\/memoire\.md/);
+  assert.match(runFileSync('git', ['status', '--porcelain', '-uall'], { cwd: dir, encoding: 'utf8' }), /\.relaylead\/memory\.md/);
+});
+
+// A project of before 0.4 has memoire.md: it is kept, never renamed, and its archive keeps its name.
+for (const versioned of [false, true]) {
+  test(`a project that only has memoire.md keeps it (${versioned ? 'versioned' : 'not versioned'})`, async (t) => {
+    const dir = project(t, { memory: { versioned } });
+    fs.mkdirSync(path.join(dir, '.relaylead'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.relaylead', 'memoire.md'), 'old\n');
+    assert.strictEqual(memoryFile(dir), path.join(dir, '.relaylead', 'memoire.md'));
+    assert.strictEqual(readMemory(dir).text, 'old\n');
+    await writeMemory('demo', 'new', dir);
+    assert.strictEqual(fs.readFileSync(path.join(dir, '.relaylead', 'memoire.md'), 'utf8'), 'new\n');
+    assert.ok(!fs.existsSync(path.join(dir, '.relaylead', 'memory.md')));
+    assert.strictEqual(fs.readdirSync(path.join(dir, '.relaylead', 'memoire-archive')).length, 1);
+    const ignored = (file) => {
+      try {
+        runFileSync('git', ['check-ignore', '-q', file], { cwd: dir, stdio: 'ignore' });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    assert.strictEqual(ignored('.relaylead/memoire.md'), !versioned);
+    assert.strictEqual(ignored('.relaylead/memoire-archive/x.md'), true);
+  });
+}
+
+test('with both files, memory.md wins', (t) => {
+  const dir = project(t);
+  fs.mkdirSync(path.join(dir, '.relaylead'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.relaylead', 'memoire.md'), 'old\n');
+  fs.writeFileSync(path.join(dir, '.relaylead', 'memory.md'), 'new\n');
+  assert.strictEqual(readMemory(dir).text, 'new\n');
 });
 
 test('over the byte ceiling, show prints only what fits and says so; write refuses; maxLines is bounded', async (t) => {
