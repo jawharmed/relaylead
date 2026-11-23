@@ -27,6 +27,8 @@ function eventText(event, lang) {
     return t('eventTaskFailed', { mission: event.mission, id: event.id, attempt: event.attempt, summary: event.summary || '-' }, lang);
   }
   if (event.kind === 'merge') return t('eventMerged', { mission: event.mission, target: event.target }, lang);
+  // A done mission says what to run next: its work is still to be merged.
+  if (/^done/.test(event.state)) return t('eventMissionDone', { mission: event.mission }, lang);
   return t('eventMission', { mission: event.mission, state: event.state }, lang);
 }
 
@@ -60,14 +62,18 @@ function briefText({ problems, events, overview }, lang) {
     text += t('briefInstall', {}, lang) + problems.map((line) => `  ${line.level} ${line.name}: ${line.detail}\n`).join('');
   }
   const news = events.filter((event) => event.kind !== 'question');
-  text += news.length > 0 ? t('briefNew', {}, lang) + news.map((event) => '  ' + eventText(event, lang)).join('') : t('briefNothingNew', {}, lang);
   const fresh = new Set(events.filter((event) => event.kind === 'question').map((event) => `${event.mission} ${event.id}`));
+  // "Nothing new" is said only when no question is new either: a new question is news.
+  if (news.length > 0) text += t('briefNew', {}, lang) + news.map((event) => '  ' + eventText(event, lang)).join('');
+  else if (fresh.size === 0) text += t('briefNothingNew', {}, lang);
   const questions = overview.missions.flatMap((mission) =>
     mission.questions.map((question) => questionText(mission.name, question, fresh.has(`${mission.name} ${question.id}`), lang)),
   );
   text += questions.length > 0 ? t('briefQuestions', { n: questions.length }, lang) + questions.join('') : t('briefNoQuestion', {}, lang);
   const running = overview.missions.filter((mission) => mission.active);
   text += running.length > 0 ? t('briefMissions', {}, lang) + running.map((mission) => missionLine(mission, lang)).join('') : t('briefNoMission', {}, lang);
+  const toMerge = overview.missions.filter((mission) => mission.toMerge);
+  if (toMerge.length > 0) text += t('briefToMerge', {}, lang) + toMerge.map((mission) => t('briefToMergeLine', { mission: mission.name }, lang)).join('');
   return text;
 }
 
@@ -78,7 +84,7 @@ function briefText({ problems, events, overview }, lang) {
 // new, and given again by the next wait (shown twice rather than missed). A mission the overview
 // cannot read is left out of the text, though the catch-up has counted it as seen.
 async function brief(dir, lang, write) {
-  const problems = (await doctorCheck.doctor(dir)).filter((line) => line.level !== 'ok');
+  const problems = (await doctorCheck.doctor(dir, lang)).filter((line) => line.level !== 'ok');
   await waitForEvents(0, (events) => write(briefText({ problems, events, overview: buildOverview() }, lang)));
 }
 

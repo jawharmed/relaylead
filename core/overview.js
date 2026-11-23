@@ -6,7 +6,7 @@ const path = require('node:path');
 const { missionDir } = require('./paths');
 const { readJson } = require('./store');
 const { loadConfig } = require('./config');
-const { listMissions, readMission } = require('./missions');
+const { listMissions, readMission, awaitsMerge } = require('./missions');
 const { listTasks } = require('./tasks');
 const { listQuestions } = require('./questions');
 const { readPause } = require('./usage-pause');
@@ -52,6 +52,8 @@ function missionView(listed) {
     priority: mission.priority || 'normal',
     state: listed.state,
     active: !finished,
+    // Done, and its work not brought into the user's branch yet: `relaylead merge <mission>`.
+    toMerge: attempt(() => awaitsMerge(mission), false),
     pausedUntil: pause ? pause.resumeAt : null,
     // Tasks waiting for a free place on the machine (core/places.js).
     queued: finished ? 0 : attempt(() => queuedCount(name), 0),

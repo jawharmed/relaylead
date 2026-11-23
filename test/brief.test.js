@@ -5,11 +5,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { run } = require('../core/cli');
 const doctorCheck = require('../core/doctor');
-const { missionDir } = require('../core/paths');
+const { missionDir, home } = require('../core/paths');
 const { writeJson } = require('../core/store');
 const { askQuestion } = require('../core/questions');
 const { writePause, localTime } = require('../core/usage-pause');
-const { makeIo } = require('../fixtures/helpers');
+const { makeIo, tmpDir } = require('../fixtures/helpers');
 const { setupProject, writeMission } = require('../fixtures/missions');
 
 async function relaylead(args, { env = {}, cwd } = {}) {
@@ -60,7 +60,6 @@ test('brief shows the problems, each open question as it is, and one line per mi
     [
       'Installation problems:',
       '  warn scheduler: not installed; run: relaylead install',
-      'Nothing new.',
       'Open questions (1):',
       '[old] q-merge (new): Conflict in src/a.js. What now?',
       '  Two edits of the same line.',
@@ -75,6 +74,27 @@ test('brief shows the problems, each open question as it is, and one line per mi
   // Same catch-up as wait --all: the question is no longer new, and the next wait does not give it again.
   assert.match(await relaylead(['brief']), /\[old\] q-merge: Conflict/);
   assert.strictEqual(await relaylead(['wait', '--all', '--timeout', '0']), 'Nothing new.\n');
+});
+
+test('a done mission says what to run next, in wait --all and in brief; a delivery with nothing to merge does not', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeJson(path.join(dir, '.relaylead.json'), { delivery: { type: 'local-merge' } });
+  writeMission('demo', dir);
+  setState('demo', 'working');
+  writeMission('plain', tmpDir('relaylead-project-')); // delivers files: nothing to merge
+  setState('plain', 'working');
+  doctorSays(t, [{ level: 'ok', name: 'node', detail: '22' }]);
+  await relaylead(['brief']); // the first look saves what the console has seen
+  setState('demo', 'done');
+  setState('plain', 'done');
+
+  const waited = await relaylead(['wait', '--all', '--timeout', '0']);
+  assert.match(waited, /\[demo\] mission done; bring its work into your branch with: relaylead merge demo/);
+  const text = await relaylead(['brief']);
+  assert.match(text, /Done, not merged yet:\n  demo: relaylead merge demo\n$/);
+  assert.doesNotMatch(text, /plain: relaylead merge/);
+  writeJson(path.join(home(), 'config.json'), { language: 'fr' });
+  assert.match(await relaylead(['brief']), /Terminées, pas encore fusionnées :\n  demo : relaylead merge demo\n$/);
 });
 
 test('brief says a queued task once, as waiting for a place, and a pause with its end', async (t) => {
