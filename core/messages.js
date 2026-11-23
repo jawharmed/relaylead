@@ -280,7 +280,7 @@ const messages = {
     'init-project-written': 'project settings written to {file}\n',
     'init-project-kept': 'project settings kept as they are ({file})\n',
     'init-trust-hint':
-      'if Claude Code has never run in {dir}, run `claude` once there and accept the trust question, so missions can start\n',
+      'if Claude Code has never run in {dir}, run `claude` once there and choose "Yes, I trust this folder" (the default, "No, exit", refuses), so missions can start\n',
     'init-advice': [
       'Access tips: give the sessions only the access they need.',
       'Keep secrets (.env files, keys) out of the project folder when you can.',
@@ -653,7 +653,7 @@ const messages = {
     'init-project-written': 'réglages du projet écrits dans {file}\n',
     'init-project-kept': 'réglages du projet laissés tels quels ({file})\n',
     'init-trust-hint':
-      'si Claude Code n\'a jamais tourné dans {dir}, lancez `claude` une fois dans ce dossier et choisissez « Yes, I trust this folder », pour que les missions puissent démarrer\n',
+      'si Claude Code n\'a jamais tourné dans {dir}, lancez `claude` une fois dans ce dossier et choisissez « Yes, I trust this folder » (le choix par défaut, « No, exit », refuse), pour que les missions puissent démarrer\n',
     'init-advice': [
       'Conseils d\'accès : ne donnez aux sessions que l\'accès dont elles ont besoin.',
       'Gardez les secrets (fichiers .env, clés) hors du dossier du projet quand c\'est possible.',
