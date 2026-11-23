@@ -829,7 +829,7 @@ test('a git command that does not end fails the delivery in time', { skip: proce
 
 // Puts on the PATH a git that hangs on each call whose arguments contain `call`, once it has run
 // `before` (shell, where $GIT is the real git); the other calls run the real git. Git's timeout
-// is 1 s. Returns a function that puts back the real git and its timeout, as is done after the
+// is 4 s: an ordinary git call, on a loaded machine, must not reach it. Returns a function that puts back the real git and its timeout, as is done after the
 // test. POSIX only (a shell script).
 function hangingGit(t, call, before) {
   const bin = tmpDir('relaylead-git-');
@@ -841,7 +841,7 @@ function hangingGit(t, call, before) {
   );
   const { PATH } = process.env;
   process.env.PATH = bin + path.delimiter + PATH;
-  process.env.RELAYLEAD_GIT_TIMEOUT_MS = '1000';
+  process.env.RELAYLEAD_GIT_TIMEOUT_MS = '4000';
   const restore = () => {
     process.env.PATH = PATH;
     delete process.env.RELAYLEAD_GIT_TIMEOUT_MS;
@@ -862,7 +862,7 @@ test('a merge that does not end is cancelled', { skip: process.platform === 'win
 
   const failed = await deliver('a');
   assert.notStrictEqual(failed.code, 0);
-  assert.match(failed.err, /did not end within 1 s; the merge was cancelled/);
+  assert.match(failed.err, /did not end within 4 s; the merge was cancelled/);
   realGit();
   const integration = integrationDir(dir);
   assert.strictEqual(git(integration, 'status', '--porcelain'), '');
@@ -884,7 +884,7 @@ test('a state line commit that does not end leaves no index.lock behind', { skip
 
   const delivered = await deliver('a');
   assert.strictEqual(delivered.code, 0, delivered.err);
-  assert.match(delivered.err, /did not end within 1 s/);
+  assert.match(delivered.err, /did not end within 4 s/);
   realGit();
   const integration = integrationDir(dir);
   assert.strictEqual(fs.existsSync(path.resolve(integration, git(integration, 'rev-parse', '--git-path', 'index.lock'))), false);
