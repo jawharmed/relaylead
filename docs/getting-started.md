@@ -15,7 +15,7 @@ Check each line in a terminal. Every command should print a version.
 | A Mac | `sw_vers` | Relaylead runs on macOS only for now. |
 | Node.js 18 or newer | `node --version` | Install it from [nodejs.org](https://nodejs.org), or with `brew install node`. |
 | git | `git --version` | macOS offers to install it the first time you run `git`. |
-| Claude Code 2.1.325 or newer | `claude --version` | Install it from [the Claude Code docs](https://docs.claude.com/en/docs/claude-code/overview), then `claude update`. |
+| Claude Code 2.1.325 or newer | `claude --version` | Install it from [the Claude Code docs](https://code.claude.com/docs/en/overview), then `claude update`. |
 | Claude Code signed in | run `claude` once | Sign in with a Claude plan that includes Claude Code (Pro, Max, Team or Enterprise). An Anthropic API key works too: see [API key](guide.md#api-key). |
 | A project in git | `git status` in its folder | Run `git init`, then make a first commit. |
 

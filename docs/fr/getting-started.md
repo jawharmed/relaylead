@@ -15,7 +15,7 @@ Vérifiez chaque ligne dans un terminal. Chaque commande doit afficher une versi
 | Un Mac | `sw_vers` | Relaylead ne tourne que sous macOS pour l'instant. |
 | Node.js 18 ou plus | `node --version` | Installez-le depuis [nodejs.org](https://nodejs.org), ou avec `brew install node`. |
 | git | `git --version` | macOS propose de l'installer la première fois que vous lancez `git`. |
-| Claude Code 2.1.325 ou plus | `claude --version` | Installez-le depuis [la documentation de Claude Code](https://docs.claude.com/en/docs/claude-code/overview), puis `claude update`. |
+| Claude Code 2.1.325 ou plus | `claude --version` | Installez-le depuis [la documentation de Claude Code](https://code.claude.com/docs/en/overview), puis `claude update`. |
 | Claude Code connecté | lancez `claude` une fois | Connectez-vous avec un abonnement Claude qui inclut Claude Code (Pro, Max, Team ou Enterprise). Une clé API Anthropic convient aussi : voir [Clé API](guide.md#clé-api). |
 | Un projet sous git | `git status` dans son dossier | Lancez `git init`, puis faites un premier commit. |
 

@@ -80,4 +80,4 @@ Avec une clé API, il n'y a pas de telles fenêtres : les sessions puisent dans 
 - **Console :** `claude -p "<texte>" --output-format json`, coût lu dans `total_cost_usd`, dans un environnement d'essai isolé avec le plugin chargé, les 22 et 23 novembre 2026. Pour une conversation reprise, le coût d'un échange est la différence avec la session reprise. Ces appels reprennent une conversation enregistrée, ce qui réécrit son cache ; dans une conversation restée ouverte, une relance coûte sans doute moins (non mesuré).
 - **Environnement :** une nouvelle conversation Claude Code porte environ 35 000 jetons de consignes système, d'outils et de plugins avant même que vous tapiez quoi que ce soit. Cette part, 0,19 $ ici, ne dépend pas de Relaylead et varie selon votre propre installation.
 
-Les prix changent ; consultez [la page des tarifs d'Anthropic](https://www.anthropic.com/pricing) pour les chiffres du moment.
+Les prix changent ; consultez [la page des tarifs d'Anthropic](https://claude.com/pricing) pour les chiffres du moment.

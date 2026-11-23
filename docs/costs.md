@@ -80,4 +80,4 @@ With an API key there are no such windows: the sessions spend from your API cred
 - **Console:** `claude -p "<text>" --output-format json`, cost read from `total_cost_usd`, in an isolated test environment with the plugin loaded, on November 22 and 23, 2026. For a resumed conversation, the cost of one exchange is the difference with the session it resumed. These calls resume a saved conversation, which writes its cache again; in a conversation that stays open, a follow-up probably costs less (not measured).
 - **Environment:** a new Claude Code conversation carries about 35,000 tokens of system prompt, tools and plugins before you type anything. That part, $0.19 here, does not depend on Relaylead and varies with your own setup.
 
-Prices change; check [Anthropic's pricing page](https://www.anthropic.com/pricing) for current numbers.
+Prices change; check [Anthropic's pricing page](https://claude.com/pricing) for current numbers.
