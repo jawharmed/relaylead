@@ -35,6 +35,11 @@ function eventText(event, lang) {
   if (event.kind === 'task') {
     return t('eventTaskFailed', { mission: event.mission, id: event.id, attempt: event.attempt, summary: event.summary || '-' }, lang);
   }
+  if (event.kind === 'pause') {
+    const why = event.percent === null ? t('pauseUsageLimit', {}, lang) : t('pauseUsagePercent', { n: event.percent }, lang);
+    return t('eventPaused', { mission: event.mission, at: localTime(event.resumeAt), why }, lang);
+  }
+  if (event.kind === 'resume') return t('eventResumed', { mission: event.mission }, lang);
   if (event.kind === 'merge') return t('eventMerged', { mission: event.mission, target: event.target }, lang);
   // A done mission says what to run next: its work is still to be merged.
   // Only when the mission can be merged now (not a delivery of files, not still stopping, not removed).

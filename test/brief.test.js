@@ -8,7 +8,7 @@ const doctorCheck = require('../core/doctor');
 const { missionDir, home } = require('../core/paths');
 const { writeJson } = require('../core/store');
 const { askQuestion } = require('../core/questions');
-const { writePause, localTime } = require('../core/usage-pause');
+const { writePause, removePause, localTime } = require('../core/usage-pause');
 const { makeIo, tmpDir } = require('../fixtures/helpers');
 const { setupProject, writeMission } = require('../fixtures/missions');
 
@@ -109,6 +109,24 @@ test('brief says a queued task once, as waiting for a place, and a pause with it
   doctorSays(t, []);
   const line = (await relaylead(['brief'])).split('\n').find((text) => text.startsWith('  demo:'));
   assert.strictEqual(line, `  demo: working · tasks 0/2 delivered · 1 waiting for a place · paused until ${localTime(new Date(resumeAt).toISOString())}`);
+});
+
+test('a usage pause is an event of wait --all and brief, and so is its end, in both languages', async (t) => {
+  const dir = setupProject(t, 'demo');
+  writeMission('demo', dir);
+  setState('demo', 'working');
+  doctorSays(t, []);
+  await relaylead(['wait', '--all', '--timeout', '0']);
+  const resumeAt = Date.now() + 3600 * 1000;
+  writePause('demo', { reason: 'five-hour 90% >= 85%', resumeAt });
+  const at = localTime(new Date(resumeAt).toISOString());
+  assert.strictEqual(await relaylead(['wait', '--all', '--timeout', '0']), `[demo] mission paused until ${at} (usage 90 %)\n`);
+  assert.strictEqual(await relaylead(['wait', '--all', '--timeout', '0']), 'Nothing new.\n');
+  removePause('demo');
+  assert.strictEqual(await relaylead(['wait', '--all', '--timeout', '0']), '[demo] mission resumed after its usage pause\n');
+  writePause('demo', { reason: 'rate_limit abc', resumeAt });
+  writeJson(path.join(home(), 'config.json'), { language: 'fr' });
+  assert.match(await relaylead(['brief']), new RegExp(`\\[demo\\] mission en pause jusqu'à ${at} \\(limite d'usage atteinte\\)`));
 });
 
 test('brief gives a mission over and a failed task once, in French when the project says so', async (t) => {

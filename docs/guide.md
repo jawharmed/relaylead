@@ -70,7 +70,7 @@ Answer with an option's number (options are numbered from 1, the recommended one
 
 ### Usage limit and automatic pause
 
-Relaylead reads your Claude usage (5-hour and 7-day windows) from what Claude Code reports to the sessions. When a mission reaches the threshold of its priority, or when Claude reports a usage limit, the watcher pauses the mission: its sessions are stopped and nothing is relaunched. It resumes by itself at the reset time (or after 15, 30, then 60 minutes when no time is given). `relaylead list` and `show` display `usage-pause (resume …)`, and `task start` and `task retry` are refused meanwhile. Questions still notify you during a pause.
+Relaylead reads your Claude usage (5-hour and 7-day windows) from what Claude Code reports to the sessions. When a mission reaches the threshold of its priority, or when Claude reports a usage limit, the watcher pauses the mission: its sessions are stopped and nothing is relaunched. It resumes by itself at the reset time (or after 15, 30, then 60 minutes when no time is given). `relaylead list` and `show` display `usage-pause (resume …)`, and `task start` and `task retry` are refused meanwhile. Questions still notify you during a pause. The pause itself is announced: a macOS notification, and an event in `relaylead wait --all` and `relaylead brief` ("mission paused until 14:05 (usage 90 %)"), then another when the mission resumes.
 
 Thresholds are in percent, per priority:
 

@@ -145,7 +145,7 @@ Une vraie mission de deux petites tâches a coûté environ 0,60 $ au tarif publ
 
 ### Relaylead va-t-il épuiser ma limite de la semaine ?
 
-Il met une mission en pause quand votre usage atteint le seuil de sa priorité : 90 % de la semaine et 85 % de la fenêtre de 5 heures pour `normal`, 70 % et 80 % pour `low`. La mission reprend toute seule après la réinitialisation. Voir [Usage de l'abonnement](costs.md#usage-de-labonnement-et-pause-automatique).
+Il met une mission en pause quand votre usage atteint le seuil de sa priorité : 90 % de la semaine et 85 % de la fenêtre de 5 heures pour `normal`, 70 % et 80 % pour `low`. La mission reprend toute seule après la réinitialisation. Vous êtes prévenu quand elle se met en pause (une notification macOS, et un événement dans la console). Voir [Usage de l'abonnement](costs.md#usage-de-labonnement-et-pause-automatique).
 
 ### Pourquoi la console coûte-t-elle plus cher que `relaylead brief` ?
 

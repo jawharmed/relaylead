@@ -964,6 +964,8 @@ test('a pause for the usage stops the sessions, starts nothing, then the lead is
   const task = await startTask('demo', { id: 'a' });
   const crew = listSessions('demo').find((session) => session.shortId === task.session);
   writeUsage(90, new Date(Date.now() + 60 * 60 * 1000).toISOString());
+  const usageNotifications = path.join(tmpDir(), 'notifications.log');
+  withEnv(t, { RELAYLEAD_NOTIFY: undefined, RELAYLEAD_NOTIFY_BIN: path.join(__dirname, '..', 'fixtures', 'notify-bin.js'), RELAYLEAD_NOTIFY_LOG: usageNotifications });
 
   // The lead is woken to push its work; nothing is stopped yet.
   const paused = await watcher.tendMission('demo');
@@ -971,6 +973,9 @@ test('a pause for the usage stops the sessions, starts nothing, then the lead is
   const usageWake = /woken: Usage limit near: commit and push your work, write your state, end your turn\./;
   await waitFor(() => usageWake.test(leadLog(lead)), 30000, 'the lead to be woken for the usage', () => missionReport('demo'));
   assert.strictEqual(readJson(pauseFile()).reason, 'five-hour 90% >= 85%');
+  // The user is told, as for a question.
+  await waitFor(() => fs.existsSync(usageNotifications), 5000, 'the pause notification');
+  assert.match(fs.readFileSync(usageNotifications, 'utf8'), /Mission paused until \d{4}-\d\d-\d\d \d\d:\d\d \(usage 90 %\)/);
   // Once it has ended its turn: the crew, then the lead.
   await waitFor(async () => (await listed(lead)).idle === true, 30000, 'the woken lead to end its turn', () => missionReport('demo'));
   const stops = await watcher.tendMission('demo');

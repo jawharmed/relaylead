@@ -38,10 +38,16 @@ function localTime(iso) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+// The highest usage percentage a pause reason names ("week 90% >= 90%"), or null (a usage limit hit).
+function pausePercent(reason) {
+  const numbers = (String(reason || '').match(/(\d+(?:\.\d+)?)%/g) || []).map((one) => parseFloat(one));
+  return numbers.length > 0 ? Math.max(...numbers) : null;
+}
+
 // Throws mission-usage-paused while the mission is paused.
 function refuseWhilePaused(name) {
   const pause = readPause(name);
   if (pause) throw codedError('mission-usage-paused', { mission: name, resumeAt: localTime(pause.resumeAt) });
 }
 
-module.exports = { readPause, writePause, removePause, localTime, refuseWhilePaused };
+module.exports = { readPause, writePause, removePause, localTime, pausePercent, refuseWhilePaused };
