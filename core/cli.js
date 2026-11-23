@@ -169,7 +169,9 @@ commands.list = async (args, io) => {
   if (missions.length === 0) io.out.write(t('noMissions', {}, language(io)));
   for (const mission of missions) {
     const lead = mission.lead ? mission.lead.sessionName : '-';
-    io.out.write(`${mission.name}  ${shownState(mission.name, mission.state, io)}  ${lead}  ${mission.dir}\n`);
+    // An unreadable mission shows its state folder, where the broken file is.
+    const state = mission.unreadable ? mission.state : shownState(mission.name, mission.state, io);
+    io.out.write(`${mission.name}  ${state}  ${lead}  ${mission.dir}\n`);
   }
   return 0;
 };

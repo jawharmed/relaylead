@@ -687,8 +687,9 @@ async function attachLead(name) {
   return getAdapter(mission.agent).attach(session);
 }
 
-// The mission.json of every mission, those still being created or unreadable left out.
-function allMissions() {
+// The mission.json of every mission, those still being created or unreadable left out; the name of
+// each unreadable one goes to `onUnreadable`.
+function allMissions(onUnreadable = () => {}) {
   let entries;
   try {
     entries = fs.readdirSync(path.join(home(), 'missions'), { withFileTypes: true });
@@ -703,6 +704,7 @@ function allMissions() {
     try {
       mission = readJson(missionFile(entry.name, 'mission.json'), null);
     } catch {
+      onUnreadable(entry.name);
       continue; // unreadable: it does not hide the other missions
     }
     if (mission) missions.push(mission); // none: still being created
@@ -710,13 +712,24 @@ function allMissions() {
   return missions;
 }
 
+// Every mission as {name, dir, state, lead}, sorted by name. One whose mission.json, state.json or
+// lead.json cannot be read never hides the others: it is listed with the state 'unreadable',
+// `unreadable: true`, and its state folder as `dir`, so the user sees where to look.
 function listMissions() {
-  const missions = allMissions().map((mission) => ({
-    name: mission.name,
-    dir: mission.dir,
-    state: shownState(readStateRecord(mission.name)),
-    lead: readJson(missionFile(mission.name, 'lead.json'), null),
-  }));
+  const unreadable = (name) => ({ name, dir: missionDir(name), state: 'unreadable', lead: null, unreadable: true });
+  const missions = [];
+  for (const mission of allMissions((name) => missions.push(unreadable(name)))) {
+    try {
+      missions.push({
+        name: mission.name,
+        dir: mission.dir,
+        state: shownState(readStateRecord(mission.name)),
+        lead: readJson(missionFile(mission.name, 'lead.json'), null),
+      });
+    } catch {
+      missions.push(unreadable(mission.name));
+    }
+  }
   return missions.sort((a, b) => a.name.localeCompare(b.name));
 }
 

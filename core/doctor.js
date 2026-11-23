@@ -111,6 +111,10 @@ async function doctor(dir, lang) {
   // Missions that wait for an answer while nothing moves (core/abandon.js): reported, never removed.
   try {
     for (const mission of listMissions()) {
+      if (mission.unreadable) {
+        add('warn', `mission ${mission.name}`, say('doctor-mission-unreadable', { dir: mission.dir }));
+        continue;
+      }
       const abandoned = abandonment(mission.name);
       if (abandoned) {
         add('warn', `mission ${mission.name}`, say('doctor-mission-abandoned', { days: abandoned.days, mission: mission.name }));
